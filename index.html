@@ -1,26 +1,1742 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- TODO: Set the document title to the name of your application -->
-    <title>Lovable App</title>
-    <meta name="description" content="Lovable Generated Project" />
-    <meta name="author" content="Lovable" />
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WatchTab - Controle de Filmes e Séries</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --bg2: #1a1a2e;
+      --bg3: #16213e;
+      --card: #1e1e30;
+      --card-hover: #252540;
+      --primary: #e94560;
+      --primary-light: #ff6b81;
+      --secondary: #0f3460;
+      --accent: #533483;
+      --text: #eee;
+      --text2: #aaa;
+      --text3: #666;
+      --green: #27ae60;
+      --yellow: #f39c12;
+      --blue: #3498db;
+      --radius: 12px;
+      --shadow: 0 4px 15px rgba(0,0,0,.3);
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    /* SIDEBAR */
+    .app { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 260px;
+      background: var(--bg2);
+      padding: 20px 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid rgba(255,255,255,.05);
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      z-index: 100;
+      transition: transform .3s;
+    }
+    .sidebar-header {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid rgba(255,255,255,.05);
+      margin-bottom: 10px;
+    }
+    .sidebar-header h1 {
+      font-size: 1.5rem;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .sidebar-header h1 span { font-size: 1.8rem; }
+    .nav-item {
+      padding: 12px 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all .2s;
+      border-left: 3px solid transparent;
+      font-size: .95rem;
+    }
+    .nav-item:hover { background: rgba(255,255,255,.05); }
+    .nav-item.active {
+      background: rgba(233,69,96,.1);
+      border-left-color: var(--primary);
+      color: var(--primary);
+    }
+    .nav-item .icon { font-size: 1.2rem; width: 24px; text-align: center; }
+    .nav-sections { margin-top: 10px; }
+    .nav-sections-title {
+      padding: 10px 20px 5px;
+      font-size: .75rem;
+      text-transform: uppercase;
+      color: var(--text3);
+      letter-spacing: 1px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .nav-sections-title button {
+      background: none; border: none; color: var(--primary);
+      cursor: pointer; font-size: 1.2rem; padding: 0 4px;
+    }
+    .section-item {
+      padding: 10px 20px 10px 30px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .9rem;
+      color: var(--text2);
+      transition: all .2s;
+      border-left: 3px solid transparent;
+    }
+    .section-item:hover { background: rgba(255,255,255,.05); color: var(--text); }
+    .section-item.active {
+      background: rgba(233,69,96,.08);
+      border-left-color: var(--primary-light);
+      color: var(--primary-light);
+    }
+    .section-item .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block;
+    }
+    .section-item .count {
+      margin-left: auto;
+      background: rgba(255,255,255,.08);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: .75rem;
+    }
+    .section-actions {
+      display: flex; gap: 4px; margin-left: auto;
+    }
+    .section-actions button {
+      background: none; border: none; cursor: pointer;
+      color: var(--text3); font-size: .8rem; padding: 2px;
+    }
+    .section-actions button:hover { color: var(--primary); }
 
-    <!-- TODO: Update og:title to match your application name -->
-    <meta property="og:title" content="Lovable App" />
-    <meta property="og:description" content="Lovable Generated Project" />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    /* MAIN */
+    .main {
+      flex: 1;
+      margin-left: 260px;
+      padding: 30px;
+      max-width: 1200px;
+    }
 
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@Lovable" />
-    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
-  </head>
+    /* SEARCH BAR */
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      gap: 20px;
+    }
+    .search-box {
+      position: relative;
+      flex: 1;
+      max-width: 400px;
+    }
+    .search-box input {
+      width: 100%;
+      padding: 10px 15px 10px 40px;
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: .95rem;
+      outline: none;
+      transition: border .2s;
+    }
+    .search-box input:focus { border-color: var(--primary); }
+    .search-box::before {
+      content: '🔍';
+      position: absolute;
+      left: 12px; top: 50%;
+      transform: translateY(-50%);
+      font-size: .9rem;
+    }
+    .page-title {
+      font-size: 1.6rem;
+      font-weight: 700;
+    }
 
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+    /* DASHBOARD */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,.05);
+    }
+    .stat-card .stat-icon {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+    .stat-card .stat-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    .stat-card .stat-label {
+      font-size: .8rem;
+      color: var(--text2);
+      margin-top: 4px;
+    }
+
+    /* MEDIA GRID */
+    .media-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .media-card {
+      background: var(--card);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,.05);
+      cursor: pointer;
+      transition: transform .2s, border-color .2s;
+    }
+    .media-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--primary);
+    }
+    .media-card-header {
+      padding: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .media-card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .media-card-sub {
+      font-size: .8rem;
+      color: var(--text2);
+    }
+    .media-card-badge {
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: .7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-watching { background: rgba(52,152,219,.2); color: var(--blue); }
+    .badge-completed { background: rgba(39,174,96,.2); color: var(--green); }
+    .badge-partial { background: rgba(243,156,18,.2); color: var(--yellow); }
+    .media-card-body { padding: 0 18px 12px; }
+    .media-card-info {
+      display: flex;
+      gap: 15px;
+      font-size: .8rem;
+      color: var(--text2);
+      margin-bottom: 10px;
+    }
+    .progress-bar {
+      height: 6px;
+      background: rgba(255,255,255,.08);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width .4s ease;
+    }
+    .progress-fill.green { background: var(--green); }
+    .progress-fill.yellow { background: var(--yellow); }
+    .progress-fill.blue { background: var(--blue); }
+    .progress-fill.red { background: var(--primary); }
+    .media-card-footer {
+      padding: 10px 18px;
+      border-top: 1px solid rgba(255,255,255,.05);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: .75rem;
+      color: var(--text3);
+    }
+    .media-card-progress-text {
+      font-size: .78rem;
+      color: var(--text2);
+      margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* ADD BUTTON */
+    .fab {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      font-size: 1.8rem;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(233,69,96,.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .2s, box-shadow .2s;
+      z-index: 90;
+    }
+    .fab:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 25px rgba(233,69,96,.5);
+    }
+
+    /* MODAL */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,.7);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--bg2);
+      border-radius: var(--radius);
+      padding: 30px;
+      width: 90%;
+      max-width: 550px;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 40px rgba(0,0,0,.5);
+      border: 1px solid rgba(255,255,255,.08);
+    }
+    .modal h2 {
+      margin-bottom: 20px;
+      color: var(--primary);
+      font-size: 1.3rem;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: .85rem;
+      color: var(--text2);
+    }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: .95rem;
+      outline: none;
+      transition: border .2s;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      border-color: var(--primary);
+    }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: .95rem;
+      font-weight: 600;
+      transition: all .2s;
+    }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-light); }
+    .btn-secondary { background: var(--card); color: var(--text); }
+    .btn-secondary:hover { background: var(--card-hover); }
+    .btn-danger { background: #c0392b; color: white; }
+    .btn-danger:hover { background: #e74c3c; }
+    .btn-sm { padding: 6px 14px; font-size: .85rem; }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    /* DETAIL VIEW */
+    .detail-view { display: none; }
+    .detail-view.show { display: block; }
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .detail-header h2 { font-size: 1.5rem; }
+    .detail-back {
+      background: none; border: none; color: var(--text2);
+      cursor: pointer; font-size: .95rem;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .detail-back:hover { color: var(--text); }
+    .detail-meta {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      font-size: .9rem;
+      color: var(--text2);
+    }
+    .detail-meta span {
+      background: var(--card);
+      padding: 6px 14px;
+      border-radius: 20px;
+    }
+    .last-watched {
+      font-size: .8rem;
+      color: var(--yellow);
+      margin-bottom: 15px;
+    }
+    .comment-section {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .comment-section h4 { margin-bottom: 10px; font-size: .95rem; }
+    .comment-section textarea {
+      width: 100%;
+      padding: 10px;
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 8px;
+      color: var(--text);
+      resize: vertical;
+      min-height: 60px;
+      outline: none;
+      font-size: .9rem;
+    }
+    .comment-section textarea:focus { border-color: var(--primary); }
+    .comment-section .btn { margin-top: 8px; }
+
+    /* SEASONS */
+    .seasons-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .season-card {
+      background: var(--card);
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.05);
+    }
+    .season-header {
+      padding: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .season-header:hover { background: rgba(255,255,255,.03); }
+    .season-title { font-weight: 600; }
+    .season-info {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      font-size: .85rem;
+      color: var(--text2);
+    }
+    .season-progress {
+      width: 120px;
+    }
+    .season-body {
+      display: none;
+      padding: 0 16px 16px;
+      border-top: 1px solid rgba(255,255,255,.05);
+    }
+    .season-body.open { display: block; padding-top: 16px; }
+    .episode-tracker {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .episode-counter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .episode-counter .count-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.15);
+      background: transparent;
+      color: var(--text);
+      font-size: 1.2rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all .2s;
+    }
+    .episode-counter .count-btn:hover {
+      border-color: var(--primary);
+      background: rgba(233,69,96,.1);
+      color: var(--primary);
+    }
+    .episode-counter .count-display {
+      font-size: 1.5rem;
+      font-weight: 700;
+      min-width: 60px;
+      text-align: center;
+    }
+    .episode-counter .count-total {
+      font-size: .9rem;
+      color: var(--text3);
+    }
+    .ep-time-info {
+      font-size: .85rem;
+      color: var(--text2);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .ep-time-info strong { color: var(--text); }
+    .partial-watch {
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(243,156,18,.08);
+      border-radius: 8px;
+      border: 1px solid rgba(243,156,18,.15);
+    }
+    .partial-watch label { font-size: .85rem; color: var(--yellow); }
+    .partial-watch input {
+      width: 80px;
+      padding: 6px 10px;
+      background: var(--bg);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: .9rem;
+      margin: 0 6px;
+      outline: none;
+    }
+    .season-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    /* FILM SPECIFIC */
+    .film-progress {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .film-time-row {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 12px;
+    }
+    .film-time-row label { font-size: .9rem; color: var(--text2); }
+    .film-time-row input {
+      width: 80px;
+      padding: 8px;
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: .95rem;
+      text-align: center;
+      outline: none;
+    }
+    .film-time-row input:focus { border-color: var(--primary); }
+    .film-status-btns {
+      display: flex; gap: 10px; margin-top: 12px;
+    }
+
+    /* SETTINGS PANEL IN DETAIL */
+    .settings-panel {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-top: 20px;
+      display: none;
+    }
+    .settings-panel.open { display: block; }
+    .settings-panel h4 { margin-bottom: 12px; color: var(--primary); }
+
+    /* RESPONSIVE */
+    .menu-toggle {
+      display: none;
+      position: fixed;
+      top: 15px; left: 15px;
+      z-index: 110;
+      background: var(--bg2);
+      border: 1px solid rgba(255,255,255,.1);
+      color: var(--text);
+      width: 40px; height: 40px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1.2rem;
+    }
+    @media (max-width: 768px) {
+      .sidebar { transform: translateX(-100%); }
+      .sidebar.open { transform: translateX(0); }
+      .main { margin-left: 0; padding: 20px; padding-top: 60px; }
+      .menu-toggle { display: flex; align-items: center; justify-content: center; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .media-grid { grid-template-columns: 1fr; }
+      .form-row { grid-template-columns: 1fr; }
+    }
+
+    /* SCROLLBAR */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--text3); border-radius: 3px; }
+
+    /* SECTION COLORS */
+    .dot-red { background: #e74c3c; }
+    .dot-blue { background: #3498db; }
+    .dot-purple { background: #9b59b6; }
+    .dot-green { background: #2ecc71; }
+    .dot-orange { background: #e67e22; }
+    .dot-pink { background: #e91e63; }
+    .dot-cyan { background: #00bcd4; }
+    .dot-yellow { background: #f1c40f; }
+
+    /* EMPTY STATE */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text3);
+    }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 15px; }
+    .empty-state p { font-size: 1rem; }
+
+    /* CONFIRM DIALOG */
+    .confirm-dialog {
+      text-align: center;
+    }
+    .confirm-dialog p {
+      margin-bottom: 20px;
+      font-size: 1rem;
+      color: var(--text2);
+    }
+    .confirm-dialog .modal-actions { justify-content: center; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- MENU MOBILE -->
+    <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h1><span>🎬</span> WatchTab</h1>
+      </div>
+      <div class="nav-item active" onclick="showDashboard()" id="nav-dashboard">
+        <span class="icon">📊</span> Dashboard
+      </div>
+      <div class="nav-sections">
+        <div class="nav-sections-title">
+          Minhas Seções
+          <button onclick="openAddSection()" title="Nova seção">+</button>
+        </div>
+        <div id="sections-list"></div>
+      </div>
+    </aside>
+
+    <!-- CONTEÚDO PRINCIPAL -->
+    <main class="main" id="main-content">
+      <!-- DASHBOARD -->
+      <div id="dashboard-view">
+        <div class="top-bar">
+          <h2 class="page-title">Dashboard</h2>
+          <div class="search-box">
+            <input type="text" placeholder="Buscar filmes, séries, animes..." id="global-search" oninput="globalSearch(this.value)">
+          </div>
+        </div>
+
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">🎬</div>
+            <div class="stat-value" id="stat-total">0</div>
+            <div class="stat-label">Total registrados</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-value" id="stat-completed">0</div>
+            <div class="stat-label">Concluídos</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📺</div>
+            <div class="stat-value" id="stat-episodes">0</div>
+            <div class="stat-label">Episódios assistidos</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">⏱️</div>
+            <div class="stat-value" id="stat-time-watched">0h</div>
+            <div class="stat-label">Tempo assistido</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-value" id="stat-time-remaining">0h</div>
+            <div class="stat-label">Tempo restante</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📂</div>
+            <div class="stat-value" id="stat-sections">0</div>
+            <div class="stat-label">Seções criadas</div>
+          </div>
+        </div>
+
+        <h3 style="margin-bottom:15px; color:var(--text2); font-size:1rem;">Assistidos Recentemente</h3>
+        <div class="media-grid" id="recent-grid"></div>
+      </div>
+
+      <!-- SECTION VIEW -->
+      <div id="section-view" style="display:none;">
+        <div class="top-bar">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button class="detail-back" onclick="showDashboard()">← Voltar</button>
+            <h2 class="page-title" id="section-title"></h2>
+          </div>
+          <div class="search-box">
+            <input type="text" placeholder="Buscar nesta seção..." id="section-search" oninput="sectionSearch(this.value)">
+          </div>
+        </div>
+        <div class="media-grid" id="section-grid"></div>
+        <div class="empty-state" id="section-empty" style="display:none;">
+          <div class="icon">📭</div>
+          <p>Nenhum item nesta seção.<br>Clique no <strong>+</strong> para adicionar!</p>
+        </div>
+      </div>
+
+      <!-- DETAIL VIEW -->
+      <div id="detail-view" style="display:none;"></div>
+
+      <!-- SEARCH RESULTS -->
+      <div id="search-view" style="display:none;">
+        <div class="top-bar">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button class="detail-back" onclick="showDashboard()">← Voltar</button>
+            <h2 class="page-title">Resultados da busca</h2>
+          </div>
+        </div>
+        <div class="media-grid" id="search-grid"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- FAB -->
+  <button class="fab" id="fab-btn" onclick="openAddMedia()" title="Adicionar novo">+</button>
+
+  <!-- MODAL: ADICIONAR SEÇÃO -->
+  <div class="modal-overlay" id="modal-section">
+    <div class="modal" style="max-width:400px;">
+      <h2 id="section-modal-title">Nova Seção</h2>
+      <div class="form-group">
+        <label>Nome da seção</label>
+        <input type="text" id="section-name" placeholder="Ex: Animes, Documentários...">
+      </div>
+      <div class="form-group">
+        <label>Cor</label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;" id="color-picker">
+          <span class="dot dot-red" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="red" onclick="pickColor(this)"></span>
+          <span class="dot dot-blue" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="blue" onclick="pickColor(this)"></span>
+          <span class="dot dot-purple" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="purple" onclick="pickColor(this)"></span>
+          <span class="dot dot-green" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="green" onclick="pickColor(this)"></span>
+          <span class="dot dot-orange" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="orange" onclick="pickColor(this)"></span>
+          <span class="dot dot-pink" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="pink" onclick="pickColor(this)"></span>
+          <span class="dot dot-cyan" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="cyan" onclick="pickColor(this)"></span>
+          <span class="dot dot-yellow" style="width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;" data-color="yellow" onclick="pickColor(this)"></span>
+        </div>
+      </div>
+      <input type="hidden" id="section-color" value="blue">
+      <input type="hidden" id="edit-section-id" value="">
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal('modal-section')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveSection()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ADICIONAR MÍDIA -->
+  <div class="modal-overlay" id="modal-media">
+    <div class="modal">
+      <h2 id="media-modal-title">Novo Registro</h2>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="media-type" onchange="toggleMediaFields()">
+          <option value="series">Série / Anime</option>
+          <option value="movie">Filme</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Nome</label>
+        <input type="text" id="media-name" placeholder="Nome do filme ou série">
+      </div>
+      <div class="form-group">
+        <label>Seção</label>
+        <select id="media-section"></select>
+      </div>
+
+      <!-- CAMPOS SÉRIE -->
+      <div id="series-fields">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nº de temporadas</label>
+            <input type="number" id="media-seasons" min="1" value="1" onchange="generateSeasonInputs()">
+          </div>
+          <div class="form-group">
+            <label>Duração padrão ep. (min)</label>
+            <input type="number" id="media-ep-duration" min="1" value="25">
+          </div>
+        </div>
+        <div id="season-inputs" style="margin-top:10px;"></div>
+      </div>
+
+      <!-- CAMPOS FILME -->
+      <div id="movie-fields" style="display:none;">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Duração total (min)</label>
+            <input type="number" id="media-movie-duration" min="1" value="120">
+          </div>
+        </div>
+      </div>
+
+      <input type="hidden" id="edit-media-id" value="">
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal('modal-media')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveMedia()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CONFIRMAÇÃO -->
+  <div class="modal-overlay" id="modal-confirm">
+    <div class="modal confirm-dialog" style="max-width:400px;">
+      <h2 id="confirm-title">Confirmar</h2>
+      <p id="confirm-message"></p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal('modal-confirm')">Cancelar</button>
+        <button class="btn btn-danger" id="confirm-btn" onclick="">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ==================== DATA LAYER ====================
+const STORAGE_KEY = 'watchtab_data';
+
+function loadData() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return { sections: [], media: [] };
+  return JSON.parse(raw);
+}
+
+function saveData(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// ==================== STATE ====================
+let currentView = 'dashboard';
+let currentSectionId = null;
+let currentMediaId = null;
+let data = loadData();
+
+// ==================== INIT ====================
+function init() {
+  // Seed default sections if empty
+  if (data.sections.length === 0) {
+    data.sections = [
+      { id: genId(), name: 'Filmes', color: 'red' },
+      { id: genId(), name: 'Séries', color: 'blue' },
+      { id: genId(), name: 'Animes', color: 'purple' }
+    ];
+    saveData(data);
+  }
+  renderSidebar();
+  renderDashboard();
+}
+
+// ==================== SIDEBAR ====================
+function renderSidebar() {
+  const list = document.getElementById('sections-list');
+  list.innerHTML = data.sections.map(s => {
+    const count = data.media.filter(m => m.sectionId === s.id).length;
+    return `
+      <div class="section-item ${currentSectionId === s.id ? 'active' : ''}" onclick="showSection('${s.id}')">
+        <span class="dot dot-${s.color}"></span>
+        ${s.name}
+        <span class="count">${count}</span>
+        <div class="section-actions" onclick="event.stopPropagation()">
+          <button onclick="editSection('${s.id}')" title="Editar">✏️</button>
+          <button onclick="confirmDeleteSection('${s.id}')" title="Excluir">🗑️</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ==================== DASHBOARD ====================
+function renderDashboard() {
+  // Stats
+  const totalMedia = data.media.length;
+  let totalEpWatched = 0;
+  let totalTimeWatched = 0;
+  let totalTimeRemaining = 0;
+  let completed = 0;
+
+  data.media.forEach(m => {
+    if (m.type === 'series') {
+      m.seasons.forEach(s => {
+        totalEpWatched += s.watched;
+        totalTimeWatched += s.watched * s.epDuration;
+        totalTimeRemaining += (s.totalEpisodes - s.watched) * s.epDuration;
+        if (s.partialMinutes > 0) {
+          totalTimeWatched += s.partialMinutes;
+          totalTimeRemaining -= s.partialMinutes;
+        }
+      });
+      const allDone = m.seasons.every(s => s.watched >= s.totalEpisodes);
+      if (allDone) completed++;
+    } else {
+      if (m.watchedMinutes > 0) totalTimeWatched += m.watchedMinutes;
+      totalTimeRemaining += m.duration - (m.watchedMinutes || 0);
+      if (m.completed) completed++;
+    }
+  });
+
+  document.getElementById('stat-total').textContent = totalMedia;
+  document.getElementById('stat-completed').textContent = completed;
+  document.getElementById('stat-episodes').textContent = totalEpWatched;
+  document.getElementById('stat-time-watched').textContent = formatTime(totalTimeWatched);
+  document.getElementById('stat-time-remaining').textContent = formatTime(totalTimeRemaining > 0 ? totalTimeRemaining : 0);
+  document.getElementById('stat-sections').textContent = data.sections.length;
+
+  // Recent
+  const recent = [...data.media]
+    .filter(m => m.lastWatched)
+    .sort((a, b) => new Date(b.lastWatched) - new Date(a.lastWatched))
+    .slice(0, 6);
+
+  const grid = document.getElementById('recent-grid');
+  if (recent.length === 0) {
+    grid.innerHTML = `<div class="empty-state"><div class="icon">🎬</div><p>Nenhum registro ainda.<br>Comece adicionando filmes ou séries!</p></div>`;
+  } else {
+    grid.innerHTML = recent.map(m => renderMediaCard(m)).join('');
+  }
+}
+
+// ==================== MEDIA CARD ====================
+function renderMediaCard(m) {
+  let progress = 0, statusClass = '', statusText = '', info = '';
+
+  if (m.type === 'series') {
+    const totalEp = m.seasons.reduce((a, s) => a + s.totalEpisodes, 0);
+    const watchedEp = m.seasons.reduce((a, s) => a + s.watched, 0);
+    progress = totalEp > 0 ? (watchedEp / totalEp) * 100 : 0;
+    info = `${watchedEp}/${totalEp} ep · ${m.seasons.length} temp`;
+
+    if (progress >= 100) { statusClass = 'badge-completed'; statusText = 'Concluído'; }
+    else if (progress > 0) { statusClass = 'badge-watching'; statusText = 'Assistindo'; }
+    else { statusClass = 'badge-partial'; statusText = 'Pendente'; }
+  } else {
+    const watched = m.watchedMinutes || 0;
+    progress = m.duration > 0 ? (watched / m.duration) * 100 : 0;
+    info = `${watched}/${m.duration} min`;
+
+    if (m.completed) { statusClass = 'badge-completed'; statusText = 'Assistido'; progress = 100; }
+    else if (watched > 0) { statusClass = 'badge-partial'; statusText = 'Parcial'; }
+    else { statusClass = 'badge-partial'; statusText = 'Pendente'; }
+  }
+
+  const progressColor = progress >= 100 ? 'green' : progress > 50 ? 'blue' : progress > 0 ? 'yellow' : 'red';
+  const section = data.sections.find(s => s.id === m.sectionId);
+  const sectionName = section ? section.name : '';
+  const lastWatched = m.lastWatched ? `Último: ${formatDate(m.lastWatched)}` : '';
+
+  const timeWatched = getTimeWatched(m);
+  const timeRemaining = getTimeRemaining(m);
+
+  return `
+    <div class="media-card" onclick="showDetail('${m.id}')">
+      <div class="media-card-header">
+        <div>
+          <div class="media-card-title">${m.name}</div>
+          <div class="media-card-sub">${sectionName} · ${m.type === 'series' ? 'Série' : 'Filme'}</div>
+        </div>
+        <span class="media-card-badge ${statusClass}">${statusText}</span>
+      </div>
+      <div class="media-card-body">
+        <div class="media-card-info">
+          <span>${info}</span>
+          <span>⏱ ${formatTime(timeWatched)}</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill ${progressColor}" style="width:${Math.min(progress, 100)}%"></div>
+        </div>
+        <div class="media-card-progress-text">
+          <span>${progress.toFixed(0)}%</span>
+          <span>Falta: ${formatTime(timeRemaining)}</span>
+        </div>
+      </div>
+      <div class="media-card-footer">
+        <span>${lastWatched}</span>
+        ${m.comment ? '<span>💬</span>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ==================== TIME HELPERS ====================
+function getTimeWatched(m) {
+  if (m.type === 'movie') return m.completed ? m.duration : (m.watchedMinutes || 0);
+  let t = 0;
+  m.seasons.forEach(s => {
+    t += s.watched * s.epDuration;
+    if (s.partialMinutes > 0) t += s.partialMinutes;
+  });
+  return t;
+}
+
+function getTimeRemaining(m) {
+  if (m.type === 'movie') return m.completed ? 0 : m.duration - (m.watchedMinutes || 0);
+  let t = 0;
+  m.seasons.forEach(s => {
+    const remaining = (s.totalEpisodes - s.watched) * s.epDuration;
+    t += remaining;
+    if (s.partialMinutes > 0 && s.watched < s.totalEpisodes) t -= s.partialMinutes;
+  });
+  return Math.max(0, t);
+}
+
+function formatTime(minutes) {
+  if (minutes < 60) return `${Math.round(minutes)}min`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const rh = h % 24;
+    return `${d}d ${rh}h`;
+  }
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// ==================== SECTION VIEW ====================
+function showSection(sectionId) {
+  currentView = 'section';
+  currentSectionId = sectionId;
+  currentMediaId = null;
+
+  document.getElementById('dashboard-view').style.display = 'none';
+  document.getElementById('section-view').style.display = 'block';
+  document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('search-view').style.display = 'none';
+
+  const section = data.sections.find(s => s.id === sectionId);
+  document.getElementById('section-title').textContent = section.name;
+
+  renderSectionGrid();
+  renderSidebar();
+  closeSidebar();
+}
+
+function renderSectionGrid(filter = '') {
+  let items = data.media.filter(m => m.sectionId === currentSectionId);
+  if (filter) items = items.filter(m => m.name.toLowerCase().includes(filter.toLowerCase()));
+
+  const grid = document.getElementById('section-grid');
+  const empty = document.getElementById('section-empty');
+
+  if (items.length === 0) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+  } else {
+    empty.style.display = 'none';
+    grid.innerHTML = items.map(m => renderMediaCard(m)).join('');
+  }
+}
+
+function sectionSearch(val) {
+  renderSectionGrid(val);
+}
+
+// ==================== DETAIL VIEW ====================
+function showDetail(mediaId) {
+  currentView = 'detail';
+  currentMediaId = mediaId;
+
+  document.getElementById('dashboard-view').style.display = 'none';
+  document.getElementById('section-view').style.display = 'none';
+  document.getElementById('search-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = 'block';
+
+  renderDetail();
+  closeSidebar();
+}
+
+function renderDetail() {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+
+  const section = data.sections.find(s => s.id === m.sectionId);
+  const container = document.getElementById('detail-view');
+
+  if (m.type === 'series') {
+    const totalEp = m.seasons.reduce((a, s) => a + s.totalEpisodes, 0);
+    const watchedEp = m.seasons.reduce((a, s) => a + s.watched, 0);
+    const progress = totalEp > 0 ? (watchedEp / totalEp) * 100 : 0;
+    const timeWatched = getTimeWatched(m);
+    const timeRemaining = getTimeRemaining(m);
+
+    container.innerHTML = `
+      <div class="detail-header">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button class="detail-back" onclick="goBack()">← Voltar</button>
+          <h2>${m.name}</h2>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-sm btn-secondary" onclick="toggleSettings()">⚙️ Configurações</button>
+          <button class="btn btn-sm btn-danger" onclick="confirmDeleteMedia('${m.id}')">🗑️ Excluir</button>
+        </div>
+      </div>
+
+      ${m.lastWatched ? `<div class="last-watched">🕐 Assistido pela última vez em ${formatDate(m.lastWatched)}</div>` : ''}
+
+      <div class="detail-meta">
+        <span>📂 ${section ? section.name : ''}</span>
+        <span>📺 ${m.seasons.length} temporada${m.seasons.length > 1 ? 's' : ''}</span>
+        <span>🎬 ${watchedEp}/${totalEp} episódios</span>
+        <span>⏱ ${formatTime(timeWatched)} assistido</span>
+        <span>⏳ ${formatTime(timeRemaining)} restante</span>
+        <span>📊 ${progress.toFixed(1)}%</span>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <div class="progress-bar" style="height:10px;">
+          <div class="progress-fill ${progress >= 100 ? 'green' : progress > 50 ? 'blue' : 'yellow'}" style="width:${Math.min(progress,100)}%"></div>
+        </div>
+      </div>
+
+      <div class="comment-section">
+        <h4>💬 Comentário / Anotação</h4>
+        <textarea id="comment-input" placeholder="Escreva um comentário...">${m.comment || ''}</textarea>
+        <button class="btn btn-sm btn-primary" onclick="saveComment()">Salvar</button>
+      </div>
+
+      <h3 style="margin-bottom:15px;">Temporadas</h3>
+      <div class="seasons-container">
+        ${m.seasons.map((s, i) => renderSeasonCard(m, s, i)).join('')}
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="settings-panel" id="settings-panel">
+        <h4>⚙️ Editar Configurações</h4>
+        <div class="form-group">
+          <label>Nome</label>
+          <input type="text" id="edit-name" value="${m.name}">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nº de temporadas</label>
+            <input type="number" id="edit-seasons-count" min="1" value="${m.seasons.length}">
+          </div>
+          <div class="form-group">
+            <label>Duração padrão ep. (min)</label>
+            <input type="number" id="edit-default-duration" min="1" value="${m.seasons[0]?.epDuration || 25}">
+          </div>
+        </div>
+        <div class="modal-actions" style="margin-top:12px;">
+          <button class="btn btn-sm btn-danger" onclick="confirmResetAll('${m.id}')">🔄 Zerar tudo</button>
+          <button class="btn btn-sm btn-primary" onclick="saveSettings()">Salvar</button>
+        </div>
+      </div>
+    `;
+  } else {
+    // MOVIE
+    const progress = m.completed ? 100 : (m.duration > 0 ? ((m.watchedMinutes || 0) / m.duration) * 100 : 0);
+
+    container.innerHTML = `
+      <div class="detail-header">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button class="detail-back" onclick="goBack()">← Voltar</button>
+          <h2>${m.name}</h2>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-sm btn-secondary" onclick="toggleSettings()">⚙️ Configurações</button>
+          <button class="btn btn-sm btn-danger" onclick="confirmDeleteMedia('${m.id}')">🗑️ Excluir</button>
+        </div>
+      </div>
+
+      ${m.lastWatched ? `<div class="last-watched">🕐 Assistido pela última vez em ${formatDate(m.lastWatched)}</div>` : ''}
+
+      <div class="detail-meta">
+        <span>📂 ${section ? section.name : ''}</span>
+        <span>⏱ ${m.duration} min total</span>
+        <span>📊 ${progress.toFixed(1)}%</span>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <div class="progress-bar" style="height:10px;">
+          <div class="progress-fill ${m.completed ? 'green' : progress > 0 ? 'yellow' : 'red'}" style="width:${Math.min(progress,100)}%"></div>
+        </div>
+      </div>
+
+      <div class="film-progress">
+        <h4 style="margin-bottom:15px;">Progresso do Filme</h4>
+        <div class="film-time-row">
+          <label>Tempo assistido (min):</label>
+          <input type="number" id="film-watched" min="0" max="${m.duration}" value="${m.watchedMinutes || 0}" onchange="updateFilmProgress()">
+          <span style="color:var(--text3)">/ ${m.duration} min</span>
+        </div>
+        <div class="film-status-btns">
+          <button class="btn btn-sm ${m.completed ? 'btn-primary' : 'btn-secondary'}" onclick="markFilmComplete(true)">
+            ✅ Assistido completo
+          </button>
+          <button class="btn btn-sm ${!m.completed && (m.watchedMinutes||0) > 0 ? 'btn-primary' : 'btn-secondary'}" onclick="markFilmComplete(false)">
+            ⏸ Parcialmente assistido
+          </button>
+          <button class="btn btn-sm btn-danger" onclick="resetFilm()">🔄 Zerar</button>
+        </div>
+      </div>
+
+      <div class="comment-section">
+        <h4>💬 Comentário / Anotação</h4>
+        <textarea id="comment-input" placeholder="Escreva um comentário...">${m.comment || ''}</textarea>
+        <button class="btn btn-sm btn-primary" onclick="saveComment()">Salvar</button>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="settings-panel" id="settings-panel">
+        <h4>⚙️ Editar Configurações</h4>
+        <div class="form-group">
+          <label>Nome</label>
+          <input type="text" id="edit-name" value="${m.name}">
+        </div>
+        <div class="form-group">
+          <label>Duração total (min)</label>
+          <input type="number" id="edit-movie-duration" min="1" value="${m.duration}">
+        </div>
+        <div class="modal-actions" style="margin-top:12px;">
+          <button class="btn btn-sm btn-primary" onclick="saveMovieSettings()">Salvar</button>
+        </div>
+      </div>
+    `;
+  }
+}
+
+function renderSeasonCard(media, season, index) {
+  const progress = season.totalEpisodes > 0 ? (season.watched / season.totalEpisodes) * 100 : 0;
+  const isComplete = season.watched >= season.totalEpisodes;
+  const timeWatched = season.watched * season.epDuration + (season.partialMinutes || 0);
+  const timeRemaining = Math.max(0, (season.totalEpisodes - season.watched) * season.epDuration - (season.partialMinutes || 0));
+
+  return `
+    <div class="season-card">
+      <div class="season-header" onclick="toggleSeason(${index})">
+        <div>
+          <span class="season-title">${isComplete ? '✅' : '📺'} Temporada ${index + 1}</span>
+          <div style="font-size:.8rem;color:var(--text3);margin-top:2px;">
+            ${season.watched}/${season.totalEpisodes} ep · ${season.epDuration}min/ep · ⏱ ${formatTime(timeWatched)} · ⏳ ${formatTime(timeRemaining)}
+          </div>
+        </div>
+        <div class="season-info">
+          <span>${progress.toFixed(0)}%</span>
+          <div class="season-progress">
+            <div class="progress-bar">
+              <div class="progress-fill ${isComplete ? 'green' : progress > 0 ? 'blue' : 'red'}" style="width:${Math.min(progress,100)}%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="season-body" id="season-body-${index}">
+        <div class="episode-tracker">
+          <div class="episode-counter">
+            <button class="count-btn" onclick="changeEpisode('${media.id}', ${index}, -1)">−</button>
+            <div>
+              <div class="count-display">${season.watched}</div>
+              <div class="count-total">/ ${season.totalEpisodes}</div>
+            </div>
+            <button class="count-btn" onclick="changeEpisode('${media.id}', ${index}, 1)">+</button>
+          </div>
+          <div class="ep-time-info">
+            <span><strong>${season.watched}</strong> ep assistidos</span>
+            <span><strong>${season.totalEpisodes - season.watched}</strong> ep restantes</span>
+            <span>⏱ <strong>${formatTime(timeRemaining)}</strong> para acabar</span>
+          </div>
+        </div>
+
+        <div class="partial-watch" style="margin-top:12px;">
+          <label>⏸ Episódio parcial — minutos assistidos do ep. atual:</label><br>
+          <input type="number" id="partial-${index}" min="0" max="${season.epDuration}"
+            value="${season.partialMinutes || 0}"
+            onchange="updatePartial('${media.id}', ${index}, this.value)">
+          <span style="font-size:.85rem;color:var(--text3);">/ ${season.epDuration} min</span>
+        </div>
+
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+          <label style="font-size:.85rem;color:var(--text2);">Duração ep. desta temporada (min):</label>
+          <input type="number" style="width:70px;padding:6px;background:var(--bg);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);text-align:center;outline:none;font-size:.9rem;"
+            value="${season.epDuration}" min="1"
+            onchange="updateSeasonDuration('${media.id}', ${index}, this.value)">
+        </div>
+
+        <div class="season-actions">
+          <button class="btn btn-sm btn-danger" onclick="confirmResetSeason('${media.id}', ${index})">🔄 Zerar temporada</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ==================== EPISODE ACTIONS ====================
+function changeEpisode(mediaId, seasonIndex, delta) {
+  const m = data.media.find(x => x.id === mediaId);
+  if (!m) return;
+  const s = m.seasons[seasonIndex];
+
+  s.watched = Math.max(0, Math.min(s.totalEpisodes, s.watched + delta));
+  if (delta > 0) {
+    m.lastWatched = new Date().toISOString();
+    s.partialMinutes = 0; // reset partial on full episode
+  }
+
+  saveData(data);
+  renderDetail();
+}
+
+function updatePartial(mediaId, seasonIndex, minutes) {
+  const m = data.media.find(x => x.id === mediaId);
+  if (!m) return;
+  m.seasons[seasonIndex].partialMinutes = Math.max(0, parseInt(minutes) || 0);
+  m.lastWatched = new Date().toISOString();
+  saveData(data);
+}
+
+function updateSeasonDuration(mediaId, seasonIndex, duration) {
+  const m = data.media.find(x => x.id === mediaId);
+  if (!m) return;
+  m.seasons[seasonIndex].epDuration = Math.max(1, parseInt(duration) || 1);
+  saveData(data);
+  renderDetail();
+}
+
+function toggleSeason(index) {
+  const body = document.getElementById(`season-body-${index}`);
+  body.classList.toggle('open');
+}
+
+// ==================== FILM ACTIONS ====================
+function updateFilmProgress() {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+  const val = parseInt(document.getElementById('film-watched').value) || 0;
+  m.watchedMinutes = Math.min(val, m.duration);
+  m.completed = m.watchedMinutes >= m.duration;
+  m.lastWatched = new Date().toISOString();
+  saveData(data);
+  renderDetail();
+}
+
+function markFilmComplete(complete) {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+  m.completed = complete;
+  if (complete) m.watchedMinutes = m.duration;
+  m.lastWatched = new Date().toISOString();
+  saveData(data);
+  renderDetail();
+}
+
+function resetFilm() {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+  m.watchedMinutes = 0;
+  m.completed = false;
+  saveData(data);
+  renderDetail();
+}
+
+// ==================== COMMENT ====================
+function saveComment() {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+  m.comment = document.getElementById('comment-input').value;
+  saveData(data);
+}
+
+// ==================== SETTINGS ====================
+function toggleSettings() {
+  document.getElementById('settings-panel').classList.toggle('open');
+}
+
+function saveSettings() {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+
+  m.name = document.getElementById('edit-name').value.trim() || m.name;
+  const newCount = parseInt(document.getElementById('edit-seasons-count').value) || m.seasons.length;
+  const defaultDur = parseInt(document.getElementById('edit-default-duration').value) || 25;
+
+  // Adjust seasons
+  while (m.seasons.length < newCount) {
+    m.seasons.push({
+      totalEpisodes: 12,
+      watched: 0,
+      epDuration: defaultDur,
+      partialMinutes: 0
+    });
+  }
+  if (m.seasons.length > newCount) {
+    m.seasons = m.seasons.slice(0, newCount);
+  }
+
+  saveData(data);
+  renderDetail();
+  renderSidebar();
+}
+
+function saveMovieSettings() {
+  const m = data.media.find(x => x.id === currentMediaId);
+  if (!m) return;
+  m.name = document.getElementById('edit-name').value.trim() || m.name;
+  m.duration = parseInt(document.getElementById('edit-movie-duration').value) || m.duration;
+  saveData(data);
+  renderDetail();
+  renderSidebar();
+}
+
+// ==================== RESET ====================
+function confirmResetSeason(mediaId, seasonIndex) {
+  document.getElementById('confirm-message').textContent = `Zerar toda a Temporada ${seasonIndex + 1}? O progresso será perdido.`;
+  document.getElementById('confirm-btn').onclick = () => {
+    const m = data.media.find(x => x.id === mediaId);
+    if (m) {
+      m.seasons[seasonIndex].watched = 0;
+      m.seasons[seasonIndex].partialMinutes = 0;
+      saveData(data);
+      renderDetail();
+    }
+    closeModal('modal-confirm');
+  };
+  openModal('modal-confirm');
+}
+
+function confirmResetAll(mediaId) {
+  document.getElementById('confirm-message').textContent = 'Zerar TODAS as temporadas? Todo o progresso será perdido.';
+  document.getElementById('confirm-btn').onclick = () => {
+    const m = data.media.find(x => x.id === mediaId);
+    if (m) {
+      m.seasons.forEach(s => { s.watched = 0; s.partialMinutes = 0; });
+      saveData(data);
+      renderDetail();
+    }
+    closeModal('modal-confirm');
+  };
+  openModal('modal-confirm');
+}
+
+// ==================== NAVIGATION ====================
+function showDashboard() {
+  currentView = 'dashboard';
+  currentSectionId = null;
+  currentMediaId = null;
+
+  document.getElementById('dashboard-view').style.display = 'block';
+  document.getElementById('section-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('search-view').style.display = 'none';
+
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('nav-dashboard').classList.add('active');
+  document.querySelectorAll('.section-item').forEach(n => n.classList.remove('active'));
+
+  renderDashboard();
+  renderSidebar();
+  closeSidebar();
+}
+
+function goBack() {
+  if (currentSectionId) {
+    showSection(currentSectionId);
+  } else {
+    showDashboard();
+  }
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+// ==================== GLOBAL SEARCH ====================
+function globalSearch(val) {
+  if (!val.trim()) {
+    document.getElementById('search-view').style.display = 'none';
+    document.getElementById('dashboard-view').style.display = 'block';
+    return;
+  }
+  document.getElementById('dashboard-view').style.display = 'none';
+  document.getElementById('section-view').style.display = 'none';
+  document.getElementById('detail-view').style.display = 'none';
+  document.getElementById('search-view').style.display = 'block';
+
+  const results = data.media.filter(m => m.name.toLowerCase().includes(val.toLowerCase()));
+  document.getElementById('search-grid').innerHTML = results.length > 0
+    ? results.map(m => renderMediaCard(m)).join('')
+    : '<div class="empty-state"><div class="icon">🔍</div><p>Nenhum resultado encontrado.</p></div>';
+}
+
+// ==================== MODALS ====================
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+// ==================== SECTION CRUD ====================
+function openAddSection() {
+  document.getElementById('section-modal-title').textContent = 'Nova Seção';
+  document.getElementById('section-name').value = '';
+  document.getElementById('section-color').value = 'blue';
+  document.getElementById('edit-section-id').value = '';
+  resetColorPicker();
+  openModal('modal-section');
+}
+
+function editSection(id) {
+  const s = data.sections.find(x => x.id === id);
+  if (!s) return;
+  document.getElementById('section-modal-title').textContent = 'Editar Seção';
+  document.getElementById('section-name').value = s.name;
+  document.getElementById('section-color').value = s.color;
+  document.getElementById('edit-section-id').value = id;
+  resetColorPicker();
+  document.querySelector(`[data-color="${s.color}"]`).style.borderColor = '#fff';
+  openModal('modal-section');
+}
+
+function saveSection() {
+  const name = document.getElementById('section-name').value.trim();
+  if (!name) return alert('Informe o nome da seção.');
+  const color = document.getElementById('section-color').value;
+  const editId = document.getElementById('edit-section-id').value;
+
+  if (editId) {
+    const s = data.sections.find(x => x.id === editId);
+    if (s) { s.name = name; s.color = color; }
+  } else {
+    data.sections.push({ id: genId(), name, color });
+  }
+
+  saveData(data);
+  renderSidebar();
+  renderDashboard();
+  closeModal('modal-section');
+}
+
+function confirmDeleteSection(id) {
+  const s = data.sections.find(x => x.id === id);
+  document.getElementById('confirm-message').textContent = `Excluir a seção "${s.name}" e todos os itens dentro dela?`;
+  document.getElementById('confirm-btn').onclick = () => {
+    data.sections = data.sections.filter(x => x.id !== id);
+    data.media = data.media.filter(m => m.sectionId !== id);
+    saveData(data);
+    renderSidebar();
+    if (currentSectionId === id) showDashboard();
+    else renderDashboard();
+    closeModal('modal-confirm');
+  };
+  openModal('modal-confirm');
+}
+
+function pickColor(el) {
+  resetColorPicker();
+  el.style.borderColor = '#fff';
+  document.getElementById('section-color').value = el.dataset.color;
+}
+
+function resetColorPicker() {
+  document.querySelectorAll('#color-picker span').forEach(s => s.style.borderColor = 'transparent');
+}
+
+// ==================== MEDIA CRUD ====================
+function openAddMedia() {
+  document.getElementById('media-modal-title').textContent = 'Novo Registro';
+  document.getElementById('media-name').value = '';
+  document.getElementById('media-type').value = 'series';
+  document.getElementById('media-seasons').value = 1;
+  document.getElementById('media-ep-duration').value = 25;
+  document.getElementById('media-movie-duration').value = 120;
+  document.getElementById('edit-media-id').value = '';
+  toggleMediaFields();
+  populateSectionSelect();
+  generateSeasonInputs();
+  openModal('modal-media');
+}
+
+function populateSectionSelect() {
+  const sel = document.getElementById('media-section');
+  sel.innerHTML = data.sections.map(s =>
+    `<option value="${s.id}" ${s.id === currentSectionId ? 'selected' : ''}>${s.name}</option>`
+  ).join('');
+}
+
+function toggleMediaFields() {
+  const type = document.getElementById('media-type').value;
+  document.getElementById('series-fields').style.display = type === 'series' ? 'block' : 'none';
+  document.getElementById('movie-fields').style.display = type === 'movie' ? 'block' : 'none';
+}
+
+function generateSeasonInputs() {
+  const count = parseInt(document.getElementById('media-seasons').value) || 1;
+  const defaultDur = document.getElementById('media-ep-duration').value || 25;
+  const container = document.getElementById('season-inputs');
+
+  let html = '<div style="font-size:.85rem;color:var(--text2);margin-bottom:8px;">Episódios por temporada:</div>';
+  for (let i = 0; i < count; i++) {
+    html += `
+      <div class="form-row" style="margin-bottom:6px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="font-size:.8rem;">Temp ${i + 1} — Nº de episódios</label>
+          <input type="number" class="season-ep-count" min="1" value="12">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label style="font-size:.8rem;">Duração ep. (min)</label>
+          <input type="number" class="season-ep-dur" min="1" value="${defaultDur}">
+        </div>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+function saveMedia() {
+  const name = document.getElementById('media-name').value.trim();
+  if (!name) return alert('Informe o nome.');
+  const type = document.getElementById('media-type').value;
+  const sectionId = document.getElementById('media-section').value;
+  const editId = document.getElementById('edit-media-id').value;
+
+  if (type === 'series') {
+    const epCounts = document.querySelectorAll('.season-ep-count');
+    const epDurs = document.querySelectorAll('.season-ep-dur');
+    const seasons = [];
+    epCounts.forEach((input, i) => {
+      seasons.push({
+        totalEpisodes: parseInt(input.value) || 12,
+        watched: 0,
+        epDuration: parseInt(epDurs[i]?.value) || 25,
+        partialMinutes: 0
+      });
+    });
+
+    if (editId) {
+      const m = data.media.find(x => x.id === editId);
+      if (m) { m.name = name; m.sectionId = sectionId; m.seasons = seasons; }
+    } else {
+      data.media.push({
+        id: genId(), name, type: 'series', sectionId, seasons,
+        comment: '', lastWatched: null
+      });
+    }
+  } else {
+    const duration = parseInt(document.getElementById('media-movie-duration').value) || 120;
+
+    if (editId) {
+      const m = data.media.find(x => x.id === editId);
+      if (m) { m.name = name; m.sectionId = sectionId; m.duration = duration; }
+    } else {
+      data.media.push({
+        id: genId(), name, type: 'movie', sectionId, duration,
+        watchedMinutes: 0, completed: false,
+        comment: '', lastWatched: null
+      });
+    }
+  }
+
+  saveData(data);
+  closeModal('modal-media');
+  if (currentView === 'section') renderSectionGrid();
+  renderDashboard();
+  renderSidebar();
+}
+
+function confirmDeleteMedia(id) {
+  const m = data.media.find(x => x.id === id);
+  document.getElementById('confirm-message').textContent = `Excluir "${m.name}"? Esta ação não pode ser desfeita.`;
+  document.getElementById('confirm-btn').onclick = () => {
+    data.media = data.media.filter(x => x.id !== id);
+    saveData(data);
+    closeModal('modal-confirm');
+    goBack();
+    renderSidebar();
+  };
+  openModal('modal-confirm');
+}
+
+// ==================== CLOSE MODALS ON OVERLAY CLICK ====================
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.classList.remove('show');
+  });
+});
+
+// ==================== KEYBOARD ====================
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.show').forEach(m => m.classList.remove('show'));
+  }
+});
+
+// ==================== BOOT ====================
+init();
+</script>
+</body>
 </html>
