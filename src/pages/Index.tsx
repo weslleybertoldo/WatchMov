@@ -220,6 +220,7 @@ export default function Index() {
           {selectedItem && selectedItemData && (
             <ItemDetail
               item={selectedItemData}
+              sections={store.data.sections}
               onBack={() => setSelectedItem(null)}
               onUpdate={store.updateItem}
               onDelete={store.deleteItem}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { WatchItem, Season } from '@/types/watch';
+import { WatchItem, Season, Section } from '@/types/watch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,6 +19,7 @@ import { generateId } from '@/store/useWatchStore';
 
 interface ItemDetailProps {
   item: WatchItem;
+  sections: Section[];
   onBack: () => void;
   onUpdate: (id: string, updates: Partial<WatchItem>) => void;
   onDelete: (id: string) => void;
@@ -29,7 +30,7 @@ interface ItemDetailProps {
 }
 
 export default function ItemDetail({
-  item, onBack, onUpdate, onDelete,
+  item, sections, onBack, onUpdate, onDelete,
   onIncrementEpisode, onDecrementEpisode,
   onResetSeason, onResetItem
 }: ItemDetailProps) {
@@ -40,6 +41,7 @@ export default function ItemDetail({
 
   // Edit state - reinitialize when item changes or dialog opens
   const [editTitle, setEditTitle] = useState(item.title);
+  const [editSectionId, setEditSectionId] = useState(item.sectionId);
   const [editDuration, setEditDuration] = useState(String(item.totalDuration || ''));
   const [editSeasons, setEditSeasons] = useState<{ episodes: string; duration: string }[]>(
     item.seasons?.map(s => ({ episodes: String(s.totalEpisodes), duration: String(s.episodeDuration) })) || []
@@ -47,17 +49,21 @@ export default function ItemDetail({
 
   useEffect(() => {
     setEditTitle(item.title);
+    setEditSectionId(item.sectionId);
     setEditDuration(String(item.totalDuration || ''));
     setEditSeasons(
       item.seasons?.map(s => ({ episodes: String(s.totalEpisodes), duration: String(s.episodeDuration) })) || []
     );
     setComment(item.comment || '');
-  }, [item.id, item.title, item.totalDuration, item.seasons, item.comment]);
+  }, [item.id, item.title, item.sectionId, item.totalDuration, item.seasons, item.comment]);
 
   const isSeries = item.type === 'series';
 
   const saveEdit = () => {
     const updates: Partial<WatchItem> = { title: editTitle.trim() || item.title };
+    if (editSectionId !== item.sectionId) {
+      updates.sectionId = editSectionId;
+    }
     if (isSeries) {
       const newSeasons: Season[] = editSeasons.map((se, i) => {
         const existing = item.seasons?.[i];
@@ -346,6 +352,18 @@ export default function ItemDetail({
             <div>
               <label className="text-sm text-muted-foreground">Titulo</label>
               <Input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="mt-1 bg-muted border-border" />
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground">Secao</label>
+              <select
+                value={editSectionId}
+                onChange={e => setEditSectionId(e.target.value)}
+                className="mt-1 w-full h-9 px-3 rounded-md bg-muted border border-border text-sm text-foreground"
+              >
+                {sections.map(s => (
+                  <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
+                ))}
+              </select>
             </div>
             {isSeries ? (
               <>

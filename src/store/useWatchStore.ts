@@ -142,6 +142,7 @@ export function useWatchStore(userId?: string) {
 
   const updateItem = useCallback(async (id: string, updates: Partial<WatchItem>) => {
     const dbUpdates: any = {};
+    if (updates.sectionId !== undefined) dbUpdates.section_id = updates.sectionId;
     if (updates.title !== undefined) dbUpdates.title = updates.title;
     if (updates.totalDuration !== undefined) dbUpdates.total_duration = updates.totalDuration;
     if (updates.watchedDuration !== undefined) dbUpdates.watched_duration = updates.watchedDuration;
