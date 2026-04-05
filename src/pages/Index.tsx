@@ -1,16 +1,19 @@
 import { useState, useMemo } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
+import { useAuth } from '@/contexts/AuthContext';
 import Dashboard from '@/components/Dashboard';
 import SectionList from '@/components/SectionList';
 import ItemCard from '@/components/ItemCard';
 import ItemDetail from '@/components/ItemDetail';
 import AddItemDialog from '@/components/AddItemDialog';
+import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, LayoutDashboard, Menu, X } from 'lucide-react';
+import { Plus, Search, LayoutDashboard, Menu, X, LogOut } from 'lucide-react';
 
 export default function Index() {
   const store = useWatchStore();
+  const { signOut, user } = useAuth();
   const [view, setView] = useState<'dashboard' | 'section'>('dashboard');
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
@@ -99,6 +102,19 @@ export default function Index() {
             onUpdate={store.updateSection}
             onDelete={store.deleteSection}
           />
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-border space-y-3">
+          <UpdateChecker />
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground truncate max-w-[140px]">
+              {user?.email}
+            </span>
+            <Button variant="ghost" size="sm" onClick={signOut} className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
+              <LogOut className="w-3 h-3 mr-1" />
+              Sair
+            </Button>
+          </div>
         </div>
       </aside>
 
