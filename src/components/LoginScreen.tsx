@@ -22,7 +22,7 @@ export function LoginScreen() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm space-y-8 text-center">
         <div>
-          <img src="/logo.png" alt="WatchMov" className="h-28 mx-auto mb-4" />
+          <img src="/logo.png" alt="WatchMov" className="w-72 mx-auto mb-4" />
           <p className="text-muted-foreground mt-2">
             Controle seus filmes e series
           </p>
