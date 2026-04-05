@@ -89,9 +89,7 @@ export default function Index() {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-lg font-bold text-gradient cursor-pointer" onClick={goToDashboard}>
-            Watch Movies
-          </h1>
+          <img src="/logo.png" alt="WatchMov" className="h-8 cursor-pointer" onClick={goToDashboard} />
           <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden" onClick={() => setSidebarOpen(false)}>
             <X className="w-4 h-4" />
           </Button>

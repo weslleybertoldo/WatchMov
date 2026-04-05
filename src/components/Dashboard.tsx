@@ -24,7 +24,7 @@ export default function Dashboard({ stats }: DashboardProps) {
     <div className="space-y-6 animate-fade-in">
       <div>
         <h1 className="text-3xl font-bold">
-          <span className="text-gradient">Watch Movies</span>
+          <span className="text-gradient">WatchMov</span>
         </h1>
         <p className="text-muted-foreground mt-1">Seu painel de controle de filmes e series</p>
       </div>
