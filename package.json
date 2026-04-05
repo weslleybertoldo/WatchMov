@@ -1,7 +1,7 @@
 {
   "name": "watch-movies",
   "private": true,
-  "version": "1.10",
+  "version": "2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

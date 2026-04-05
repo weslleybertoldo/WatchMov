@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Download, X, CheckCircle, RefreshCw } from "lucide-react";
 
 const CURRENT_VERSION = __APP_VERSION__;
@@ -27,6 +27,11 @@ export default function UpdateChecker() {
   const [dismissed, setDismissed] = useState(false);
   const [checking, setChecking] = useState(false);
   const [justChecked, setJustChecked] = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const checkUpdate = async () => {
     setChecking(true);
@@ -37,7 +42,7 @@ export default function UpdateChecker() {
       const release = await res.json();
 
       const remoteVersion = (release.tag_name || "").replace(/^v/, "");
-      if (!remoteVersion) return;
+      if (!remoteVersion || !mountedRef.current) return;
 
       if (isNewerVersion(remoteVersion, CURRENT_VERSION)) {
         const apkAsset = (release.assets || []).find(
@@ -51,12 +56,14 @@ export default function UpdateChecker() {
       } else {
         setUpdate(null);
         setJustChecked(true);
-        setTimeout(() => setJustChecked(false), 3000);
+        setTimeout(() => {
+          if (mountedRef.current) setJustChecked(false);
+        }, 3000);
       }
     } catch {
       // sem internet
     } finally {
-      setChecking(false);
+      if (mountedRef.current) setChecking(false);
     }
   };
 

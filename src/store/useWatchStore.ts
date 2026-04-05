@@ -168,6 +168,9 @@ export function useWatchStore(userId?: string) {
   // ── Episode tracking ──
 
   const incrementEpisode = useCallback(async (itemId: string, seasonId: string) => {
+    let updatedSeasons: Season[] | undefined;
+    const lastWatchedAt = new Date().toISOString();
+
     setData(prev => {
       const items = prev.items.map(item => {
         if (item.id !== itemId || !item.seasons) return item;
@@ -175,15 +178,21 @@ export function useWatchStore(userId?: string) {
           if (s.id !== seasonId || s.watchedEpisodes >= s.totalEpisodes) return s;
           return { ...s, watchedEpisodes: s.watchedEpisodes + 1 };
         });
-        const updated = { ...item, seasons, lastWatchedAt: new Date().toISOString() };
-        supabase.from('wm_items').update({ seasons: updated.seasons, last_watched_at: updated.lastWatchedAt }).eq('id', itemId);
-        return updated;
+        updatedSeasons = seasons;
+        return { ...item, seasons, lastWatchedAt };
       });
       return { ...prev, items };
     });
+
+    if (updatedSeasons) {
+      await supabase.from('wm_items').update({ seasons: updatedSeasons, last_watched_at: lastWatchedAt }).eq('id', itemId);
+    }
   }, []);
 
   const decrementEpisode = useCallback(async (itemId: string, seasonId: string) => {
+    let updatedSeasons: Season[] | undefined;
+    const lastWatchedAt = new Date().toISOString();
+
     setData(prev => {
       const items = prev.items.map(item => {
         if (item.id !== itemId || !item.seasons) return item;
@@ -191,43 +200,57 @@ export function useWatchStore(userId?: string) {
           if (s.id !== seasonId || s.watchedEpisodes <= 0) return s;
           return { ...s, watchedEpisodes: s.watchedEpisodes - 1 };
         });
-        const updated = { ...item, seasons, lastWatchedAt: new Date().toISOString() };
-        supabase.from('wm_items').update({ seasons: updated.seasons, last_watched_at: updated.lastWatchedAt }).eq('id', itemId);
-        return updated;
+        updatedSeasons = seasons;
+        return { ...item, seasons, lastWatchedAt };
       });
       return { ...prev, items };
     });
+
+    if (updatedSeasons) {
+      await supabase.from('wm_items').update({ seasons: updatedSeasons, last_watched_at: lastWatchedAt }).eq('id', itemId);
+    }
   }, []);
 
   const resetSeason = useCallback(async (itemId: string, seasonId: string) => {
+    let updatedSeasons: Season[] | undefined;
+
     setData(prev => {
       const items = prev.items.map(item => {
         if (item.id !== itemId || !item.seasons) return item;
         const seasons = item.seasons.map(s =>
           s.id === seasonId ? { ...s, watchedEpisodes: 0, partialEpisodeTime: undefined } : s
         );
-        const updated = { ...item, seasons };
-        supabase.from('wm_items').update({ seasons: updated.seasons }).eq('id', itemId);
-        return updated;
-      });
-      return { ...prev, items };
-    });
-  }, []);
-
-  const resetItem = useCallback(async (itemId: string) => {
-    setData(prev => {
-      const items = prev.items.map(item => {
-        if (item.id !== itemId) return item;
-        if (item.type === 'movie') {
-          supabase.from('wm_items').update({ watched_duration: 0, completed: false }).eq('id', itemId);
-          return { ...item, watchedDuration: 0, completed: false };
-        }
-        const seasons = item.seasons?.map(s => ({ ...s, watchedEpisodes: 0, partialEpisodeTime: undefined }));
-        supabase.from('wm_items').update({ seasons }).eq('id', itemId);
+        updatedSeasons = seasons;
         return { ...item, seasons };
       });
       return { ...prev, items };
     });
+
+    if (updatedSeasons) {
+      await supabase.from('wm_items').update({ seasons: updatedSeasons }).eq('id', itemId);
+    }
+  }, []);
+
+  const resetItem = useCallback(async (itemId: string) => {
+    let dbUpdate: Record<string, any> | undefined;
+
+    setData(prev => {
+      const items = prev.items.map(item => {
+        if (item.id !== itemId) return item;
+        if (item.type === 'movie') {
+          dbUpdate = { watched_duration: 0, completed: false };
+          return { ...item, watchedDuration: 0, completed: false };
+        }
+        const seasons = item.seasons?.map(s => ({ ...s, watchedEpisodes: 0, partialEpisodeTime: undefined }));
+        dbUpdate = { seasons };
+        return { ...item, seasons };
+      });
+      return { ...prev, items };
+    });
+
+    if (dbUpdate) {
+      await supabase.from('wm_items').update(dbUpdate).eq('id', itemId);
+    }
   }, []);
 
   // ── Stats ──

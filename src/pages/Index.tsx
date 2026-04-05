@@ -31,6 +31,14 @@ export default function Index() {
     }
   }, [selectedItem, selectedItemData]);
 
+  // Clear activeSection if it was deleted
+  useEffect(() => {
+    if (activeSection && !store.data.sections.find(s => s.id === activeSection)) {
+      setActiveSection(null);
+      setView('dashboard');
+    }
+  }, [activeSection, store.data.sections]);
+
   const sectionItems = useMemo(() => {
     if (!activeSection) return [];
     let items = store.data.items.filter(i => i.sectionId === activeSection);

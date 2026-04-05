@@ -33,13 +33,22 @@ export async function signInWithGoogle(): Promise<{ error?: string }> {
 
     // Listener para capturar o deep link
     const sessionPromise = new Promise<{ error?: string }>((resolve) => {
+      let resolved = false;
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        listenerHandle.remove();
+      };
+
       const timeout = setTimeout(() => {
+        cleanup();
         resolve({ error: "Login cancelado ou expirado" });
       }, 120000);
 
       const listenerHandle = App.addListener("appUrlOpen", async (event) => {
         if (!event.url.startsWith(REDIRECT_SCHEME)) return;
         clearTimeout(timeout);
+        cleanup();
 
         try {
           const hashPart = event.url.includes("#") ? event.url.split("#")[1] : event.url.split("?")[1];
@@ -67,7 +76,6 @@ export async function signInWithGoogle(): Promise<{ error?: string }> {
         }
 
         try { await Browser.close(); } catch {}
-        listenerHandle.remove();
       });
     });
 

@@ -52,7 +52,7 @@ export default function ItemDetail({
       item.seasons?.map(s => ({ episodes: String(s.totalEpisodes), duration: String(s.episodeDuration) })) || []
     );
     setComment(item.comment || '');
-  }, [item.id]);
+  }, [item.id, item.title, item.totalDuration, item.seasons, item.comment]);
 
   const isSeries = item.type === 'series';
 
