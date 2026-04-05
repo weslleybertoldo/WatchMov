@@ -71,7 +71,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = async (): Promise<{ error: string | null }> => {
     const result = await capacitorSignIn();
-    return { error: result.error ?? null };
+    if (result.error) {
+      return { error: result.error };
+    }
+    // Deep link flow: setSession ja foi chamado no capacitorAuth
+    // Forcar refresh para garantir UI atualiza
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      setSession(session);
+      setUser(session.user);
+      saveCachedSession(session);
+    }
+    return { error: null };
   };
 
   const signOut = async () => {
