@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Download, X, CheckCircle, RefreshCw } from "lucide-react";
 
 const CURRENT_VERSION = __APP_VERSION__;
-const RELEASES_URL = "https://api.github.com/repos/weslleybertoldo/show-tracker-pro/releases/latest";
+const RELEASES_URL = "https://api.github.com/repos/weslleybertoldo/WatchMov/releases/latest";
 
 interface VersionInfo {
   version: string;
