@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAndroidBackButton } from '@/hooks/use-android-back';
 import Dashboard from '@/components/Dashboard';
 import SectionList from '@/components/SectionList';
 import ItemCard from '@/components/ItemCard';
@@ -65,6 +66,21 @@ export default function Index() {
     });
     return counts;
   }, [store.data.items]);
+
+  // Android back button: fecha em camadas antes de sair do app
+  const handleAndroidBack = useCallback(async (): Promise<boolean> => {
+    if (addDialogOpen) { setAddDialogOpen(false); return true; }
+    if (sidebarOpen) { setSidebarOpen(false); return true; }
+    if (selectedItem) { setSelectedItem(null); return true; }
+    if (view === 'section') {
+      setView('dashboard');
+      setActiveSection(null);
+      return true;
+    }
+    if (searchQuery) { setSearchQuery(''); return true; }
+    return false;
+  }, [addDialogOpen, sidebarOpen, selectedItem, view, searchQuery]);
+  useAndroidBackButton(handleAndroidBack);
 
   const handleSelectSection = (id: string) => {
     setActiveSection(id);
