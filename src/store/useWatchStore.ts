@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AppData, Section, WatchItem, Season, DashboardStats } from '@/types/watch';
 import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 // ── Helpers ──
 
@@ -8,35 +9,64 @@ export function generateId(): string {
   return crypto.randomUUID();
 }
 
-function dbSectionToLocal(row: any): Section {
+interface DbSectionRow {
+  id: string;
+  user_id: string;
+  name: string;
+  icon: string | null;
+  created_at: string;
+}
+
+interface DbItemRow {
+  id: string;
+  user_id: string;
+  section_id: string;
+  title: string;
+  type: 'movie' | 'series';
+  total_duration: number | null;
+  watched_duration: number | null;
+  completed: boolean | null;
+  seasons: Season[] | null;
+  comment: string | null;
+  last_watched_at: string | null;
+  created_at: string;
+}
+
+function dbSectionToLocal(row: DbSectionRow): Section {
   return {
     id: row.id,
     name: row.name,
-    icon: row.icon || '\uD83D\uDCC1',
+    icon: row.icon || '📁',
     createdAt: row.created_at,
   };
 }
 
-function dbItemToLocal(row: any): WatchItem {
+function dbItemToLocal(row: DbItemRow): WatchItem {
   return {
     id: row.id,
     sectionId: row.section_id,
     title: row.title,
     type: row.type,
-    totalDuration: row.total_duration,
-    watchedDuration: row.watched_duration || 0,
-    completed: row.completed || false,
-    seasons: row.seasons || undefined,
-    comment: row.comment || undefined,
-    lastWatchedAt: row.last_watched_at || undefined,
+    totalDuration: row.total_duration ?? undefined,
+    watchedDuration: row.watched_duration ?? 0,
+    completed: row.completed ?? false,
+    seasons: row.seasons ?? undefined,
+    comment: row.comment ?? undefined,
+    lastWatchedAt: row.last_watched_at ?? undefined,
     createdAt: row.created_at,
   };
 }
 
+function reportDbError(action: string, error: unknown) {
+  const msg = error instanceof Error ? error.message : (typeof error === 'object' && error && 'message' in error ? String((error as { message: unknown }).message) : 'erro desconhecido');
+  console.error(`[WatchStore] ${action}:`, error);
+  toast.error(`Falha ao ${action}`, { description: msg });
+}
+
 const DEFAULT_SECTIONS = [
-  { name: 'Filmes', icon: '\uD83C\uDFAC' },
-  { name: 'Series', icon: '\uD83D\uDCFA' },
-  { name: 'Animes', icon: '\u26E9\uFE0F' },
+  { name: 'Filmes', icon: '🎬' },
+  { name: 'Series', icon: '📺' },
+  { name: 'Animes', icon: '⛩️' },
 ];
 
 // ── Store Hook ──
@@ -45,6 +75,12 @@ export function useWatchStore(userId?: string) {
   const [data, setData] = useState<AppData>({ sections: [], items: [] });
   const [loading, setLoading] = useState(true);
   const loadedRef = useRef(false);
+  const itemsRef = useRef<WatchItem[]>([]);
+
+  // Keep ref in sync to avoid stale closures in increment/decrement
+  useEffect(() => {
+    itemsRef.current = data.items;
+  }, [data.items]);
 
   // ── Load from Supabase ──
   const loadFromDB = useCallback(async () => {
@@ -55,17 +91,21 @@ export function useWatchStore(userId?: string) {
       supabase.from('wm_items').select('*').eq('user_id', userId).order('created_at'),
     ]);
 
+    if (secRes.error) reportDbError('carregar secoes', secRes.error);
+    if (itemRes.error) reportDbError('carregar itens', itemRes.error);
+
     let sections = (secRes.data || []).map(dbSectionToLocal);
     const items = (itemRes.data || []).map(dbItemToLocal);
 
     // Seed default sections for new users
-    if (sections.length === 0 && !loadedRef.current) {
+    if (sections.length === 0 && !loadedRef.current && !secRes.error) {
       const inserts = DEFAULT_SECTIONS.map(s => ({
         user_id: userId,
         name: s.name,
         icon: s.icon,
       }));
-      const { data: inserted } = await supabase.from('wm_sections').insert(inserts).select();
+      const { data: inserted, error } = await supabase.from('wm_sections').insert(inserts).select();
+      if (error) reportDbError('criar secoes padrao', error);
       if (inserted) sections = inserted.map(dbSectionToLocal);
     }
 
@@ -86,10 +126,13 @@ export function useWatchStore(userId?: string) {
     if (!userId) return;
     const { data: inserted, error } = await supabase
       .from('wm_sections')
-      .insert({ user_id: userId, name, icon: icon || '\uD83D\uDCC1' })
+      .insert({ user_id: userId, name, icon: icon || '📁' })
       .select()
       .single();
-    if (error || !inserted) return;
+    if (error || !inserted) {
+      reportDbError('adicionar secao', error);
+      return;
+    }
     setData(prev => ({
       ...prev,
       sections: [...prev.sections, dbSectionToLocal(inserted)],
@@ -97,43 +140,55 @@ export function useWatchStore(userId?: string) {
   }, [userId]);
 
   const updateSection = useCallback(async (id: string, updates: Partial<Section>) => {
-    const dbUpdates: any = {};
+    const dbUpdates: { name?: string; icon?: string } = {};
     if (updates.name !== undefined) dbUpdates.name = updates.name;
     if (updates.icon !== undefined) dbUpdates.icon = updates.icon;
-    await supabase.from('wm_sections').update(dbUpdates).eq('id', id);
+    // optimistic
     setData(prev => ({
       ...prev,
       sections: prev.sections.map(s => s.id === id ? { ...s, ...updates } : s),
     }));
-  }, []);
+    const { error } = await supabase.from('wm_sections').update(dbUpdates).eq('id', id);
+    if (error) {
+      reportDbError('atualizar secao', error);
+      loadFromDB();
+    }
+  }, [loadFromDB]);
 
   const deleteSection = useCallback(async (id: string) => {
-    await supabase.from('wm_items').delete().eq('section_id', id);
-    await supabase.from('wm_sections').delete().eq('id', id);
+    // optimistic — FK ON DELETE CASCADE remove os itens automaticamente
     setData(prev => ({
       ...prev,
       sections: prev.sections.filter(s => s.id !== id),
       items: prev.items.filter(i => i.sectionId !== id),
     }));
-  }, []);
+    const { error } = await supabase.from('wm_sections').delete().eq('id', id);
+    if (error) {
+      reportDbError('excluir secao', error);
+      loadFromDB();
+    }
+  }, [loadFromDB]);
 
   // ── Item CRUD ──
 
   const addItem = useCallback(async (item: Omit<WatchItem, 'id' | 'createdAt'>) => {
     if (!userId) return;
-    const row: any = {
+    const row = {
       user_id: userId,
       section_id: item.sectionId,
       title: item.title,
       type: item.type,
-      total_duration: item.totalDuration || null,
-      watched_duration: item.watchedDuration || 0,
-      completed: item.completed || false,
-      seasons: item.seasons || null,
-      comment: item.comment || null,
+      total_duration: item.totalDuration ?? null,
+      watched_duration: item.watchedDuration ?? 0,
+      completed: item.completed ?? false,
+      seasons: item.seasons ?? null,
+      comment: item.comment ?? null,
     };
     const { data: inserted, error } = await supabase.from('wm_items').insert(row).select().single();
-    if (error || !inserted) return;
+    if (error || !inserted) {
+      reportDbError('adicionar item', error);
+      return;
+    }
     setData(prev => ({
       ...prev,
       items: [...prev.items, dbItemToLocal(inserted)],
@@ -141,7 +196,7 @@ export function useWatchStore(userId?: string) {
   }, [userId]);
 
   const updateItem = useCallback(async (id: string, updates: Partial<WatchItem>) => {
-    const dbUpdates: any = {};
+    const dbUpdates: Record<string, unknown> = {};
     if (updates.sectionId !== undefined) dbUpdates.section_id = updates.sectionId;
     if (updates.title !== undefined) dbUpdates.title = updates.title;
     if (updates.totalDuration !== undefined) dbUpdates.total_duration = updates.totalDuration;
@@ -151,22 +206,42 @@ export function useWatchStore(userId?: string) {
     if (updates.comment !== undefined) dbUpdates.comment = updates.comment;
     if (updates.lastWatchedAt !== undefined) dbUpdates.last_watched_at = updates.lastWatchedAt;
 
-    await supabase.from('wm_items').update(dbUpdates).eq('id', id);
+    // optimistic
     setData(prev => ({
       ...prev,
       items: prev.items.map(i => i.id === id ? { ...i, ...updates } : i),
     }));
-  }, []);
+    const { error } = await supabase.from('wm_items').update(dbUpdates).eq('id', id);
+    if (error) {
+      reportDbError('atualizar item', error);
+      loadFromDB();
+    }
+  }, [loadFromDB]);
 
   const deleteItem = useCallback(async (id: string) => {
-    await supabase.from('wm_items').delete().eq('id', id);
+    // optimistic
     setData(prev => ({
       ...prev,
       items: prev.items.filter(i => i.id !== id),
     }));
-  }, []);
+    const { error } = await supabase.from('wm_items').delete().eq('id', id);
+    if (error) {
+      reportDbError('excluir item', error);
+      loadFromDB();
+    }
+  }, [loadFromDB]);
 
   // ── Episode tracking ──
+  // Anti-race: serializa writes por itemId em uma fila simples (last-write-wins
+  // intencional, mas garante que reads usem a ultima versao do estado).
+  const writeQueueRef = useRef<Map<string, Promise<void>>>(new Map());
+
+  const enqueueItemWrite = useCallback((itemId: string, op: () => Promise<void>) => {
+    const prev = writeQueueRef.current.get(itemId) ?? Promise.resolve();
+    const next = prev.then(op).catch(() => {});
+    writeQueueRef.current.set(itemId, next);
+    return next;
+  }, []);
 
   const incrementEpisode = useCallback(async (itemId: string, seasonId: string) => {
     let updatedSeasons: Season[] | undefined;
@@ -186,9 +261,22 @@ export function useWatchStore(userId?: string) {
     });
 
     if (updatedSeasons) {
-      await supabase.from('wm_items').update({ seasons: updatedSeasons, last_watched_at: lastWatchedAt }).eq('id', itemId);
+      const seasonsSnapshot = updatedSeasons;
+      enqueueItemWrite(itemId, async () => {
+        // Re-read latest from ref to send the freshest version, mitigating
+        // out-of-order writes on rapid increment/decrement clicks.
+        const current = itemsRef.current.find(i => i.id === itemId);
+        const seasons = current?.seasons ?? seasonsSnapshot;
+        const { error } = await supabase.from('wm_items')
+          .update({ seasons, last_watched_at: lastWatchedAt })
+          .eq('id', itemId);
+        if (error) {
+          reportDbError('salvar episodio', error);
+          loadFromDB();
+        }
+      });
     }
-  }, []);
+  }, [enqueueItemWrite, loadFromDB]);
 
   const decrementEpisode = useCallback(async (itemId: string, seasonId: string) => {
     let updatedSeasons: Season[] | undefined;
@@ -208,9 +296,20 @@ export function useWatchStore(userId?: string) {
     });
 
     if (updatedSeasons) {
-      await supabase.from('wm_items').update({ seasons: updatedSeasons, last_watched_at: lastWatchedAt }).eq('id', itemId);
+      const seasonsSnapshot = updatedSeasons;
+      enqueueItemWrite(itemId, async () => {
+        const current = itemsRef.current.find(i => i.id === itemId);
+        const seasons = current?.seasons ?? seasonsSnapshot;
+        const { error } = await supabase.from('wm_items')
+          .update({ seasons, last_watched_at: lastWatchedAt })
+          .eq('id', itemId);
+        if (error) {
+          reportDbError('salvar episodio', error);
+          loadFromDB();
+        }
+      });
     }
-  }, []);
+  }, [enqueueItemWrite, loadFromDB]);
 
   const resetSeason = useCallback(async (itemId: string, seasonId: string) => {
     let updatedSeasons: Season[] | undefined;
@@ -228,12 +327,19 @@ export function useWatchStore(userId?: string) {
     });
 
     if (updatedSeasons) {
-      await supabase.from('wm_items').update({ seasons: updatedSeasons }).eq('id', itemId);
+      const snapshot = updatedSeasons;
+      enqueueItemWrite(itemId, async () => {
+        const { error } = await supabase.from('wm_items').update({ seasons: snapshot }).eq('id', itemId);
+        if (error) {
+          reportDbError('zerar temporada', error);
+          loadFromDB();
+        }
+      });
     }
-  }, []);
+  }, [enqueueItemWrite, loadFromDB]);
 
   const resetItem = useCallback(async (itemId: string) => {
-    let dbUpdate: Record<string, any> | undefined;
+    let dbUpdate: Record<string, unknown> | undefined;
 
     setData(prev => {
       const items = prev.items.map(item => {
@@ -250,9 +356,16 @@ export function useWatchStore(userId?: string) {
     });
 
     if (dbUpdate) {
-      await supabase.from('wm_items').update(dbUpdate).eq('id', itemId);
+      const snapshot = dbUpdate;
+      enqueueItemWrite(itemId, async () => {
+        const { error } = await supabase.from('wm_items').update(snapshot).eq('id', itemId);
+        if (error) {
+          reportDbError('resetar item', error);
+          loadFromDB();
+        }
+      });
     }
-  }, []);
+  }, [enqueueItemWrite, loadFromDB]);
 
   // ── Stats ──
 

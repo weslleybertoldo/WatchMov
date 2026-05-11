@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping runtime do projeto (auth/v1/health)
-        # Trafego HTTP no host <ref>.supabase.co — exatamente o tipo de
-        # trafego que uso normal faz. Anon key e publica (vai pro frontend).
+        env:
+          ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           set -e
           RES=$(curl -s -w "\n%{http_code}" \
-            -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udndwZ3B2enlzdnludGRydGF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNTM0NjksImV4cCI6MjA5MDkyOTQ2OX0.Tbzl6T7mtazuluCL88tRTp0BWb2ZUxCLpsKvPE5VlWc" \
+            -H "apikey: $ANON_KEY" \
             "https://nnvwpgpvzysvyntdrtay.supabase.co/auth/v1/health")
           CODE=$(echo "$RES" | tail -1)
           echo "WatchMov runtime ping: HTTP $CODE"

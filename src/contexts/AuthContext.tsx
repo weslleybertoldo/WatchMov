@@ -39,7 +39,9 @@ function saveCachedSession(session: Session | null) {
     } else {
       localStorage.removeItem(SESSION_KEY);
     }
-  } catch {}
+  } catch {
+    // localStorage indisponivel (privacy mode, quota cheia) — ignorar
+  }
 }
 
 // Setup deep link listener no boot
@@ -92,14 +94,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    saveCachedSession(null);
     try {
       await supabase.auth.signOut();
     } catch (e) {
       console.warn("[Auth] Erro ao fazer signOut:", e);
+    } finally {
+      saveCachedSession(null);
+      setSession(null);
+      setUser(null);
     }
-    setSession(null);
-    setUser(null);
   };
 
   return (
