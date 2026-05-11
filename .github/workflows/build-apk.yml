@@ -91,18 +91,32 @@ jobs:
 
       - name: Bump version for next build
         run: |
-          CURRENT=$(node -p "require('./package.json').version")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_MINOR=$((MINOR + 1))
-          NEXT="$MAJOR.$NEW_MINOR"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '$NEXT';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json
-          git diff --staged --quiet || git commit -m "chore: bump version to v$NEXT [skip ci]"
-          git push
+          # Retry com reset --hard origin/main para evitar race entre runs paralelos.
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            CURRENT=$(node -p "require('./package.json').version")
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            NEW_MINOR=$((MINOR + 1))
+            NEXT="$MAJOR.$NEW_MINOR"
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              pkg.version = '$NEXT';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+            git add package.json
+            if git diff --staged --quiet; then exit 0; fi
+            git commit -m "chore: bump version to v$NEXT [skip ci]"
+            if git push origin main; then
+              echo "Pushed v$NEXT on attempt $i"
+              exit 0
+            fi
+            echo "Push rejeitado tentativa $i, refazendo..."
+            sleep $((i * 2))
+          done
+          echo "::error::Falha bump apos 5 tentativas"
+          exit 1

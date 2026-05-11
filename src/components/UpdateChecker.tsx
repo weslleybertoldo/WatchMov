@@ -9,7 +9,7 @@ interface VersionInfo {
   download_url: string;
 }
 
-function isNewerVersion(remote: string, local: string): boolean {
+export function isNewerVersion(remote: string, local: string): boolean {
   const r = remote.split(".").map(Number);
   const l = local.split(".").map(Number);
   const len = Math.max(r.length, l.length);

@@ -1,18 +1,5 @@
 import { describe, it, expect } from "vitest";
-
-// Re-implementing isNewerVersion here to test the comparison logic.
-function isNewerVersion(remote: string, local: string): boolean {
-  const r = remote.split(".").map(Number);
-  const l = local.split(".").map(Number);
-  const len = Math.max(r.length, l.length);
-  for (let i = 0; i < len; i++) {
-    const rv = r[i] || 0;
-    const lv = l[i] || 0;
-    if (rv > lv) return true;
-    if (rv < lv) return false;
-  }
-  return false;
-}
+import { isNewerVersion } from "./UpdateChecker";
 
 describe("isNewerVersion", () => {
   it("detects minor bump", () => {
