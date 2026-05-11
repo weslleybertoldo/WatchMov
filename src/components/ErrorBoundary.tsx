@@ -31,9 +31,11 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-sm text-muted-foreground">
               Ocorreu um erro inesperado. Tente recarregar a pagina.
             </p>
-            <pre className="text-xs text-destructive overflow-auto p-2 bg-muted rounded">
-              {this.state.error.message}
-            </pre>
+            {import.meta.env.DEV && (
+              <pre className="text-xs text-destructive overflow-auto p-2 bg-muted rounded text-left">
+                {this.state.error.message}
+              </pre>
+            )}
             <Button onClick={() => window.location.reload()}>Recarregar</Button>
           </div>
         </div>

@@ -238,7 +238,17 @@ export function useWatchStore(userId?: string) {
 
   const enqueueItemWrite = useCallback((itemId: string, op: () => Promise<void>) => {
     const prev = writeQueueRef.current.get(itemId) ?? Promise.resolve();
-    const next = prev.then(op).catch(() => {});
+    const next = prev
+      .then(op)
+      .catch((err) => {
+        console.error(`[WatchStore] write queue ${itemId}:`, err);
+      })
+      .finally(() => {
+        // Limpa entrada se for a ultima da fila (evita vazamento do Map).
+        if (writeQueueRef.current.get(itemId) === next) {
+          writeQueueRef.current.delete(itemId);
+        }
+      });
     writeQueueRef.current.set(itemId, next);
     return next;
   }, []);
