@@ -25,7 +25,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://lh3.googleusercontent.com; font-src 'self' data:; connect-src 'self' https://nnvwpgpvzysvyntdrtay.supabase.co wss://nnvwpgpvzysvyntdrtay.supabase.co https://api.github.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://lh3.googleusercontent.com; font-src 'self' data:; connect-src 'self' https://nnvwpgpvzysvyntdrtay.supabase.co wss://nnvwpgpvzysvyntdrtay.supabase.co https://api.github.com; frame-src https://accounts.google.com https://nnvwpgpvzysvyntdrtay.supabase.co; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com https://nnvwpgpvzysvyntdrtay.supabase.co; object-src 'none'; upgrade-insecure-requests"
         }
       ]
     }
