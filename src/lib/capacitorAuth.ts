@@ -75,7 +75,7 @@ export async function signInWithGoogle(): Promise<{ error?: string }> {
           resolve({ error: "Erro ao processar login" });
         }
 
-        try { await Browser.close(); } catch {}
+        try { await Browser.close(); } catch { /* Browser ja fechado */ }
       });
     });
 
@@ -100,7 +100,7 @@ export function setupDeepLinkListener() {
 
       if (accessToken && refreshToken) {
         await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-        try { await Browser.close(); } catch {}
+        try { await Browser.close(); } catch { /* Browser ja fechado */ }
       }
     }
   });
