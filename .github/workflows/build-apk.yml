@@ -39,6 +39,19 @@ jobs:
           CURRENT=$(node -p "require('./package.json').version")
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
 
+      - name: Inject version into build.gradle
+        run: |
+          V="${{ steps.version.outputs.current }}"
+          IFS='.' read -r MA MI PA <<< "$V"
+          PA=${PA:-0}
+          # versionCode = inteiro crescente (MAJOR*10000 + MINOR*100 + PATCH).
+          # Sem isso o APK sai sempre com versionCode 1 e o Android recusa o update.
+          CODE=$((MA * 10000 + MI * 100 + PA))
+          sed -i "s/versionCode [0-9]\+/versionCode $CODE/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$V\"/" android/app/build.gradle
+          echo "versionCode=$CODE versionName=$V"
+          grep -E "versionCode|versionName" android/app/build.gradle
+
       - name: Decode keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/watchmov-release.keystore
 
