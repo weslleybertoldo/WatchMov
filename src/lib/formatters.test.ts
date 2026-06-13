@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTime, formatDate, getSeriesProgress, getSeasonProgress } from "./formatters";
+import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating } from "./formatters";
 
 describe("formatTime", () => {
   it("returns 0min for zero or negative", () => {
@@ -32,6 +32,32 @@ describe("getSeasonProgress", () => {
   });
   it("returns percent", () => {
     expect(getSeasonProgress({ watchedEpisodes: 5, totalEpisodes: 10 })).toBe(50);
+  });
+});
+
+describe("formatVotes", () => {
+  it("formats thousands as 'mil'", () => {
+    expect(formatVotes(4000)).toBe("4 mil");
+    expect(formatVotes(28000)).toBe("28 mil");
+  });
+  it("formats millions as 'mi' with comma", () => {
+    expect(formatVotes(1_500_000)).toBe("1,5 mi");
+  });
+  it("keeps small numbers", () => {
+    expect(formatVotes(750)).toBe("750");
+  });
+});
+
+describe("formatRating", () => {
+  it("returns null for missing/zero", () => {
+    expect(formatRating(undefined, undefined)).toBeNull();
+    expect(formatRating(0, 100)).toBeNull();
+  });
+  it("formats rating + votes", () => {
+    expect(formatRating(8.247, 28000)).toBe("8.2/10 - 28 mil");
+  });
+  it("formats integer rating without decimal, no votes", () => {
+    expect(formatRating(8, 0)).toBe("8/10");
   });
 });
 

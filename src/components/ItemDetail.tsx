@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { WatchItem, Season, Section } from '@/types/watch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { formatTime, formatDate, getSeasonProgress, getSeriesProgress } from '@/lib/formatters';
+import { formatTime, formatDate, getSeasonProgress, getSeriesProgress, formatRating } from '@/lib/formatters';
+import VideoPlayer from '@/components/VideoPlayer';
+import { useAndroidBackButton } from '@/hooks/use-android-back';
 import {
   ArrowLeft, Plus, Minus, RotateCcw, Settings, Trash2, Save,
-  ChevronDown, ChevronRight, MessageSquare
+  ChevronDown, ChevronRight, MessageSquare, Play, Star
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle
@@ -58,6 +60,47 @@ export default function ItemDetail({
   }, [item.id, item.title, item.sectionId, item.totalDuration, item.seasons, item.comment]);
 
   const isSeries = item.type === 'series';
+
+  // ── Player VidAPI ──
+  const [player, setPlayer] = useState<null | { season?: number; episode?: number }>(null);
+  const mediaId = item.imdbId || (item.tmdbId ? String(item.tmdbId) : null);
+  const canPlay = !!mediaId;
+
+  // Fecha o player no botão voltar do Android antes de sair da tela de detalhe
+  const handlePlayerBack = useCallback(async (): Promise<boolean> => {
+    if (player) { setPlayer(null); return true; }
+    return false;
+  }, [player]);
+  useAndroidBackButton(handlePlayerBack);
+
+  const handleMovieProgress = (secs: number) => {
+    const mins = Math.min(Math.round(secs / 60), item.totalDuration || Infinity);
+    onUpdate(item.id, { watchedDuration: mins, lastWatchedAt: new Date().toISOString() });
+  };
+
+  const handleMovieCompleted = () => {
+    onUpdate(item.id, {
+      completed: true,
+      watchedDuration: item.totalDuration,
+      lastWatchedAt: new Date().toISOString(),
+    });
+    setPlayer(null);
+  };
+
+  const handleSeriesCompleted = () => {
+    if (!player?.season) return;
+    const season = item.seasons?.find(s => s.number === player.season);
+    if (!season) { setPlayer(null); return; }
+    onIncrementEpisode(item.id, season.id);
+    const nextEp = (player.episode || 1) + 1;
+    if (nextEp <= season.totalEpisodes) {
+      setPlayer({ season: player.season, episode: nextEp }); // auto-próximo
+    } else {
+      setPlayer(null);
+    }
+  };
+
+  const toggleFavorite = () => onUpdate(item.id, { favorite: !item.favorite });
 
   const saveEdit = () => {
     const updates: Partial<WatchItem> = { title: editTitle.trim() || item.title };
@@ -124,6 +167,13 @@ export default function ItemDetail({
           )}
         </div>
         <div className="flex gap-1">
+          <Button
+            variant="ghost" size="icon" className="h-8 w-8"
+            onClick={toggleFavorite}
+            title={item.favorite ? 'Remover dos favoritos' : 'Marcar como favorito'}
+          >
+            <Star className={`w-4 h-4 ${item.favorite ? 'fill-primary text-primary' : ''}`} />
+          </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCommentOpen(true)}>
             <MessageSquare className="w-4 h-4" />
           </Button>
@@ -178,6 +228,49 @@ export default function ItemDetail({
           </AlertDialog>
         </div>
       </div>
+
+      {/* Capa + metadados + Assistir */}
+      {(item.posterUrl || item.synopsis || item.genre || canPlay) && (
+        <div className="glass-card rounded-lg p-4 flex gap-4">
+          {item.posterUrl && (
+            <img src={item.posterUrl} alt={item.title} className="w-24 rounded-lg object-cover shrink-0" />
+          )}
+          <div className="flex-1 min-w-0 space-y-2">
+            {formatRating(item.rating, item.votes) && (
+              <p className="text-sm font-semibold text-foreground flex items-center gap-1">
+                <Star className="w-4 h-4 fill-amber-400 text-amber-400" /> {formatRating(item.rating, item.votes)}
+              </p>
+            )}
+            {item.genre && (
+              <div className="flex flex-wrap gap-1">
+                {item.genre.split(',').map((g, i) => (
+                  <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-primary/15 text-primary">
+                    {g.trim()}
+                  </span>
+                ))}
+              </div>
+            )}
+            {item.synopsis && (
+              <p className="text-xs text-muted-foreground line-clamp-4">{item.synopsis}</p>
+            )}
+            {!isSeries && (
+              canPlay ? (
+                <Button
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => setPlayer({})}
+                >
+                  <Play className="w-4 h-4 mr-1" /> Assistir
+                </Button>
+              ) : (
+                <p className="text-[11px] text-muted-foreground italic">
+                  Adicione via busca TMDB para assistir
+                </p>
+              )
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Comment */}
       {item.comment && (
@@ -315,6 +408,16 @@ export default function ItemDetail({
                   <span>{formatTime(seasonRemaining)} restantes</span>
                 </div>
 
+                {canPlay && season.watchedEpisodes < season.totalEpisodes && (
+                  <Button
+                    size="sm"
+                    className="w-full mt-3"
+                    onClick={() => setPlayer({ season: season.number, episode: season.watchedEpisodes + 1 })}
+                  >
+                    <Play className="w-4 h-4 mr-1" /> Assistir episódio {season.watchedEpisodes + 1}
+                  </Button>
+                )}
+
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="ghost" size="sm" className="w-full mt-2 text-xs text-muted-foreground">
@@ -437,6 +540,24 @@ export default function ItemDetail({
           </Button>
         </DialogContent>
       </Dialog>
+
+      {/* Player VidAPI */}
+      {player && mediaId && (
+        <VideoPlayer
+          open={!!player}
+          onClose={() => setPlayer(null)}
+          mediaId={mediaId}
+          type={isSeries ? 'tv' : 'movie'}
+          season={player.season}
+          episode={player.episode}
+          title={isSeries && player.season
+            ? `${item.title} — T${player.season} E${player.episode}`
+            : item.title}
+          resumeAt={!isSeries ? (item.watchedDuration || 0) * 60 : undefined}
+          onProgress={!isSeries ? handleMovieProgress : undefined}
+          onCompleted={isSeries ? handleSeriesCompleted : handleMovieCompleted}
+        />
+      )}
     </div>
   );
 }

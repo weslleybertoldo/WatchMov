@@ -22,6 +22,15 @@ export interface WatchItem {
   comment?: string;
   lastWatchedAt?: string; // ISO date
   createdAt: string;
+  // TMDB metadata
+  tmdbId?: number;
+  imdbId?: string;
+  posterUrl?: string;
+  synopsis?: string;
+  genre?: string;
+  favorite?: boolean;
+  rating?: number; // nota TMDB 0-10
+  votes?: number;  // quantidade de avaliações
 }
 
 export interface Section {

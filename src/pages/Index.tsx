@@ -3,6 +3,7 @@ import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import Dashboard from '@/components/Dashboard';
+import Painel from '@/components/Painel';
 import SectionList from '@/components/SectionList';
 import ItemCard from '@/components/ItemCard';
 import ItemDetail from '@/components/ItemDetail';
@@ -10,12 +11,12 @@ import AddItemDialog from '@/components/AddItemDialog';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, LayoutDashboard, Menu, X, LogOut, Loader2 } from 'lucide-react';
+import { Plus, Search, LayoutDashboard, Clapperboard, Menu, X, LogOut, Loader2 } from 'lucide-react';
 
 export default function Index() {
   const { signOut, user } = useAuth();
   const store = useWatchStore(user?.id);
-  const [view, setView] = useState<'dashboard' | 'section'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'section' | 'painel'>('dashboard');
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,7 +73,7 @@ export default function Index() {
     if (addDialogOpen) { setAddDialogOpen(false); return true; }
     if (sidebarOpen) { setSidebarOpen(false); return true; }
     if (selectedItem) { setSelectedItem(null); return true; }
-    if (view === 'section') {
+    if (view === 'section' || view === 'painel') {
       setView('dashboard');
       setActiveSection(null);
       return true;
@@ -92,6 +93,14 @@ export default function Index() {
 
   const goToDashboard = () => {
     setView('dashboard');
+    setActiveSection(null);
+    setSelectedItem(null);
+    setSearchQuery('');
+    setSidebarOpen(false);
+  };
+
+  const goToPainel = () => {
+    setView('painel');
     setActiveSection(null);
     setSelectedItem(null);
     setSearchQuery('');
@@ -137,6 +146,18 @@ export default function Index() {
         >
           <LayoutDashboard className="w-4 h-4" />
           Dashboard
+        </button>
+
+        <button
+          onClick={goToPainel}
+          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg mb-4 text-sm font-medium transition-all ${
+            view === 'painel'
+              ? 'bg-primary/15 text-foreground glow-border'
+              : 'hover:bg-secondary text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Clapperboard className="w-4 h-4" />
+          Painel
         </button>
 
         <div className="flex-1 overflow-y-auto">
@@ -206,6 +227,11 @@ export default function Index() {
                 </div>
               )}
             </>
+          )}
+
+          {/* Painel view */}
+          {view === 'painel' && !selectedItem && (
+            <Painel stats={stats} items={store.data.items} onSelectItem={setSelectedItem} />
           )}
 
           {/* Section view - item list */}

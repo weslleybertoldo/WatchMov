@@ -1,6 +1,6 @@
 import { WatchItem } from '@/types/watch';
-import { formatTime, formatDate, getSeriesProgress } from '@/lib/formatters';
-import { Calendar, MessageSquare } from 'lucide-react';
+import { formatTime, formatDate, getSeriesProgress, formatRating } from '@/lib/formatters';
+import { Calendar, MessageSquare, Star } from 'lucide-react';
 
 interface ItemCardProps {
   item: WatchItem;
@@ -33,41 +33,58 @@ export default function ItemCard({ item, onClick }: ItemCardProps) {
       onClick={onClick}
       className="glass-card rounded-lg p-4 cursor-pointer hover:bg-secondary/50 transition-all animate-slide-up group"
     >
-      <div className="flex items-start justify-between mb-2">
+      <div className="flex items-start gap-3">
+        {/* Poster */}
+        {item.posterUrl && (
+          <img
+            src={item.posterUrl}
+            alt={item.title}
+            className="w-12 h-[72px] rounded object-cover bg-muted shrink-0"
+          />
+        )}
+
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-foreground truncate group-hover:text-primary transition-colors">
-            {item.title}
-          </h3>
-          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              {isSeries ? '📺' : '🎬'} {statusText}
-            </span>
-            {item.seasons && (
-              <span>{item.seasons.length} temporada{item.seasons.length > 1 ? 's' : ''}</span>
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-foreground truncate group-hover:text-primary transition-colors flex items-center gap-1.5">
+                {item.favorite && <Star className="w-3.5 h-3.5 fill-primary text-primary shrink-0" />}
+                <span className="truncate">{item.title}</span>
+              </h3>
+              <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  {isSeries ? '📺' : '🎬'} {statusText}
+                </span>
+                {item.genre && <span className="truncate">{item.genre.split(',')[0].trim()}</span>}
+                {formatRating(item.rating, item.votes) && (
+                  <span className="flex items-center gap-0.5 shrink-0">
+                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" /> {formatRating(item.rating, item.votes)}
+                  </span>
+                )}
+              </div>
+            </div>
+            {isComplete && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/15 text-success shrink-0">
+                ✓ Concluído
+              </span>
             )}
           </div>
-        </div>
-        {isComplete && (
-          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/15 text-success">
-            ✓ Concluído
-          </span>
-        )}
-      </div>
 
-      {/* Progress bar */}
-      <div className="progress-bar mt-3">
-        <div className="progress-fill" style={{ width: `${Math.min(progress, 100)}%` }} />
-      </div>
-      <div className="flex items-center justify-between mt-2">
-        <span className="text-[11px] text-muted-foreground">{Math.round(progress)}%</span>
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          {item.comment && <MessageSquare className="w-3 h-3" />}
-          {item.lastWatchedAt && (
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3 h-3" />
-              {formatDate(item.lastWatchedAt)}
-            </span>
-          )}
+          {/* Progress bar */}
+          <div className="progress-bar mt-2">
+            <div className="progress-fill" style={{ width: `${Math.min(progress, 100)}%` }} />
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-[11px] text-muted-foreground">{Math.round(progress)}%</span>
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              {item.comment && <MessageSquare className="w-3 h-3" />}
+              {item.lastWatchedAt && (
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3 h-3" />
+                  {isComplete ? `Assistido última vez ${formatDate(item.lastWatchedAt)}` : formatDate(item.lastWatchedAt)}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

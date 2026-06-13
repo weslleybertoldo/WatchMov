@@ -30,6 +30,14 @@ interface DbItemRow {
   comment: string | null;
   last_watched_at: string | null;
   created_at: string;
+  tmdb_id: number | null;
+  imdb_id: string | null;
+  poster_url: string | null;
+  synopsis: string | null;
+  genre: string | null;
+  favorite: boolean | null;
+  rating: number | null;
+  votes: number | null;
 }
 
 function dbSectionToLocal(row: DbSectionRow): Section {
@@ -54,6 +62,14 @@ function dbItemToLocal(row: DbItemRow): WatchItem {
     comment: row.comment ?? undefined,
     lastWatchedAt: row.last_watched_at ?? undefined,
     createdAt: row.created_at,
+    tmdbId: row.tmdb_id ?? undefined,
+    imdbId: row.imdb_id ?? undefined,
+    posterUrl: row.poster_url ?? undefined,
+    synopsis: row.synopsis ?? undefined,
+    genre: row.genre ?? undefined,
+    favorite: row.favorite ?? false,
+    rating: row.rating ?? undefined,
+    votes: row.votes ?? undefined,
   };
 }
 
@@ -183,6 +199,14 @@ export function useWatchStore(userId?: string) {
       completed: item.completed ?? false,
       seasons: item.seasons ?? null,
       comment: item.comment ?? null,
+      tmdb_id: item.tmdbId ?? null,
+      imdb_id: item.imdbId ?? null,
+      poster_url: item.posterUrl ?? null,
+      synopsis: item.synopsis ?? null,
+      genre: item.genre ?? null,
+      favorite: item.favorite ?? false,
+      rating: item.rating ?? null,
+      votes: item.votes ?? null,
     };
     const { data: inserted, error } = await supabase.from('wm_items').insert(row).select().single();
     if (error || !inserted) {
@@ -205,6 +229,14 @@ export function useWatchStore(userId?: string) {
     if (updates.seasons !== undefined) dbUpdates.seasons = updates.seasons;
     if (updates.comment !== undefined) dbUpdates.comment = updates.comment;
     if (updates.lastWatchedAt !== undefined) dbUpdates.last_watched_at = updates.lastWatchedAt;
+    if (updates.tmdbId !== undefined) dbUpdates.tmdb_id = updates.tmdbId;
+    if (updates.imdbId !== undefined) dbUpdates.imdb_id = updates.imdbId;
+    if (updates.posterUrl !== undefined) dbUpdates.poster_url = updates.posterUrl;
+    if (updates.synopsis !== undefined) dbUpdates.synopsis = updates.synopsis;
+    if (updates.genre !== undefined) dbUpdates.genre = updates.genre;
+    if (updates.favorite !== undefined) dbUpdates.favorite = updates.favorite;
+    if (updates.rating !== undefined) dbUpdates.rating = updates.rating;
+    if (updates.votes !== undefined) dbUpdates.votes = updates.votes;
 
     // optimistic
     setData(prev => ({

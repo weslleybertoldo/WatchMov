@@ -8,14 +8,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Minus } from 'lucide-react';
+import { Plus, Minus, Search, Loader2, Check, Star } from 'lucide-react';
 import { generateId } from '@/store/useWatchStore';
+import { TMDB_ENABLED, searchTitle, getDetails, type TmdbSearchResult } from '@/lib/tmdb';
+import { formatRating } from '@/lib/formatters';
+import { toast } from 'sonner';
 
 interface AddItemDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   sectionId: string;
   onAdd: (item: Omit<WatchItem, 'id' | 'createdAt'>) => void;
+}
+
+interface TmdbMeta {
+  tmdbId?: number;
+  imdbId?: string;
+  posterUrl?: string;
+  synopsis?: string;
+  genre?: string;
+  rating?: number;
+  votes?: number;
 }
 
 export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: AddItemDialogProps) {
@@ -28,6 +41,11 @@ export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: 
   const [seasonEpisodes, setSeasonEpisodes] = useState<{ episodes: string; duration: string }[]>([
     { episodes: '12', duration: '24' },
   ]);
+  // TMDB
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<TmdbSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [meta, setMeta] = useState<TmdbMeta>({});
 
   const updateSeasonCount = (count: number) => {
     if (count < 1) return;
@@ -43,13 +61,70 @@ export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: 
     setSeasonEpisodes(prev => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
   };
 
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+    setSearching(true);
+    try {
+      const res = await searchTitle(query, type === 'series' ? 'tv' : 'movie');
+      setResults(res);
+      if (res.length === 0) toast.info('Nenhum resultado no TMDB', { description: 'Você pode preencher manualmente.' });
+    } catch (e) {
+      toast.error('Falha na busca TMDB', { description: e instanceof Error ? e.message : 'erro' });
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handlePick = async (r: TmdbSearchResult) => {
+    setTitle(r.title);
+    setResults([]);
+    setQuery('');
+    try {
+      const d = await getDetails(r.tmdbId, r.type);
+      setMeta({ tmdbId: d.tmdbId, imdbId: d.imdbId, posterUrl: d.posterUrl, synopsis: d.synopsis, genre: d.genre, rating: d.rating, votes: d.votes });
+      if (r.type === 'movie') {
+        if (d.runtime) setMovieDuration(String(d.runtime));
+      } else if (d.seasons && d.seasons.length > 0) {
+        setSeasonCount(d.seasons.length);
+        setSeasonEpisodes(d.seasons.map(s => ({ episodes: String(s.totalEpisodes), duration: String(s.episodeDuration) })));
+      }
+    } catch (e) {
+      // mantém ao menos capa/sinopse/nota da busca
+      setMeta({ tmdbId: r.tmdbId, posterUrl: r.posterUrl, synopsis: r.overview, rating: r.rating, votes: r.votes });
+      toast.error('Falha ao buscar detalhes', { description: e instanceof Error ? e.message : 'erro' });
+    }
+  };
+
+  const resetAll = () => {
+    setType('series');
+    setTitle('');
+    setMovieDuration('');
+    setSeasonCount(1);
+    setSeasonEpisodes([{ episodes: '12', duration: '24' }]);
+    setQuery('');
+    setResults([]);
+    setMeta({});
+  };
+
   const handleSubmit = () => {
     if (!title.trim()) return;
 
+    const common = {
+      sectionId,
+      title: title.trim(),
+      tmdbId: meta.tmdbId,
+      imdbId: meta.imdbId,
+      posterUrl: meta.posterUrl,
+      synopsis: meta.synopsis,
+      genre: meta.genre,
+      rating: meta.rating,
+      votes: meta.votes,
+      favorite: false,
+    };
+
     if (type === 'movie') {
       onAdd({
-        sectionId,
-        title: title.trim(),
+        ...common,
         type: 'movie',
         totalDuration: parseInt(movieDuration) || 120,
         watchedDuration: 0,
@@ -64,19 +139,13 @@ export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: 
         episodeDuration: parseInt(se.duration) || 24,
       }));
       onAdd({
-        sectionId,
-        title: title.trim(),
+        ...common,
         type: 'series',
         seasons,
       });
     }
 
-    // Reset
-    setType('series');
-    setTitle('');
-    setMovieDuration('');
-    setSeasonCount(1);
-    setSeasonEpisodes([{ episodes: '12', duration: '24' }]);
+    resetAll();
     onOpenChange(false);
   };
 
@@ -90,7 +159,7 @@ export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: 
           {/* Type selector */}
           <div className="flex gap-2">
             <button
-              onClick={() => setType('series')}
+              onClick={() => { setType('series'); setResults([]); }}
               className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 type === 'series' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-secondary'
               }`}
@@ -98,7 +167,7 @@ export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: 
               📺 Série / Anime
             </button>
             <button
-              onClick={() => setType('movie')}
+              onClick={() => { setType('movie'); setResults([]); }}
               className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 type === 'movie' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-secondary'
               }`}
@@ -106,6 +175,66 @@ export default function AddItemDialog({ open, onOpenChange, sectionId, onAdd }: 
               🎬 Filme
             </button>
           </div>
+
+          {/* TMDB search */}
+          {TMDB_ENABLED && (
+            <div className="space-y-2">
+              <label className="text-sm text-muted-foreground">Buscar no TMDB (preenche capa, sinopse e categoria)</label>
+              <div className="flex gap-2">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleSearch(); } }}
+                    placeholder={type === 'series' ? 'Nome da série/anime' : 'Nome do filme'}
+                    className="pl-9 bg-muted border-border"
+                  />
+                </div>
+                <Button variant="outline" onClick={handleSearch} disabled={searching}>
+                  {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Buscar'}
+                </Button>
+              </div>
+              {results.length > 0 && (
+                <div className="space-y-1 max-h-56 overflow-y-auto border border-border rounded-lg p-1">
+                  {results.map(r => (
+                    <button
+                      key={r.tmdbId}
+                      onClick={() => handlePick(r)}
+                      className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-secondary text-left"
+                    >
+                      {r.posterUrl ? (
+                        <img src={r.posterUrl} alt="" className="w-10 h-15 rounded object-cover bg-muted shrink-0" />
+                      ) : (
+                        <div className="w-10 h-15 rounded bg-muted shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{r.title}</p>
+                        {r.year && <p className="text-xs text-muted-foreground">{r.year}</p>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Selected metadata preview */}
+          {(meta.posterUrl || meta.genre || meta.synopsis) && (
+            <div className="flex gap-3 p-3 bg-muted/40 rounded-lg">
+              {meta.posterUrl && <img src={meta.posterUrl} alt="" className="w-16 rounded object-cover shrink-0" />}
+              <div className="min-w-0 space-y-1">
+                <span className="inline-flex items-center gap-1 text-xs text-success"><Check className="w-3 h-3" /> Dados do TMDB</span>
+                {formatRating(meta.rating, meta.votes) && (
+                  <p className="text-xs font-medium text-foreground flex items-center gap-1">
+                    <Star className="w-3 h-3 fill-primary text-primary" /> {formatRating(meta.rating, meta.votes)}
+                  </p>
+                )}
+                {meta.genre && <p className="text-xs text-muted-foreground">{meta.genre}</p>}
+                {meta.synopsis && <p className="text-xs text-muted-foreground line-clamp-3">{meta.synopsis}</p>}
+              </div>
+            </div>
+          )}
 
           {/* Title */}
           <div>
