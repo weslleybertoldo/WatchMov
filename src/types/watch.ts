@@ -9,7 +9,7 @@ export interface Season {
 
 export interface WatchItem {
   id: string;
-  sectionId: string;
+  sectionId?: string; // opcional: itens de streaming (biblioteca) não têm seção
   title: string;
   type: 'movie' | 'series';
   // Movie fields

@@ -20,7 +20,7 @@ interface DbSectionRow {
 interface DbItemRow {
   id: string;
   user_id: string;
-  section_id: string;
+  section_id: string | null;
   title: string;
   type: 'movie' | 'series';
   total_duration: number | null;
@@ -52,7 +52,7 @@ function dbSectionToLocal(row: DbSectionRow): Section {
 function dbItemToLocal(row: DbItemRow): WatchItem {
   return {
     id: row.id,
-    sectionId: row.section_id,
+    sectionId: row.section_id ?? undefined,
     title: row.title,
     type: row.type,
     totalDuration: row.total_duration ?? undefined,
@@ -191,7 +191,7 @@ export function useWatchStore(userId?: string) {
     if (!userId) return;
     const row = {
       user_id: userId,
-      section_id: item.sectionId,
+      section_id: item.sectionId ?? null,
       title: item.title,
       type: item.type,
       total_duration: item.totalDuration ?? null,
@@ -409,6 +409,62 @@ export function useWatchStore(userId?: string) {
     }
   }, [enqueueItemWrite, loadFromDB]);
 
+  // ── Biblioteca de streaming (itens por título TMDB, sem seção) ──
+
+  const upsertLibraryItem = useCallback(async (media: {
+    tmdbId: number;
+    type: 'movie' | 'series';
+    title: string;
+    imdbId?: string;
+    posterUrl?: string;
+    synopsis?: string;
+    genre?: string;
+    rating?: number;
+    votes?: number;
+    totalDuration?: number;
+    seasons?: Season[];
+  }): Promise<WatchItem | null> => {
+    if (!userId) return null;
+    const existing = itemsRef.current.find(i => i.tmdbId === media.tmdbId && i.type === media.type);
+    if (existing) return existing;
+    const row = {
+      user_id: userId,
+      section_id: null,
+      title: media.title,
+      type: media.type,
+      total_duration: media.totalDuration ?? null,
+      watched_duration: 0,
+      completed: false,
+      seasons: media.seasons ?? null,
+      comment: null,
+      tmdb_id: media.tmdbId,
+      imdb_id: media.imdbId ?? null,
+      poster_url: media.posterUrl ?? null,
+      synopsis: media.synopsis ?? null,
+      genre: media.genre ?? null,
+      favorite: false,
+      rating: media.rating ?? null,
+      votes: media.votes ?? null,
+    };
+    const { data: inserted, error } = await supabase.from('wm_items').insert(row).select().single();
+    if (error || !inserted) {
+      reportDbError('adicionar a biblioteca', error);
+      return null;
+    }
+    const item = dbItemToLocal(inserted);
+    setData(prev => ({ ...prev, items: [...prev.items, item] }));
+    return item;
+  }, [userId]);
+
+  // Selectors de streaming
+  const continueWatching = data.items
+    .filter(i => !i.completed && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false)))
+    .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0));
+
+  const myList = data.items
+    .filter(i => i.favorite)
+    .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0));
+
   // ── Stats ──
 
   const getStats = useCallback((): DashboardStats => {
@@ -464,5 +520,8 @@ export function useWatchStore(userId?: string) {
     incrementEpisode, decrementEpisode,
     resetSeason, resetItem,
     getStats,
+    upsertLibraryItem,
+    continueWatching,
+    myList,
   };
 }

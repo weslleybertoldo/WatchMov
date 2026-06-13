@@ -1,289 +1,162 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import Dashboard from '@/components/Dashboard';
-import Painel from '@/components/Painel';
-import SectionList from '@/components/SectionList';
-import ItemCard from '@/components/ItemCard';
-import ItemDetail from '@/components/ItemDetail';
-import AddItemDialog from '@/components/AddItemDialog';
+import { WatchItem } from '@/types/watch';
+import {
+  MediaSummary, trendingWeek, recent, discoverByGenre,
+  MOVIE_GENRES, TV_GENRES, type TmdbMediaType,
+} from '@/lib/tmdb';
+import MediaRow from '@/components/streaming/MediaRow';
+import CategoryView from '@/components/streaming/CategoryView';
+import MediaDetail from '@/components/streaming/MediaDetail';
+import SearchView from '@/components/streaming/SearchView';
+import MediaCard from '@/components/streaming/MediaCard';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Plus, Search, LayoutDashboard, Clapperboard, Menu, X, LogOut, Loader2 } from 'lucide-react';
+import { Home, Film, Tv, Bookmark, Search, LogOut, Loader2 } from 'lucide-react';
+
+type Tab = 'inicio' | 'filmes' | 'series' | 'lista' | 'buscar';
+
+function itemToSummary(i: WatchItem): MediaSummary {
+  return {
+    tmdbId: i.tmdbId as number,
+    title: i.title,
+    posterUrl: i.posterUrl,
+    rating: i.rating,
+    votes: i.votes,
+    type: i.type === 'series' ? 'tv' : 'movie',
+  };
+}
+
+const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
+  { key: 'inicio', label: 'Início', icon: Home },
+  { key: 'filmes', label: 'Filmes', icon: Film },
+  { key: 'series', label: 'Séries', icon: Tv },
+  { key: 'lista', label: 'Minha Lista', icon: Bookmark },
+  { key: 'buscar', label: 'Buscar', icon: Search },
+];
 
 export default function Index() {
   const { signOut, user } = useAuth();
   const store = useWatchStore(user?.id);
-  const [view, setView] = useState<'dashboard' | 'section' | 'painel'>('dashboard');
-  const [activeSection, setActiveSection] = useState<string | null>(null);
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [tab, setTab] = useState<Tab>('inicio');
+  const [selected, setSelected] = useState<MediaSummary | null>(null);
+  const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]> }>(null);
 
-  const stats = store.getStats();
+  const openMedia = useCallback((m: MediaSummary) => setSelected(m), []);
+  const openGenre = (type: TmdbMediaType, id: number, name: string) =>
+    setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p) });
 
-  // Clear selectedItem if it no longer exists
-  const selectedItemData = selectedItem ? store.data.items.find(i => i.id === selectedItem) : null;
-  useEffect(() => {
-    if (selectedItem && !selectedItemData) {
-      setSelectedItem(null);
-    }
-  }, [selectedItem, selectedItemData]);
-
-  // Clear activeSection if it was deleted
-  useEffect(() => {
-    if (activeSection && !store.data.sections.find(s => s.id === activeSection)) {
-      setActiveSection(null);
-      setView('dashboard');
-    }
-  }, [activeSection, store.data.sections]);
-
-  const sectionItems = useMemo(() => {
-    if (!activeSection) return [];
-    let items = store.data.items.filter(i => i.sectionId === activeSection);
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      items = items.filter(i => i.title.toLowerCase().includes(q));
-    }
-    return items;
-  }, [activeSection, store.data.items, searchQuery]);
-
-  const globalSearch = useMemo(() => {
-    if (!searchQuery.trim() || view !== 'dashboard') return [];
-    const q = searchQuery.toLowerCase();
-    return store.data.items.filter(i => i.title.toLowerCase().includes(q));
-  }, [searchQuery, store.data.items, view]);
-
-  const activeSectionData = activeSection ? store.data.sections.find(s => s.id === activeSection) : null;
-
-  // Item counts per section
-  const itemCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    store.data.items.forEach(i => {
-      counts[i.sectionId] = (counts[i.sectionId] || 0) + 1;
-    });
-    return counts;
-  }, [store.data.items]);
-
-  // Android back button: fecha em camadas antes de sair do app
-  const handleAndroidBack = useCallback(async (): Promise<boolean> => {
-    if (addDialogOpen) { setAddDialogOpen(false); return true; }
-    if (sidebarOpen) { setSidebarOpen(false); return true; }
-    if (selectedItem) { setSelectedItem(null); return true; }
-    if (view === 'section' || view === 'painel') {
-      setView('dashboard');
-      setActiveSection(null);
-      return true;
-    }
-    if (searchQuery) { setSearchQuery(''); return true; }
+  const handleBack = useCallback(async (): Promise<boolean> => {
+    if (selected) { setSelected(null); return true; }
+    if (category) { setCategory(null); return true; }
+    if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [addDialogOpen, sidebarOpen, selectedItem, view, searchQuery]);
-  useAndroidBackButton(handleAndroidBack);
-
-  const handleSelectSection = (id: string) => {
-    setActiveSection(id);
-    setView('section');
-    setSelectedItem(null);
-    setSearchQuery('');
-    setSidebarOpen(false);
-  };
-
-  const goToDashboard = () => {
-    setView('dashboard');
-    setActiveSection(null);
-    setSelectedItem(null);
-    setSearchQuery('');
-    setSidebarOpen(false);
-  };
-
-  const goToPainel = () => {
-    setView('painel');
-    setActiveSection(null);
-    setSelectedItem(null);
-    setSearchQuery('');
-    setSidebarOpen(false);
-  };
+  }, [selected, category, tab]);
+  useAndroidBackButton(handleBack);
 
   if (store.loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
-  return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 bg-background/80 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
-      )}
+  const continueItems = store.continueWatching.filter(i => i.tmdbId).map(itemToSummary);
+  const listItems = store.myList.filter(i => i.tmdbId).map(itemToSummary);
 
-      {/* Sidebar */}
-      <aside className={`
-        fixed md:static inset-y-0 left-0 z-50
-        w-64 bg-card border-r border-border p-4 flex flex-col
-        transform transition-transform duration-200
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-      `}>
-        <div className="flex items-center justify-between mb-6">
-          <img src="/logo.png" alt="WatchMov" className="w-44 cursor-pointer" onClick={goToDashboard} />
-          <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden" onClick={() => setSidebarOpen(false)}>
-            <X className="w-4 h-4" />
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); };
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-background/85 backdrop-blur-md border-b border-border/50">
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+          <img src="/logo.png" alt="WatchMov" className="h-7 cursor-pointer" onClick={() => changeTab('inicio')} />
+          <nav className="hidden sm:flex items-center gap-1">
+            {TABS.map(t => (
+              <button key={t.key} onClick={() => changeTab(t.key)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${tab === t.key ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={signOut} title="Sair">
+            <LogOut className="w-4 h-4" />
           </Button>
         </div>
+      </header>
 
-        <button
-          onClick={goToDashboard}
-          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg mb-4 text-sm font-medium transition-all ${
-            view === 'dashboard'
-              ? 'bg-primary/15 text-foreground glow-border'
-              : 'hover:bg-secondary text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <LayoutDashboard className="w-4 h-4" />
-          Dashboard
-        </button>
-
-        <button
-          onClick={goToPainel}
-          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg mb-4 text-sm font-medium transition-all ${
-            view === 'painel'
-              ? 'bg-primary/15 text-foreground glow-border'
-              : 'hover:bg-secondary text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Clapperboard className="w-4 h-4" />
-          Painel
-        </button>
-
-        <div className="flex-1 overflow-y-auto">
-          <SectionList
-            sections={store.data.sections}
-            activeSection={activeSection}
-            onSelect={handleSelectSection}
-            onAdd={store.addSection}
-            onUpdate={store.updateSection}
-            onDelete={store.deleteSection}
-            itemCounts={itemCounts}
-          />
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-border space-y-3">
-          <UpdateChecker />
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground truncate max-w-[140px]">
-              {user?.email}
-            </span>
-            <Button variant="ghost" size="sm" onClick={signOut} className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
-              <LogOut className="w-3 h-3 mr-1" />
-              Sair
-            </Button>
+      {/* Conteúdo */}
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
+        {selected ? (
+          <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
+        ) : category ? (
+          <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
+        ) : tab === 'inicio' ? (
+          <div className="space-y-6">
+            {continueItems.length > 0 && (
+              <MediaRow title="Continuar assistindo" items={continueItems} onOpen={openMedia} />
+            )}
+            <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
+              loader={() => trendingWeek('movie')} onOpen={openMedia} />
+            <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
+              loader={() => trendingWeek('tv')} onOpen={openMedia} />
+            <MediaRow title="Lançamentos recentes" cacheKey="recent-movie"
+              loader={() => recent('movie')} onOpen={openMedia}
+              onSeeAll={() => setCategory({ title: 'Lançamentos recentes', loadPage: () => recent('movie') })} />
+            {MOVIE_GENRES.slice(0, 6).map(g => (
+              <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
+                loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
+                onSeeAll={() => openGenre('movie', g.id, g.name)} />
+            ))}
+            <footer className="pt-4 border-t border-border/50">
+              <UpdateChecker />
+            </footer>
           </div>
-        </div>
-      </aside>
-
-      {/* Main content */}
-      <main className="flex-1 overflow-y-auto">
-        {/* Top bar */}
-        <div className="sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-border/50 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="h-9 w-9 md:hidden" onClick={() => setSidebarOpen(true)}>
-              <Menu className="w-5 h-5" />
-            </Button>
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar filmes e series..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="pl-9 bg-muted/50 border-border h-9"
-              />
-            </div>
-            {view === 'section' && activeSection && !selectedItem && (
-              <Button size="sm" onClick={() => setAddDialogOpen(true)}>
-                <Plus className="w-4 h-4 mr-1" /> Adicionar
-              </Button>
+        ) : tab === 'filmes' ? (
+          <div className="space-y-6">
+            {MOVIE_GENRES.map(g => (
+              <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
+                loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
+                onSeeAll={() => openGenre('movie', g.id, g.name)} />
+            ))}
+          </div>
+        ) : tab === 'series' ? (
+          <div className="space-y-6">
+            {TV_GENRES.map(g => (
+              <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
+                loader={() => discoverByGenre('tv', g.id)} onOpen={openMedia}
+                onSeeAll={() => openGenre('tv', g.id, g.name)} />
+            ))}
+          </div>
+        ) : tab === 'lista' ? (
+          <div className="space-y-4">
+            <h1 className="text-xl font-bold">Minha Lista</h1>
+            {listItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Minha Lista" num título.</p>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {listItems.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
+              </div>
             )}
           </div>
-        </div>
-
-        <div className="p-4 md:p-6 max-w-4xl mx-auto">
-          {/* Dashboard view */}
-          {view === 'dashboard' && !selectedItem && (
-            <>
-              <Dashboard stats={stats} />
-              {globalSearch.length > 0 && (
-                <div className="mt-6 space-y-3">
-                  <h3 className="text-sm font-semibold text-muted-foreground">Resultados da busca</h3>
-                  <div className="grid gap-3">
-                    {globalSearch.map(item => (
-                      <ItemCard key={item.id} item={item} onClick={() => setSelectedItem(item.id)} />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Painel view */}
-          {view === 'painel' && !selectedItem && (
-            <Painel stats={stats} items={store.data.items} onSelectItem={setSelectedItem} />
-          )}
-
-          {/* Section view - item list */}
-          {view === 'section' && !selectedItem && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">{activeSectionData?.icon}</span>
-                <h2 className="text-2xl font-bold text-foreground">{activeSectionData?.name}</h2>
-                <span className="text-sm text-muted-foreground ml-2">({sectionItems.length})</span>
-              </div>
-
-              {sectionItems.length === 0 ? (
-                <div className="text-center py-16 text-muted-foreground">
-                  <p className="text-lg mb-2">Nenhum item registrado</p>
-                  <p className="text-sm">Clique em "Adicionar" para comecar!</p>
-                </div>
-              ) : (
-                <div className="grid gap-3">
-                  {sectionItems.map(item => (
-                    <ItemCard key={item.id} item={item} onClick={() => setSelectedItem(item.id)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Item detail view */}
-          {selectedItem && selectedItemData && (
-            <ItemDetail
-              item={selectedItemData}
-              sections={store.data.sections}
-              onBack={() => setSelectedItem(null)}
-              onUpdate={store.updateItem}
-              onDelete={store.deleteItem}
-              onIncrementEpisode={store.incrementEpisode}
-              onDecrementEpisode={store.decrementEpisode}
-              onResetSeason={store.resetSeason}
-              onResetItem={store.resetItem}
-            />
-          )}
-        </div>
+        ) : (
+          <SearchView onOpen={openMedia} />
+        )}
       </main>
 
-      {/* Add Item Dialog */}
-      {activeSection && (
-        <AddItemDialog
-          open={addDialogOpen}
-          onOpenChange={setAddDialogOpen}
-          sectionId={activeSection}
-          onAdd={store.addItem}
-        />
-      )}
+      {/* Bottom nav (mobile) */}
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 backdrop-blur border-t border-border flex">
+        {TABS.map(t => {
+          const Icon = t.icon;
+          return (
+            <button key={t.key} onClick={() => changeTab(t.key)}
+              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] ${tab === t.key ? 'text-primary' : 'text-muted-foreground'}`}>
+              <Icon className="w-5 h-5" />
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
