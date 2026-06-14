@@ -5,8 +5,9 @@ import { generateId } from '@/store/useWatchStore';
 import { formatRating } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
+import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, Star, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, Star, Loader2, Clapperboard } from 'lucide-react';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -33,7 +34,8 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const [libItem, setLibItem] = useState<WatchItem | null>(
     store.data.items.find(i => i.tmdbId === media.tmdbId && i.type === storeType) ?? null
   );
-  const [player, setPlayer] = useState<null | { season?: number; episode?: number }>(null);
+  const [player, setPlayer] = useState<null | { season?: number; episode?: number; directUrl?: string; directLabel?: string; torrent?: { magnet: string; fileIdx?: number } }>(null);
+  const [stremioOpen, setStremioOpen] = useState(false);
   const [selSeason, setSelSeason] = useState(1);
   const [loading, setLoading] = useState(true);
 
@@ -83,6 +85,16 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
 
   const playMovie = async () => { await ensureLib(); setPlayer({}); };
   const playEpisode = async (seasonNum: number, ep: number) => { await ensureLib(); setPlayer({ season: seasonNum, episode: ep }); };
+  const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
+    await ensureLib();
+    setStremioOpen(false);
+    setPlayer({ season, episode, directUrl: url, directLabel: label });
+  };
+  const playStremioTorrent = async (magnet: string, fileIdx: number | undefined, label: string, season?: number, episode?: number) => {
+    await ensureLib();
+    setStremioOpen(false);
+    setPlayer({ season, episode, directLabel: label, torrent: { magnet, fileIdx } });
+  };
 
   const toggleList = async () => {
     const it = await ensureLib();
@@ -153,6 +165,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
               <Play className="w-4 h-4 mr-1" /> {resumeMins > 0 ? 'Continuar' : 'Assistir'}
             </Button>
           )}
+          <Button variant="outline" className={isSeries ? 'flex-1' : ''} onClick={() => setStremioOpen(true)}>
+            <Clapperboard className="w-4 h-4 mr-1" /> Stremio
+          </Button>
           <Button variant={inList ? 'default' : 'outline'} className={isSeries ? 'flex-1' : ''} onClick={toggleList}>
             {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Minha Lista
           </Button>
@@ -208,10 +223,23 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           episode={player.episode}
           title={isSeries && player.season ? `${media.title} — T${player.season} E${player.episode}` : (details?.title || media.title)}
           resumeAt={resumeMins > 0 ? resumeMins * 60 : undefined}
+          directUrl={player.directUrl}
+          torrent={player.torrent}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />
       )}
+
+      <StremioStreamsDialog
+        open={stremioOpen}
+        onOpenChange={setStremioOpen}
+        imdbId={libItem?.imdbId || details?.imdbId}
+        type={media.type}
+        seasons={isSeries ? details?.seasons?.map(s => ({ number: s.number, totalEpisodes: s.totalEpisodes })) : undefined}
+        title={details?.title || media.title}
+        onPlayUrl={playStremio}
+        onPlayTorrent={playStremioTorrent}
+      />
     </div>
   );
 }

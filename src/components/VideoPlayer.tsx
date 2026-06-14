@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check } from 'lucide-react';
+import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2 } from 'lucide-react';
 import { Browser } from '@capacitor/browser';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
+import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -19,25 +20,48 @@ interface VideoPlayerProps {
   episode?: number;
   title?: string;
   resumeAt?: number;          // segundos (só VidAPI usa)
+  directUrl?: string;         // stream HTTP direto (Stremio) — toca em <video>, ignora provedores
+  torrent?: { magnet: string; fileIdx?: number };  // WebTorrent (Stremio sem debrid)
   onProgress?: (seconds: number) => void;
   onCompleted?: () => void;
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, onProgress, onCompleted } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+
+  // Modo torrent (WebTorrent): resolve a streamURL de forma assíncrona.
+  const [tor, setTor] = useState<{ loading: boolean; url?: string; name?: string; playable?: boolean; id?: string; error?: string }>({ loading: false });
+  useEffect(() => {
+    if (!open || !torrent) return;
+    let alive = true;
+    let torrentId: string | undefined;
+    setTor({ loading: true });
+    getTorrentStream(torrent.magnet, torrent.fileIdx)
+      .then(s => { if (alive) { torrentId = s.torrentId; setTor({ loading: false, url: s.url, name: s.name, playable: s.playable, id: s.torrentId }); } })
+      .catch(e => { if (alive) setTor({ loading: false, error: e instanceof Error ? e.message : 'Falha ao carregar torrent' }); });
+    return () => { alive = false; if (torrentId) destroyTorrent(torrentId); };
+  }, [open, torrent]);
 
   const target: PlayerTarget = { tmdbId, imdbId, type, season, episode };
   const available = PROVIDERS.filter(p => p.build(target));
   const [providerId, setProviderId] = useState(available[0]?.id ?? 'vidapi');
   const provider = available.find(p => p.id === providerId) || available[0];
 
-  let src = provider ? provider.build(target) : null;
-  if (src && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
-    src += `&resumeAt=${Math.floor(resumeAt)}`;
+  const directMode = !!directUrl || !!torrent;
+  let src: string | null;
+  if (torrent) {
+    src = tor.url ?? null;
+  } else if (directUrl) {
+    src = directUrl;
+  } else {
+    src = provider ? provider.build(target) : null;
+    if (src && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
+      src += `&resumeAt=${Math.floor(resumeAt)}`;
+    }
   }
 
   useEffect(() => {
@@ -100,11 +124,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       <div className="flex items-center justify-between px-3 py-2 bg-black/90 shrink-0">
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
-          <div className="relative">
+          <div className="relative" hidden={directMode}>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Trocar fonte" onClick={() => setSourceOpen(o => !o)}>
               <Layers className="w-5 h-5" />
             </Button>
-            {sourceOpen && (
+            {!directMode && sourceOpen && (
               <div className="absolute right-0 top-11 z-20 bg-card border border-border rounded-lg py-1 w-48 shadow-xl">
                 <p className="px-3 py-1 text-[10px] text-muted-foreground">Fontes (troque se estiver em inglês ou não carregar)</p>
                 {available.map(p => (
@@ -129,7 +153,39 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       </div>
 
       <div className="flex-1 min-h-0">
-        {src ? (
+        {torrent && tor.loading ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <p>Conectando a peers (WebTorrent)…</p>
+            <p className="text-white/50 text-xs">Pode levar alguns segundos. Depende de seeders WebRTC disponíveis.</p>
+          </div>
+        ) : torrent && tor.error ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
+            <p className="text-amber-400">{tor.error}</p>
+            <p className="text-white/50 text-xs">Torrents só tocam aqui com seeders WebRTC e formato MP4/WebM. Tente outra opção, ou abra no Stremio.</p>
+          </div>
+        ) : torrent && tor.url && tor.playable === false ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
+            <p className="text-amber-400">Formato não suportado no navegador: {tor.name}</p>
+            <p className="text-white/50 text-xs">O navegador só decodifica MP4 (H.264) e WebM. Este arquivo (provável .mkv/.avi) não toca aqui — escolha uma opção MP4 ou abra no Stremio.</p>
+          </div>
+        ) : !src ? (
+          <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
+        ) : directMode ? (
+          <video
+            key={src}
+            src={src}
+            className="w-full h-full bg-black"
+            controls
+            autoPlay
+            playsInline
+            onTimeUpdate={e => {
+              const secs = Math.floor(e.currentTarget.currentTime);
+              if (secs > 0 && Math.abs(secs - lastSavedRef.current) >= 30) { lastSavedRef.current = secs; onProgress?.(secs); }
+            }}
+            onEnded={() => { if (!completedRef.current) { completedRef.current = true; onCompleted?.(); } }}
+          />
+        ) : (
           <iframe
             key={src}
             src={src}
@@ -137,10 +193,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             className="w-full h-full border-0"
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen
-            sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
+            referrerPolicy="origin"
           />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
         )}
       </div>
 
