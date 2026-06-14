@@ -11,6 +11,13 @@ export const TMDB_ENABLED = !!API_KEY;
 
 export type TmdbMediaType = 'movie' | 'tv';
 
+// Códigos ISO 639-1 → nome PT-BR (idioma original)
+const LANG_PT: Record<string, string> = {
+  en: 'Inglês', pt: 'Português', es: 'Espanhol', fr: 'Francês', de: 'Alemão',
+  it: 'Italiano', ja: 'Japonês', ko: 'Coreano', zh: 'Chinês', hi: 'Hindi',
+  ru: 'Russo', tr: 'Turco', ar: 'Árabe', th: 'Tailandês', sv: 'Sueco', nl: 'Holandês',
+};
+
 export interface TmdbSearchResult {
   tmdbId: number;
   title: string;
@@ -37,6 +44,7 @@ export interface TmdbDetails {
   genre?: string; // categorias separadas por vírgula, ex: "Ação, Aventura"
   rating?: number; // nota 0-10
   votes?: number;  // quantidade de avaliações
+  originalLanguage?: string; // idioma original em PT-BR (ex: "Inglês")
   // movie
   runtime?: number; // minutos
   // tv
@@ -228,6 +236,7 @@ interface RawDetails {
   episode_run_time?: number[];
   vote_average?: number;
   vote_count?: number;
+  original_language?: string;
   genres?: { id: number; name: string }[];
   external_ids?: { imdb_id?: string | null };
   seasons?: { season_number: number; episode_count: number }[];
@@ -247,6 +256,7 @@ export async function getDetails(tmdbId: number, type: TmdbMediaType): Promise<T
     genre,
     rating: d.vote_average || undefined,
     votes: d.vote_count || undefined,
+    originalLanguage: LANG_PT[d.original_language || ''] || (d.original_language ? d.original_language.toUpperCase() : undefined),
   };
 
   if (type === 'movie') {

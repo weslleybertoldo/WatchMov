@@ -136,6 +136,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           {media.year && <span>{media.year}</span>}
           {rating && <span className="flex items-center gap-1 text-foreground font-medium"><Star className="w-4 h-4 fill-amber-400 text-amber-400" /> {rating}</span>}
           <span className="px-2 py-0.5 rounded bg-muted text-xs">{isSeries ? 'Série' : 'Filme'}</span>
+          {details?.originalLanguage && (
+            <span className="px-2 py-0.5 rounded bg-muted text-xs">Áudio original: {details.originalLanguage}</span>
+          )}
         </div>
         {details?.genre && (
           <div className="flex flex-wrap gap-1">

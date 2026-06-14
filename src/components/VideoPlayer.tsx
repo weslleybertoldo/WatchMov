@@ -24,6 +24,10 @@ function buildUrl({ mediaId, type, season, episode, resumeAt }: VideoPlayerProps
     ? `${VIDAPI_BASE}/movie/${mediaId}`
     : `${VIDAPI_BASE}/tv/${mediaId}/${season ?? 1}/${episode ?? 1}`;
   const params = new URLSearchParams({ autoplay: '1' });
+  // Legenda PT-BR por padrão (auto-busca OpenSubtitles). Áudio dublado não é
+  // controlável pela API do VidAPI — depende da fonte; troca-se nos controles do player.
+  params.set('ds_lang', 'pt');
+  params.set('sub_lang', 'pt');
   if (resumeAt && resumeAt > 0) params.set('resumeAt', String(Math.floor(resumeAt)));
   return `${url}?${params.toString()}`;
 }
