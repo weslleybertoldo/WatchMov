@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, ExternalLink, Tv, Copy, Smartphone } from 'lucide-react';
 import { Browser } from '@capacitor/browser';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
+
+interface ScreenCastPlugin { openCast(): Promise<void>; }
+const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
 
 interface VideoPlayerProps {
   open: boolean;
@@ -77,7 +81,19 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(src)}`;
 
   const tryCast = async () => {
-    // 1) Presentation API (Chromecast / displays compatíveis no Chrome)
+    // No Android nativo: abre o seletor de transmissão do sistema (busca a TV LG
+    // e espelha a tela inteira, incluindo o player).
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await ScreenCast.openCast();
+        toast.info('Selecione sua TV', { description: 'Escolha a TV na lista de transmissão do Android.' });
+        return;
+      } catch {
+        setCastOpen(true);
+        return;
+      }
+    }
+    // Web: tenta Presentation API (Chromecast/displays no Chrome), senão sheet
     const w = window as unknown as { PresentationRequest?: new (urls: string[]) => { start: () => Promise<unknown> } };
     if (typeof w.PresentationRequest === 'function') {
       try {
