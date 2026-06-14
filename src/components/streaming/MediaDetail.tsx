@@ -81,8 +81,6 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     return created;
   }, [libItem, store, media, details, storeType, isSeries, seasonsFromDetails]);
 
-  const mediaId = libItem?.imdbId || details?.imdbId || String(media.tmdbId);
-
   const playMovie = async () => { await ensureLib(); setPlayer({}); };
   const playEpisode = async (seasonNum: number, ep: number) => { await ensureLib(); setPlayer({ season: seasonNum, episode: ep }); };
 
@@ -203,7 +201,8 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         <VideoPlayer
           open={!!player}
           onClose={() => setPlayer(null)}
-          mediaId={mediaId}
+          tmdbId={media.tmdbId}
+          imdbId={libItem?.imdbId || details?.imdbId}
           type={media.type}
           season={player.season}
           episode={player.episode}
