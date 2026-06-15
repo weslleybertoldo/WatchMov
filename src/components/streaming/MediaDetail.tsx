@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, Star, Loader2, Clapperboard } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, Star, Loader2, Download } from 'lucide-react';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -96,6 +96,18 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     setPlayer({ season, episode, directLabel: label, torrent: { magnet, fileIdx } });
   };
 
+  // Próximo episódio não assistido (continuar de onde parou, séries).
+  const nextSeriesEp = (): { season: number; episode: number } => {
+    const seasons = libItem?.seasons ? [...libItem.seasons].sort((a, b) => a.number - b.number) : [];
+    for (const s of seasons) if (s.watchedEpisodes < s.totalEpisodes) return { season: s.number, episode: s.watchedEpisodes + 1 };
+    return { season: 1, episode: 1 };
+  };
+  // Botão principal = servidores embed (filme retoma via resumeAt; série continua no próximo ep).
+  const playMain = async () => {
+    if (isSeries) { const c = nextSeriesEp(); await playEpisode(c.season, c.episode); }
+    else { await playMovie(); }
+  };
+
   const toggleList = async () => {
     const it = await ensureLib();
     if (!it) return;
@@ -124,6 +136,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
   const inList = !!libItem?.favorite;
   const resumeMins = !isSeries ? (libItem?.watchedDuration || 0) : 0;
+  const hasProgress = resumeMins > 0 || (isSeries && !!libItem?.seasons?.some(s => s.watchedEpisodes > 0));
 
   return (
     <div className="animate-fade-in pb-8">
@@ -158,16 +171,14 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           </div>
         )}
 
-        {/* Ações — principal = Stremio (fontes + continuar de onde parou); Players = provedores embed */}
+        {/* Ações — principal = servidores embed (retoma de onde parou); Torrent = Stremio/debrid */}
         <div className="flex gap-2 pt-1">
-          <Button className="flex-1" onClick={() => setStremioOpen(true)}>
-            <Play className="w-4 h-4 mr-1" /> {resumeMins > 0 ? 'Continuar' : 'Assistir'}
+          <Button className="flex-1" onClick={playMain}>
+            <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
-          {!isSeries && (
-            <Button variant="outline" onClick={playMovie} title="Players (servidores embed, alternativa)">
-              <Clapperboard className="w-4 h-4 mr-1" /> Players
-            </Button>
-          )}
+          <Button variant="outline" onClick={() => setStremioOpen(true)} title="Torrent / Stremio (dublado via debrid)">
+            <Download className="w-4 h-4 mr-1" /> Torrent
+          </Button>
           <Button variant={inList ? 'default' : 'outline'} onClick={toggleList}>
             {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Lista
           </Button>
