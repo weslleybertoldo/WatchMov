@@ -11,6 +11,10 @@ const config: CapacitorConfig = {
   server: {
     cleartext: false,
     androidScheme: 'https',
+    // WebView serve os arquivos locais (dist), mas reporta este hostname como
+    // origem. Sem isso a origem é "https://localhost" e os provedores de embed
+    // BR (EmbedPlayApi etc) bloqueiam o referrer localhost ("não use localhost").
+    hostname: 'watchmovbr.vercel.app',
   },
 };
 
