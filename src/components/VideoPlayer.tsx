@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, RotateCw, Maximize, Minimize, CheckSquare, Square } from 'lucide-react';
-import { Browser } from '@capacitor/browser';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, RotateCw, Maximize, Minimize, CheckSquare, Square } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
@@ -254,9 +253,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           )}
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Espelhar para TV" onClick={tryCast}>
             <Tv className="w-5 h-5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Abrir no navegador" onClick={() => src && Browser.open({ url: src })}>
-            <ExternalLink className="w-5 h-5" />
           </Button>
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" onClick={onClose}>
             <X className="w-5 h-5" />

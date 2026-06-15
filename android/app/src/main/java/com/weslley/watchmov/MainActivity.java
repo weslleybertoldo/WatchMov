@@ -62,6 +62,7 @@ public class MainActivity extends BridgeActivity {
             // orientação + barras + entalhe.
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
+                android.util.Log.d("WatchMovFS", "onShowCustomView chamado");
                 if (customView != null) { callback.onCustomViewHidden(); return; }
                 customView = view;
                 customViewCallback = callback;
