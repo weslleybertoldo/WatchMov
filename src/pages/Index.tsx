@@ -16,7 +16,7 @@ import ContinueView from '@/components/streaming/ContinueView';
 import { continueLabel } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Sparkles, Bookmark, Search, LogOut, Loader2 } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, Bookmark, Search, LogOut, Loader2, ArrowLeft } from 'lucide-react';
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista';
 
@@ -35,17 +35,6 @@ function itemToSummary(i: WatchItem): MediaSummary {
 const isAnime = (i: WatchItem): boolean =>
   i.type === 'series' && /anima[çc][ãa]o|anime/i.test(i.genre || '');
 
-function ListSection({ title, items, onOpen }: { title: string; items: MediaSummary[]; onOpen: (m: MediaSummary) => void }) {
-  return (
-    <div className="space-y-2">
-      <h2 className="text-base font-semibold text-foreground/90">{title}</h2>
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-        {items.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
-      </div>
-    </div>
-  );
-}
-
 const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'inicio', label: 'Início', icon: Home },
   { key: 'filmes', label: 'Filmes', icon: Film },
@@ -62,6 +51,7 @@ export default function Index() {
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]> }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
+  const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
 
   // Preserva o scroll vertical da página ao abrir um título e voltar.
   const homeScrollRef = useRef(0);
@@ -79,10 +69,11 @@ export default function Index() {
     if (selected) { setSelected(null); return true; }
     if (searchOpen) { setSearchOpen(false); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
+    if (listFilter) { setListFilter(null); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, searchOpen, continueFilter, category, tab]);
+  }, [selected, searchOpen, continueFilter, listFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -107,8 +98,10 @@ export default function Index() {
   const listMovies = savedList.filter(i => i.type === 'movie').map(itemToSummary);
   const listAnimes = savedList.filter(isAnime).map(itemToSummary);
   const listSeries = savedList.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
+  const listFiltered = listFilter === 'movie' ? listMovies : listFilter === 'anime' ? listAnimes : listFilter === 'series' ? listSeries : [];
+  const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); setContinueFilter(null); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); setContinueFilter(null); setListFilter(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -143,6 +136,16 @@ export default function Index() {
           <SearchView onOpen={openMedia} />
         ) : continueFilter ? (
           <ContinueView title={continueTitle} entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueFilter(null)} />
+        ) : listFilter ? (
+          <div className="space-y-4 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setListFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
+              <h1 className="text-xl font-bold">{listTitle}</h1>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+              {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
+            </div>
+          </div>
         ) : category ? (
           <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
@@ -202,9 +205,9 @@ export default function Index() {
               <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Minha Lista" num título.</p>
             ) : (
               <>
-                {listMovies.length > 0 && <ListSection title="Filmes" items={listMovies} onOpen={openMedia} />}
-                {listSeries.length > 0 && <ListSection title="Séries" items={listSeries} onOpen={openMedia} />}
-                {listAnimes.length > 0 && <ListSection title="Animes" items={listAnimes} onOpen={openMedia} />}
+                {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
+                {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
+                {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
               </>
             )}
           </div>
