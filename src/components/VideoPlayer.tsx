@@ -39,6 +39,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [castOpen, setCastOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
@@ -183,6 +184,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const toggleFullscreen = async () => {
     const next = !fullscreen;
     setFullscreen(next);
+    setControlsVisible(!next); // em tela cheia começa sem a barra; tap mostra
     if (Capacitor.isNativePlatform()) {
       try { await (next ? Immersive.enter() : Immersive.exit()); } catch { /* ignore */ }
       return;
@@ -194,8 +196,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   };
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-[60] bg-black flex flex-col animate-fade-in">
-      <div className="flex items-center justify-between px-3 py-2 bg-black/90 shrink-0">
+    <div ref={rootRef} className="fixed inset-0 z-[60] bg-black animate-fade-in">
+      {/* Zona de toque (topo) pra mostrar/ocultar os controles sobre o player. */}
+      <button aria-hidden onClick={() => setControlsVisible(v => !v)} className="absolute top-0 inset-x-0 h-24 z-10" />
+      <div className={`absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 py-2 bg-gradient-to-b from-black/90 via-black/70 to-transparent transition-opacity duration-200 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
           <div className="relative" hidden={directMode}>
@@ -258,7 +262,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="absolute inset-0">
         {torrent && tor.loading ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
             <Loader2 className="w-6 h-6 animate-spin" />
