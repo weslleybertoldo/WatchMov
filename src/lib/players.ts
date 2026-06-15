@@ -58,67 +58,6 @@ export const PROVIDERS: Provider[] = [
         : `https://embedplayapi.top/embed/${t.tmdbId}/${s(t)}/${e(t)}`;
     },
   },
-  {
-    id: 'vidapi',
-    name: 'Fonte 4 (VidAPI)',
-    build: (t) => {
-      const id = t.imdbId || (t.tmdbId ? String(t.tmdbId) : null);
-      if (!id) return null;
-      const base = t.type === 'movie' ? `movie/${id}` : `tv/${id}/${s(t)}/${e(t)}`;
-      return `https://vaplayer.ru/embed/${base}?autoplay=1&ds_lang=pt&sub_lang=pt`;
-    },
-  },
-  {
-    id: 'vidsrc',
-    name: 'Fonte 5 (VidSrc)',
-    build: (t) => {
-      const id = t.imdbId || (t.tmdbId ? String(t.tmdbId) : null);
-      if (!id) return null;
-      return t.type === 'movie'
-        ? `https://vidsrc.xyz/embed/movie/${id}`
-        : `https://vidsrc.xyz/embed/tv/${id}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
-    id: 'vidlink',
-    name: 'Fonte 6 (VidLink)',
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://vidlink.pro/movie/${t.tmdbId}`
-        : `https://vidlink.pro/tv/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
-    id: 'embedsu',
-    name: 'Fonte 7 (Embed.su)',
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://embed.su/embed/movie/${t.tmdbId}`
-        : `https://embed.su/embed/tv/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
-    id: '2embed',
-    name: 'Fonte 8 (2Embed)',
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://www.2embed.cc/embed/${t.tmdbId}`
-        : `https://www.2embed.cc/embedtv/${t.tmdbId}&s=${s(t)}&e=${e(t)}`;
-    },
-  },
-  {
-    id: 'superembed',
-    name: 'Fonte 9 (SuperEmbed)',
-    build: (t) => {
-      if (!t.tmdbId && !t.imdbId) return null;
-      const idPart = t.tmdbId ? `video_id=${t.tmdbId}&tmdb=1` : `video_id=${t.imdbId}`;
-      const ep = t.type === 'tv' ? `&s=${s(t)}&e=${e(t)}` : '';
-      return `https://multiembed.mov/?${idPart}${ep}`;
-    },
-  },
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -126,10 +65,4 @@ export const PROVIDER_HOSTS = [
   'https://betterflix.click',
   'https://fembed.sx',
   'https://embedplayapi.top',
-  'https://vaplayer.ru',
-  'https://vidsrc.xyz',
-  'https://vidlink.pro',
-  'https://embed.su',
-  'https://www.2embed.cc',
-  'https://multiembed.mov',
 ];
