@@ -59,6 +59,28 @@ export const PROVIDERS: Provider[] = [
         : `https://embedplayapi.top/embed/${t.tmdbId}/${s(t)}/${e(t)}`;
     },
   },
+  {
+    id: 'vidapi',
+    name: 'Fonte 4 (VidAPI — legendado PT)',
+    // VidAPI/vaplayer.ru: NÃO dubla (não tem param de áudio). Áudio original +
+    // legenda PT-BR auto-carregada do OpenSubtitles. ds_lang/sub_lang=pob =
+    // Português (Brasil) no padrão OpenSubtitles (3 letras). Filme exige IMDB id;
+    // série usa TMDB id. Serve de fallback quando as fontes dubladas falham.
+    build: (t) => {
+      // ds_lang=pob = auto-busca legenda em Português-BR no OpenSubtitles
+      // (código 3 letras do OpenSubtitles; pob = pt-BR, por = pt-PT).
+      const q = 'ds_lang=pob&sub_default=true';
+      // Filme aceita IMDB ou TMDB id; prefere IMDB (catálogo casa melhor).
+      if (t.type === 'movie') {
+        const id = t.imdbId ?? t.tmdbId;
+        if (!id) return null;
+        return `https://vaplayer.ru/embed/movie/${id}?${q}`;
+      }
+      const id = t.imdbId ?? t.tmdbId;
+      if (!id) return null;
+      return `https://vaplayer.ru/embed/tv/${id}/${s(t)}/${e(t)}?${q}`;
+    },
+  },
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -66,4 +88,5 @@ export const PROVIDER_HOSTS = [
   'https://betterflix.click',
   'https://fembed.sx',
   'https://embedplayapi.top',
+  'https://vaplayer.ru',
 ];
