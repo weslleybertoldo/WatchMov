@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, RotateCw, Maximize, Minimize, CheckSquare, Square, SkipForward } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
@@ -179,15 +179,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     lastSavedRef.current = 0;
   };
 
-  // Girar a tela (retrato/paisagem). Nativo: SO; web: Screen Orientation API (best-effort).
-  const rotate = async () => {
-    if (Capacitor.isNativePlatform()) { try { await Immersive.toggleOrientation(); } catch { /* ignore */ } return; }
-    const so = (screen as unknown as { orientation?: { type: string; lock?: (o: string) => Promise<void>; unlock?: () => void } }).orientation;
-    try {
-      if (so?.lock) { await (so.type.startsWith('landscape') ? Promise.resolve(so.unlock?.()) : so.lock('landscape')); }
-    } catch { /* orientação travada/sem suporte */ }
-  };
-
   // Tela cheia imersiva (oculta barras + entalhe). Nativo: plugin; web: Fullscreen API.
   const toggleFullscreen = async () => {
     const next = !fullscreen;
@@ -260,9 +251,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <SkipForward className="w-5 h-5" />
             </Button>
           )}
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Girar tela" onClick={rotate}>
-            <RotateCw className="w-5 h-5" />
-          </Button>
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
           </Button>
