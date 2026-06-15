@@ -202,8 +202,8 @@ export type BrowseKind = 'movie' | 'tv' | 'anime';
 
 export interface DiscoverFilters {
   kind: BrowseKind;
-  genreId?: number | null;
-  year?: number | null;
+  genreIds?: number[];   // múltiplos gêneros (OR entre eles)
+  years?: number[];      // múltiplos anos (qualquer um dos marcados)
   minRating?: number | null;
   page?: number;
 }
@@ -230,31 +230,52 @@ export async function discoverFilter(f: DiscoverFilters): Promise<MediaSummary[]
   const isAnime = f.kind === 'anime';
   const apiType: TmdbMediaType = f.kind === 'movie' ? 'movie' : 'tv';
 
-  const params: Record<string, string> = {
-    sort_by: 'popularity.desc',
-    include_adult: 'false',
-    watch_region: 'BR',
-    page: String(page),
-    // com filtros ativos, baixa o piso de votos para não esvaziar o grid
-    'vote_count.gte': '50',
+  // Múltiplos gêneros/anos não cabem num único request do TMDB:
+  // - anime: cada gênero vira "16,g" (animação E o gênero) → uma dimensão por gênero
+  // - movie/tv: vários gêneros usam "g1|g2" (OR) num request só → uma dimensão
+  // - anos não-contíguos não têm sintaxe própria → uma dimensão por ano
+  // Fazemos o produto cartesiano das dimensões, buscamos em paralelo e mesclamos.
+  const genres = f.genreIds ?? [];
+  const genreParams: string[] = isAnime
+    ? (genres.length ? genres.map(g => `16,${g}`) : ['16'])
+    : (genres.length ? [genres.join('|')] : ['']);
+  const years: (number | null)[] = f.years?.length ? f.years : [null];
+
+  const buildParams = (genreParam: string, year: number | null): Record<string, string> => {
+    const params: Record<string, string> = {
+      sort_by: 'popularity.desc',
+      include_adult: 'false',
+      watch_region: 'BR',
+      page: String(page),
+      // com filtros ativos, baixa o piso de votos para não esvaziar o grid
+      'vote_count.gte': '50',
+    };
+    if (genreParam) params.with_genres = genreParam;
+    if (isAnime) params.with_original_language = 'ja';
+    if (f.minRating) params['vote_average.gte'] = String(f.minRating);
+    if (year != null) {
+      if (apiType === 'movie') params.primary_release_year = String(year);
+      else params.first_air_date_year = String(year);
+    }
+    return params;
   };
 
-  // gêneros: anime sempre força animação (16); gênero escolhido entra junto
-  const genres: number[] = [];
-  if (isAnime) genres.push(16);
-  if (f.genreId) genres.push(f.genreId);
-  if (genres.length) params.with_genres = genres.join(',');
-  if (isAnime) params.with_original_language = 'ja';
+  const combos: Record<string, string>[] = [];
+  for (const gp of genreParams) for (const y of years) combos.push(buildParams(gp, y));
 
-  if (f.minRating) params['vote_average.gte'] = String(f.minRating);
+  const results = await Promise.all(
+    combos.map(p =>
+      tmdbFetch<{ results: RawListItem[] }>(`/discover/${apiType}`, p)
+        .then(d => (d.results || []).map(r => toSummary(r, apiType)))
+        .catch(() => [] as MediaSummary[])
+    )
+  );
 
-  if (f.year) {
-    if (apiType === 'movie') params.primary_release_year = String(f.year);
-    else params.first_air_date_year = String(f.year);
-  }
-
-  const d = await tmdbFetch<{ results: RawListItem[] }>(`/discover/${apiType}`, params);
-  return dedupeWithPoster((d.results || []).map(r => toSummary(r, apiType)));
+  const merged = results.flat();
+  // multi-fetch (vários gêneros/anos) mistura listas → reordena por popularidade
+  // aproximada (votos). Request único mantém a ordem da API.
+  if (combos.length > 1) merged.sort((a, b) => (b.votes || 0) - (a.votes || 0));
+  return dedupeWithPoster(merged);
 }
 
 function requireKey() {

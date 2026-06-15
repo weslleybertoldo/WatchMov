@@ -50,7 +50,7 @@ export default function Index() {
   const store = useWatchStore(user?.id);
   const [tab, setTab] = useState<Tab>('inicio');
   const [selected, setSelected] = useState<MediaSummary | null>(null);
-  const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]> }>(null);
+  const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]>; cacheKey?: string }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
@@ -65,7 +65,7 @@ export default function Index() {
     }
   }, [selected]);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
-    setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p) });
+    setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
@@ -149,7 +149,7 @@ export default function Index() {
             </div>
           </div>
         ) : category ? (
-          <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
+          <CategoryView title={category.title} loadPage={category.loadPage} cacheKey={category.cacheKey} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
           <div className="space-y-6">
             {continueMovies.length > 0 && (
@@ -167,7 +167,7 @@ export default function Index() {
               loader={() => trendingWeek('tv')} onOpen={openMedia} />
             <MediaRow title="Lançamentos recentes" cacheKey="recent-movie"
               loader={() => recent('movie')} onOpen={openMedia}
-              onSeeAll={() => setCategory({ title: 'Lançamentos recentes', loadPage: () => recent('movie') })} />
+              onSeeAll={() => setCategory({ title: 'Lançamentos recentes', loadPage: () => recent('movie'), cacheKey: 'cat-recent-movie' })} />
             {MOVIE_GENRES.slice(0, 6).map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
                 loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
@@ -198,7 +198,7 @@ export default function Index() {
             {ANIME_ROWS.map(r => (
               <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
                 loader={() => discoverAnime(1, r.id)} onOpen={openMedia}
-                onSeeAll={() => setCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id) })} />
+                onSeeAll={() => setCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
             ))}
           </div>
         ) : tab === 'procurar' ? (

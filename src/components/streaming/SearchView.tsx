@@ -18,11 +18,15 @@ function loadHistory(): string[] {
   } catch { return []; }
 }
 
+// Cache module-level: ao abrir um título e voltar, mostra de novo os resultados
+// já pesquisados (em vez de voltar à tela de digitar).
+let searchCache: { query: string; results: MediaSummary[]; searched: boolean } | null = null;
+
 export default function SearchView({ onOpen }: SearchViewProps) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<MediaSummary[]>([]);
+  const [query, setQuery] = useState(searchCache?.query ?? '');
+  const [results, setResults] = useState<MediaSummary[]>(searchCache?.results ?? []);
   const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [searched, setSearched] = useState(searchCache?.searched ?? false);
   const [history, setHistory] = useState<string[]>(loadHistory);
 
   const pushHistory = (term: string) => {
@@ -46,9 +50,12 @@ export default function SearchView({ onOpen }: SearchViewProps) {
     setSearched(true);
     pushHistory(t);
     try {
-      setResults(await searchMulti(t));
+      const r = await searchMulti(t);
+      setResults(r);
+      searchCache = { query: t, results: r, searched: true };
     } catch {
       setResults([]);
+      searchCache = { query: t, results: [], searched: true };
     } finally {
       setLoading(false);
     }

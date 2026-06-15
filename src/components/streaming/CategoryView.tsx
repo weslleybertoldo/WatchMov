@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { Button } from '@/components/ui/button';
@@ -9,13 +9,28 @@ interface CategoryViewProps {
   loadPage: (page: number) => Promise<MediaSummary[]>;
   onOpen: (media: MediaSummary) => void;
   onBack: () => void;
+  cacheKey?: string; // preserva itens/página ao abrir um título e voltar
 }
 
-export default function CategoryView({ title, loadPage, onOpen, onBack }: CategoryViewProps) {
-  const [items, setItems] = useState<MediaSummary[]>([]);
-  const [page, setPage] = useState(1);
+// Cache module-level por cacheKey: ao remontar (voltar de um título), restaura
+// os itens já carregados para a altura da página ser a mesma → o scroll-restore
+// global (Index) reposiciona corretamente, sem voltar ao topo.
+interface CatState { items: MediaSummary[]; page: number; done: boolean; }
+const catCache = new Map<string, CatState>();
+
+export default function CategoryView({ title, loadPage, onOpen, onBack, cacheKey }: CategoryViewProps) {
+  const cached = cacheKey ? catCache.get(cacheKey) : undefined;
+  const [items, setItems] = useState<MediaSummary[]>(cached?.items ?? []);
+  const [page, setPage] = useState(cached?.page ?? 1);
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(cached?.done ?? false);
+  const didInit = useRef(false);
+
+  const persist = useCallback((next: Partial<CatState>) => {
+    if (!cacheKey) return;
+    const cur = catCache.get(cacheKey) ?? { items: [], page: 1, done: false };
+    catCache.set(cacheKey, { ...cur, ...next });
+  }, [cacheKey]);
 
   const load = useCallback(async (p: number) => {
     setLoading(true);
@@ -23,16 +38,23 @@ export default function CategoryView({ title, loadPage, onOpen, onBack }: Catego
       const res = await loadPage(p);
       setItems(prev => {
         const seen = new Set(prev.map(i => `${i.type}-${i.tmdbId}`));
-        return [...prev, ...res.filter(i => !seen.has(`${i.type}-${i.tmdbId}`))];
+        const merged = [...prev, ...res.filter(i => !seen.has(`${i.type}-${i.tmdbId}`))];
+        persist({ items: merged, page: p, done: res.length === 0 });
+        return merged;
       });
       if (res.length === 0) setDone(true);
     } finally {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [persist]);
 
-  useEffect(() => { load(1); }, [load]);
+  useEffect(() => {
+    if (didInit.current) return;
+    didInit.current = true;
+    if (cached) return;     // restaurado do cache → não refaz fetch
+    load(1);
+  }, [load, cached]);
 
   const loadMore = () => {
     const next = page + 1;

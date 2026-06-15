@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   MediaSummary, discoverFilter, type BrowseKind,
   MOVIE_GENRES, TV_GENRES, ANIME_GENRES, BROWSE_YEARS, BROWSE_RATINGS,
 } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { Button } from '@/components/ui/button';
-import { Film, Tv, Sparkles, Loader2 } from 'lucide-react';
+import { Film, Tv, Sparkles, Loader2, ChevronDown, Check } from 'lucide-react';
 
 interface BrowseViewProps {
   onOpen: (media: MediaSummary) => void;
@@ -21,26 +21,77 @@ function genresFor(kind: BrowseKind) {
   return kind === 'movie' ? MOVIE_GENRES : kind === 'tv' ? TV_GENRES : ANIME_GENRES;
 }
 
-const selectCls =
-  'h-9 rounded-lg bg-muted/60 border border-border px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary';
+// Cache module-level: sobrevive ao desmontar/remontar (abrir título e voltar).
+interface BrowseState {
+  kind: BrowseKind;
+  genreIds: number[];
+  years: number[];
+  minRating: number | null;
+  items: MediaSummary[];
+  page: number;
+  done: boolean;
+}
+let browseCache: BrowseState | null = null;
+
+// Dropdown com checkboxes (multi-seleção).
+function MultiSelect({ label, options, selected, onToggle }: {
+  label: string;
+  options: { value: number; label: string }[];
+  selected: number[];
+  onToggle: (v: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const text = selected.length === 0 ? label : `${label} (${selected.length})`;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className={`h-9 inline-flex items-center gap-1 rounded-lg border px-2.5 text-sm transition ${
+          selected.length ? 'bg-primary/15 text-primary border-primary/40' : 'bg-muted/60 text-foreground border-border'
+        }`}>
+        {text} <ChevronDown className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute z-40 mt-1 max-h-64 w-44 overflow-y-auto rounded-lg border border-border bg-background shadow-lg p-1">
+            {options.map(o => {
+              const on = selected.includes(o.value);
+              return (
+                <button key={o.value} onClick={() => onToggle(o.value)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left hover:bg-muted">
+                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${on ? 'bg-primary border-primary text-primary-foreground' : 'border-border'}`}>
+                    {on && <Check className="w-3 h-3" />}
+                  </span>
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function BrowseView({ onOpen }: BrowseViewProps) {
-  const [kind, setKind] = useState<BrowseKind>('movie');
-  const [genreId, setGenreId] = useState<number | null>(null);
-  const [year, setYear] = useState<number | null>(null);
-  const [minRating, setMinRating] = useState<number | null>(null);
+  const c = browseCache;
+  const [kind, setKind] = useState<BrowseKind>(c?.kind ?? 'movie');
+  const [genreIds, setGenreIds] = useState<number[]>(c?.genreIds ?? []);
+  const [years, setYears] = useState<number[]>(c?.years ?? []);
+  const [minRating, setMinRating] = useState<number | null>(c?.minRating ?? null);
 
-  const [items, setItems] = useState<MediaSummary[]>([]);
-  const [page, setPage] = useState(1);
+  const [items, setItems] = useState<MediaSummary[]>(c?.items ?? []);
+  const [page, setPage] = useState(c?.page ?? 1);
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(c?.done ?? false);
 
   const genres = useMemo(() => genresFor(kind), [kind]);
+  const didInit = useRef(false);
 
   const load = useCallback(async (p: number, reset: boolean) => {
     setLoading(true);
     try {
-      const res = await discoverFilter({ kind, genreId, year, minRating, page: p });
+      const res = await discoverFilter({ kind, genreIds, years, minRating, page: p });
       setItems(prev => {
         const base = reset ? [] : prev;
         const seen = new Set(base.map(i => `${i.type}-${i.tmdbId}`));
@@ -53,14 +104,23 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [kind, genreId, year, minRating]);
+  }, [kind, genreIds, years, minRating]);
 
-  // Recarrega do zero sempre que tipo/filtros mudam.
+  // Recarrega do zero quando tipo/filtros mudam. No 1º mount com cache, mantém.
   useEffect(() => {
+    if (!didInit.current) {
+      didInit.current = true;
+      if (browseCache) return; // restaurado do cache → não refaz fetch
+    }
     setPage(1);
     setDone(false);
     load(1, true);
   }, [load]);
+
+  // Persiste o estado para sobreviver à remontagem.
+  useEffect(() => {
+    browseCache = { kind, genreIds, years, minRating, items, page, done };
+  }, [kind, genreIds, years, minRating, items, page, done]);
 
   const loadMore = () => {
     const next = page + 1;
@@ -71,8 +131,10 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
   const changeKind = (k: BrowseKind) => {
     if (k === kind) return;
     setKind(k);
-    setGenreId(null); // gêneros diferem por tipo
+    setGenreIds([]); // gêneros diferem por tipo
   };
+  const toggle = (arr: number[], set: (v: number[]) => void, v: number) =>
+    set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
 
   return (
     <div className="flex gap-3 sm:gap-4 animate-fade-in">
@@ -97,15 +159,15 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
       <div className="flex-1 min-w-0 space-y-4">
         {/* Filtros */}
         <div className="flex flex-wrap gap-2">
-          <select className={selectCls} value={genreId ?? ''} onChange={e => setGenreId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">Todas categorias</option>
-            {genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
-          <select className={selectCls} value={year ?? ''} onChange={e => setYear(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">Todos os anos</option>
-            {BROWSE_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <select className={selectCls} value={minRating ?? ''} onChange={e => setMinRating(e.target.value ? Number(e.target.value) : null)}>
+          <MultiSelect label="Categorias" selected={genreIds}
+            options={genres.map(g => ({ value: g.id, label: g.name }))}
+            onToggle={v => toggle(genreIds, setGenreIds, v)} />
+          <MultiSelect label="Anos" selected={years}
+            options={BROWSE_YEARS.map(y => ({ value: y, label: String(y) }))}
+            onToggle={v => toggle(years, setYears, v)} />
+          <select
+            className="h-9 rounded-lg bg-muted/60 border border-border px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            value={minRating ?? ''} onChange={e => setMinRating(e.target.value ? Number(e.target.value) : null)}>
             <option value="">Qualquer nota</option>
             {BROWSE_RATINGS.map(r => <option key={r.value} value={r.value}>Nota {r.label}</option>)}
           </select>
