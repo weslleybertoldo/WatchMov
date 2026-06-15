@@ -320,6 +320,59 @@ export function useWatchStore(userId?: string) {
     }
   }, [enqueueItemWrite, loadFromDB]);
 
+  // Marca/desmarca um episódio específico (por número de temporada + episódio).
+  // Mantém watchedEpisodes = watchedList.length pra stats/seletor de "continuar".
+  const setEpisodeWatched = useCallback(async (itemId: string, seasonNumber: number, episode: number, watched: boolean) => {
+    let updatedSeasons: Season[] | undefined;
+    const lastWatchedAt = new Date().toISOString();
+    setData(prev => {
+      const items = prev.items.map(item => {
+        if (item.id !== itemId || !item.seasons) return item;
+        const seasons = item.seasons.map(s => {
+          if (s.number !== seasonNumber) return s;
+          const base = s.watchedList ?? Array.from({ length: s.watchedEpisodes || 0 }, (_, i) => i + 1);
+          const set = new Set(base);
+          if (watched) set.add(episode); else set.delete(episode);
+          const list = Array.from(set).sort((a, b) => a - b);
+          return { ...s, watchedList: list, watchedEpisodes: list.length };
+        });
+        updatedSeasons = seasons;
+        return { ...item, seasons, lastWatchedAt };
+      });
+      return { ...prev, items };
+    });
+    if (updatedSeasons) {
+      const snapshot = updatedSeasons;
+      enqueueItemWrite(itemId, async () => {
+        const current = itemsRef.current.find(i => i.id === itemId);
+        const seasons = current?.seasons ?? snapshot;
+        const { error } = await supabase.from('wm_items')
+          .update({ seasons, last_watched_at: lastWatchedAt }).eq('id', itemId);
+        if (error) { reportDbError('salvar episodio', error); loadFromDB(); }
+      });
+    }
+  }, [enqueueItemWrite, loadFromDB]);
+
+  // Remove o item de "Continuar assistindo" (zera progresso).
+  const clearProgress = useCallback(async (itemId: string) => {
+    let newSeasons: Season[] | undefined;
+    setData(prev => ({
+      ...prev,
+      items: prev.items.map(i => {
+        if (i.id !== itemId) return i;
+        newSeasons = i.seasons?.map(s => ({ ...s, watchedList: [], watchedEpisodes: 0, partialEpisodeTime: undefined }));
+        return { ...i, watchedDuration: 0, completed: false, lastWatchedAt: undefined, seasons: newSeasons };
+      }),
+    }));
+    enqueueItemWrite(itemId, async () => {
+      const current = itemsRef.current.find(i => i.id === itemId);
+      const { error } = await supabase.from('wm_items')
+        .update({ watched_duration: 0, completed: false, last_watched_at: null, seasons: current?.seasons ?? newSeasons })
+        .eq('id', itemId);
+      if (error) { reportDbError('remover do continuar', error); loadFromDB(); }
+    });
+  }, [enqueueItemWrite, loadFromDB]);
+
   const decrementEpisode = useCallback(async (itemId: string, seasonId: string) => {
     let updatedSeasons: Season[] | undefined;
     const lastWatchedAt = new Date().toISOString();
@@ -520,6 +573,7 @@ export function useWatchStore(userId?: string) {
     addSection, updateSection, deleteSection,
     addItem, updateItem, deleteItem,
     incrementEpisode, decrementEpisode,
+    setEpisodeWatched, clearProgress,
     resetSeason, resetItem,
     getStats,
     upsertLibraryItem,

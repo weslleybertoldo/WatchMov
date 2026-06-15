@@ -12,6 +12,8 @@ import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
 import SearchView from '@/components/streaming/SearchView';
 import MediaCard from '@/components/streaming/MediaCard';
+import ContinueView from '@/components/streaming/ContinueView';
+import { continueLabel } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
 import { Home, Film, Tv, Sparkles, Bookmark, Search, LogOut, Loader2 } from 'lucide-react';
@@ -59,6 +61,7 @@ export default function Index() {
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]> }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [continueOpen, setContinueOpen] = useState(false);
 
   const openMedia = useCallback((m: MediaSummary) => setSelected(m), []);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
@@ -67,24 +70,29 @@ export default function Index() {
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
     if (searchOpen) { setSearchOpen(false); return true; }
+    if (continueOpen) { setContinueOpen(false); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, searchOpen, category, tab]);
+  }, [selected, searchOpen, continueOpen, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
-  const continueMovies = store.continueWatching.filter(i => i.tmdbId && i.type === 'movie').map(itemToSummary);
-  const continueSeries = store.continueWatching.filter(i => i.tmdbId && i.type === 'series').map(itemToSummary);
+  const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i) });
+  const continueAll = store.continueWatching.filter(i => i.tmdbId);
+  const continueMovies = continueAll.filter(i => i.type === 'movie').map(toCont);
+  const continueAnimes = continueAll.filter(isAnime).map(toCont);
+  const continueSeries = continueAll.filter(i => i.type === 'series' && !isAnime(i)).map(toCont);
+  const continueEntries = continueAll.map(i => ({ id: i.id, summary: toCont(i) }));
   const savedList = store.myList.filter(i => i.tmdbId);
   const listMovies = savedList.filter(i => i.type === 'movie').map(itemToSummary);
   const listAnimes = savedList.filter(isAnime).map(itemToSummary);
   const listSeries = savedList.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); setContinueOpen(false); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -117,15 +125,20 @@ export default function Index() {
           <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
+        ) : continueOpen ? (
+          <ContinueView entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueOpen(false)} />
         ) : category ? (
           <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
           <div className="space-y-6">
             {continueMovies.length > 0 && (
-              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} />
+              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => setContinueOpen(true)} />
             )}
             {continueSeries.length > 0 && (
-              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} />
+              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => setContinueOpen(true)} />
+            )}
+            {continueAnimes.length > 0 && (
+              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => setContinueOpen(true)} />
             )}
             <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
               loader={() => trendingWeek('movie')} onOpen={openMedia} />

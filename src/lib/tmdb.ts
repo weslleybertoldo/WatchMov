@@ -70,6 +70,7 @@ export interface MediaSummary {
   votes?: number;
   year?: string;
   type: TmdbMediaType;
+  subtitle?: string; // legenda extra no card (ex.: "Eps 5 | Temporada 4")
 }
 
 // Gêneros curados para as linhas (id TMDB + rótulo PT-BR)

@@ -5,6 +5,7 @@ export interface Season {
   watchedEpisodes: number;
   episodeDuration: number; // minutes
   partialEpisodeTime?: number; // minutes watched of current episode
+  watchedList?: number[]; // números dos episódios marcados como assistidos
 }
 
 export interface WatchItem {

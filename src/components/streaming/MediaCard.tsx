@@ -30,6 +30,9 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
         )}
       </div>
       <p className="mt-1 text-xs font-medium text-foreground truncate">{media.title}</p>
+      {media.subtitle && (
+        <p className="text-[10px] text-primary/90 truncate">{media.subtitle}</p>
+      )}
       <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
         {media.year && <span>{media.year}</span>}
         {rating && (

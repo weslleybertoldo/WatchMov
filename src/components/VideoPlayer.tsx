@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, RotateCw, Maximize, Minimize } from 'lucide-react';
+import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, RotateCw, Maximize, Minimize, CheckSquare, Square } from 'lucide-react';
 import { Browser } from '@capacitor/browser';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
@@ -28,10 +28,12 @@ interface VideoPlayerProps {
   torrent?: { magnet: string; fileIdx?: number };  // WebTorrent (Stremio sem debrid)
   onProgress?: (seconds: number) => void;
   onCompleted?: () => void;
+  episodeWatched?: boolean;        // série: episódio atual marcado como assistido
+  onToggleWatched?: () => void;    // alterna a marcação do episódio atual
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted, episodeWatched, onToggleWatched } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -232,6 +234,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                 </div>
               )}
             </div>
+          )}
+          {onToggleWatched && (
+            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${episodeWatched ? 'text-primary' : 'text-white/80'}`} title={episodeWatched ? 'Assistido (toque pra desmarcar)' : 'Marcar como assistido'} onClick={onToggleWatched}>
+              {episodeWatched ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+            </Button>
           )}
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Girar tela" onClick={rotate}>
             <RotateCw className="w-5 h-5" />

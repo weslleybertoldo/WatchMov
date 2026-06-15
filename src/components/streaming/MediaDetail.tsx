@@ -8,6 +8,7 @@ import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, Star, Loader2, Download } from 'lucide-react';
+import { episodesWatched, isEpisodeWatched } from '@/lib/watchProgress';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -18,6 +19,7 @@ interface StoreLike {
   }) => Promise<WatchItem | null>;
   updateItem: (id: string, updates: Partial<WatchItem>) => void;
   incrementEpisode: (itemId: string, seasonId: string) => void;
+  setEpisodeWatched: (itemId: string, seasonNumber: number, episode: number, watched: boolean) => void;
 }
 
 interface MediaDetailProps {
@@ -34,6 +36,8 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const [libItem, setLibItem] = useState<WatchItem | null>(
     store.data.items.find(i => i.tmdbId === media.tmdbId && i.type === storeType) ?? null
   );
+  // Versão "viva" do store (reflete marcações de episódio/progresso em tempo real).
+  const liveItem = store.data.items.find(i => i.tmdbId === media.tmdbId && i.type === storeType) ?? libItem;
   const [player, setPlayer] = useState<null | { season?: number; episode?: number; directUrl?: string; directLabel?: string; torrent?: { magnet: string; fileIdx?: number } }>(null);
   const [stremioOpen, setStremioOpen] = useState(false);
   const [selSeason, setSelSeason] = useState(1);
@@ -89,7 +93,11 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     if (it) store.updateItem(it.id, { lastWatchedAt: new Date().toISOString() });
   };
   const playMovie = async () => { const it = await ensureLib(); markWatched(it); setPlayer({}); };
-  const playEpisode = async (seasonNum: number, ep: number) => { const it = await ensureLib(); markWatched(it); setPlayer({ season: seasonNum, episode: ep }); };
+  const playEpisode = async (seasonNum: number, ep: number) => {
+    const it = await ensureLib();
+    if (it) store.setEpisodeWatched(it.id, seasonNum, ep, true); // marca assistido ao abrir (check no grid + continuar)
+    setPlayer({ season: seasonNum, episode: ep });
+  };
   const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
     await ensureLib();
     setStremioOpen(false);
@@ -103,8 +111,11 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
 
   // Próximo episódio não assistido (continuar de onde parou, séries).
   const nextSeriesEp = (): { season: number; episode: number } => {
-    const seasons = libItem?.seasons ? [...libItem.seasons].sort((a, b) => a.number - b.number) : [];
-    for (const s of seasons) if (s.watchedEpisodes < s.totalEpisodes) return { season: s.number, episode: s.watchedEpisodes + 1 };
+    const seasons = liveItem?.seasons ? [...liveItem.seasons].sort((a, b) => a.number - b.number) : [];
+    for (const s of seasons) {
+      const watched = episodesWatched(s);
+      for (let ep = 1; ep <= s.totalEpisodes; ep++) if (!watched.includes(ep)) return { season: s.number, episode: ep };
+    }
     return { season: 1, episode: 1 };
   };
   // Botão principal = servidores embed (filme retoma via resumeAt; série continua no próximo ep).
@@ -130,18 +141,21 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     setPlayer(null);
   };
   const onSeriesCompleted = () => {
-    if (!player?.season || !libItem?.seasons) { setPlayer(null); return; }
-    const season = libItem.seasons.find(s => s.number === player.season);
-    if (season) store.incrementEpisode(libItem.id, season.id);
+    if (!player?.season || !liveItem) { setPlayer(null); return; }
+    store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true);
+    const season = liveItem.seasons?.find(s => s.number === player.season);
     const nextEp = (player.episode || 1) + 1;
     if (season && nextEp <= season.totalEpisodes) setPlayer({ season: player.season, episode: nextEp });
     else setPlayer(null);
   };
 
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
-  const inList = !!libItem?.favorite;
-  const resumeMins = !isSeries ? (libItem?.watchedDuration || 0) : 0;
-  const hasProgress = resumeMins > 0 || (isSeries && !!libItem?.seasons?.some(s => s.watchedEpisodes > 0));
+  const inList = !!liveItem?.favorite;
+  const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
+  const hasProgress = resumeMins > 0 || (isSeries && !!liveItem?.seasons?.some(s => episodesWatched(s).length > 0));
+  const lastWatchedLabel = liveItem?.lastWatchedAt
+    ? new Date(liveItem.lastWatchedAt).toLocaleDateString('pt-BR')
+    : null;
 
   return (
     <div className="animate-fade-in pb-8">
@@ -168,6 +182,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
             <span className="px-2 py-0.5 rounded bg-muted text-xs">Áudio original: {details.originalLanguage}</span>
           )}
         </div>
+        {lastWatchedLabel && (
+          <p className="text-xs text-muted-foreground">Visto por último em {lastWatchedLabel}</p>
+        )}
         {details?.genre && (
           <div className="flex flex-wrap gap-1">
             {details.genre.split(',').map((g, i) => (
@@ -209,18 +226,23 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
             </div>
             {(() => {
               const s = details.seasons.find(x => x.number === selSeason) || details.seasons[0];
-              const watched = libItem?.seasons?.find(x => x.number === s.number)?.watchedEpisodes || 0;
+              const liveSeason = liveItem?.seasons?.find(x => x.number === s.number);
+              const watched = liveSeason ? episodesWatched(liveSeason) : [];
               return (
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                  {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => (
-                    <button
-                      key={ep}
-                      onClick={() => playEpisode(s.number, ep)}
-                      className={`aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${ep <= watched ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
-                    >
-                      {ep}
-                    </button>
-                  ))}
+                  {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
+                    const seen = watched.includes(ep);
+                    return (
+                      <button
+                        key={ep}
+                        onClick={() => playEpisode(s.number, ep)}
+                        className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
+                      >
+                        {ep}
+                        {seen && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
+                      </button>
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -241,6 +263,8 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           resumeAt={resumeMins > 0 ? resumeMins * 60 : undefined}
           directUrl={player.directUrl}
           torrent={player.torrent}
+          episodeWatched={isSeries && player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined}
+          onToggleWatched={isSeries && player.season && liveItem ? () => store.setEpisodeWatched(liveItem.id, player.season!, player.episode || 1, !isEpisodeWatched(liveItem, player.season, player.episode)) : undefined}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />
