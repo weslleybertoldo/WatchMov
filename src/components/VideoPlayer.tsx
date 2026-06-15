@@ -89,6 +89,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Cleanup do blob ao desmontar/fechar.
   useEffect(() => () => { setSubVtt(prev => { if (prev) URL.revokeObjectURL(prev); return null; }); }, []);
 
+  // Auto-oculta nossos controles após 4s (libera os controles do provedor embaixo).
+  // Não esconde enquanto um dropdown (fonte/legenda) está aberto.
+  useEffect(() => {
+    if (!open || !controlsVisible || sourceOpen || subsOpen) return;
+    const t = setTimeout(() => setControlsVisible(false), 4000);
+    return () => clearTimeout(t);
+  }, [open, controlsVisible, sourceOpen, subsOpen]);
+
   // Ao fechar/desmontar o player, restaura orientação e barras do sistema.
   useEffect(() => {
     if (!open) return;
@@ -197,8 +205,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   return (
     <div ref={rootRef} className="fixed inset-0 z-[60] bg-black animate-fade-in">
-      {/* Zona de toque (topo) pra mostrar/ocultar os controles sobre o player. */}
-      <button aria-hidden onClick={() => setControlsVisible(v => !v)} className="absolute top-0 inset-x-0 h-24 z-10" />
+      {/* Faixa fina no topo só quando os controles estão ocultos — revela ao tocar
+          (sem roubar toque dos controles do provedor quando nossos estão visíveis). */}
+      {!controlsVisible && (
+        <button aria-hidden onClick={() => setControlsVisible(true)} className="absolute top-0 inset-x-0 h-12 z-10" />
+      )}
       <div className={`absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 py-2 bg-gradient-to-b from-black/90 via-black/70 to-transparent transition-opacity duration-200 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">

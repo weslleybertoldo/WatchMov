@@ -151,10 +151,10 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   };
   const onSeriesCompleted = () => {
     if (!player?.season || !liveItem) { setPlayer(null); return; }
-    store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true);
+    store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true); // marca o atual
     const season = liveItem.seasons?.find(s => s.number === player.season);
     const nextEp = (player.episode || 1) + 1;
-    if (season && nextEp <= season.totalEpisodes) setPlayer({ season: player.season, episode: nextEp });
+    if (season && nextEp <= season.totalEpisodes) playEpisode(player.season, nextEp); // abre+marca o próximo
     else setPlayer(null);
   };
 
