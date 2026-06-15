@@ -60,7 +60,8 @@ export default function Index() {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
-  const continueItems = store.continueWatching.filter(i => i.tmdbId).map(itemToSummary);
+  const continueMovies = store.continueWatching.filter(i => i.tmdbId && i.type === 'movie').map(itemToSummary);
+  const continueSeries = store.continueWatching.filter(i => i.tmdbId && i.type === 'series').map(itemToSummary);
   const listItems = store.myList.filter(i => i.tmdbId).map(itemToSummary);
 
   const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); };
@@ -93,8 +94,11 @@ export default function Index() {
           <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
           <div className="space-y-6">
-            {continueItems.length > 0 && (
-              <MediaRow title="Continuar assistindo" items={continueItems} onOpen={openMedia} />
+            {continueMovies.length > 0 && (
+              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} />
+            )}
+            {continueSeries.length > 0 && (
+              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} />
             )}
             <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
               loader={() => trendingWeek('movie')} onOpen={openMedia} />

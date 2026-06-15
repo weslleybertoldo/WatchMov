@@ -258,10 +258,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen
             referrerPolicy="origin"
-            // Provedores BR (BetterFlix/Fembed/EmbedPlayApi): sandbox sem allow-popups
-            // /allow-top-navigation bloqueia os popups e redirects de anúncio ao dar
-            // play, mantendo scripts + vídeo. Sem flag = sem sandbox (provedores en).
-            sandbox={provider?.blockPopups ? 'allow-scripts allow-same-origin allow-forms allow-presentation' : undefined}
           />
         )}
       </div>

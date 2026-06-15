@@ -457,8 +457,10 @@ export function useWatchStore(userId?: string) {
   }, [userId]);
 
   // Selectors de streaming
+  // Inclui também itens só abertos (lastWatchedAt) — players BR não disparam evento
+  // de progresso/conclusão, então séries não acumulariam watchedEpisodes.
   const continueWatching = data.items
-    .filter(i => !i.completed && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false)))
+    .filter(i => !i.completed && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false) || !!i.lastWatchedAt))
     .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0));
 
   const myList = data.items

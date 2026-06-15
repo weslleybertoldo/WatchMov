@@ -83,8 +83,13 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     return created;
   }, [libItem, store, media, details, storeType, isSeries, seasonsFromDetails]);
 
-  const playMovie = async () => { await ensureLib(); setPlayer({}); };
-  const playEpisode = async (seasonNum: number, ep: number) => { await ensureLib(); setPlayer({ season: seasonNum, episode: ep }); };
+  // Marca o item como "assistido agora" pra entrar em Continuar assistindo
+  // (players BR não disparam evento de progresso).
+  const markWatched = (it: WatchItem | null) => {
+    if (it) store.updateItem(it.id, { lastWatchedAt: new Date().toISOString() });
+  };
+  const playMovie = async () => { const it = await ensureLib(); markWatched(it); setPlayer({}); };
+  const playEpisode = async (seasonNum: number, ep: number) => { const it = await ensureLib(); markWatched(it); setPlayer({ season: seasonNum, episode: ep }); };
   const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
     await ensureLib();
     setStremioOpen(false);
