@@ -26,11 +26,14 @@ export const PROVIDERS: Provider[] = [
     name: 'Fonte 1 (BetterFlix PT-BR)',
     // Servidor BR com catálogo dublado pt-br. Só toca dentro de iframe (acesso
     // direto à URL é bloqueado pelo provedor). Aceita só TMDB id.
+    // source=server2 = "Servidor Premium" (carregamento direto, LIVRE DE ANÚNCIOS/
+    // sem popups); singleSource=true trava nessa fonte e esconde o seletor interno.
     build: (t) => {
       if (!t.tmdbId) return null;
-      return t.type === 'movie'
+      const base = t.type === 'movie'
         ? `https://betterflix.click/api/player?id=${t.tmdbId}&type=movie`
         : `https://betterflix.click/api/player?id=${t.tmdbId}&type=tv&season=${s(t)}&episode=${e(t)}`;
+      return `${base}&source=server2&singleSource=true`;
     },
   },
   {
