@@ -1,8 +1,40 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   normalizeAddonUrl, buildStremioId, buildMagnet, buildStremioDeepLink,
-  fetchStreams, type StremioStream,
+  fetchStreams, srtToVtt, detectDubbed, buildTorrentioRealDebrid, type StremioStream,
 } from './stremio';
+
+describe('detectDubbed', () => {
+  it('detecta dublado/PT-BR', () => {
+    ['Filme Dublado', 'Dual Áudio', 'Dual.Audio', 'Nacional', 'Português', '🇧🇷 1080p', 'PT-BR', 'Brazilian']
+      .forEach(t => expect(detectDubbed(t)).toBe(true));
+  });
+  it('NÃO marca legendado/sem indício como dublado', () => {
+    ['Legendado', '1080p WEB-DL x264', 'English', ''].forEach(t => expect(detectDubbed(t)).toBe(false));
+  });
+});
+
+describe('buildTorrentioRealDebrid', () => {
+  it('monta URL Torrentio brazuca + token RD', () => {
+    const a = buildTorrentioRealDebrid('  ABC123  ');
+    expect(a.name).toBe('Torrentio BR+RD');
+    expect(a.url).toBe('https://torrentio.strem.fun/brazuca|sort=qualitysize|realdebrid=ABC123');
+  });
+});
+
+describe('srtToVtt', () => {
+  it('adiciona header WEBVTT e troca vírgula por ponto no timestamp', () => {
+    const srt = '1\n00:00:01,000 --> 00:00:04,500\nOlá mundo\n';
+    const vtt = srtToVtt(srt);
+    expect(vtt.startsWith('WEBVTT\n\n')).toBe(true);
+    expect(vtt).toContain('00:00:01.000 --> 00:00:04.500');
+    expect(vtt).toContain('Olá mundo');
+  });
+  it('remove \\r (CRLF) e não duplica header se já for VTT', () => {
+    expect(srtToVtt('00:00:01,000 --> 00:00:02,000\r\ntexto\r\n')).not.toContain('\r');
+    expect(srtToVtt('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\noi').match(/WEBVTT/g)?.length).toBe(1);
+  });
+});
 
 describe('normalizeAddonUrl', () => {
   it('remove /manifest.json e barra final', () => {

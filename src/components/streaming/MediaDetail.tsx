@@ -158,18 +158,18 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           </div>
         )}
 
-        {/* Ações */}
+        {/* Ações — principal = Stremio (fontes + continuar de onde parou); Players = provedores embed */}
         <div className="flex gap-2 pt-1">
+          <Button className="flex-1" onClick={() => setStremioOpen(true)}>
+            <Play className="w-4 h-4 mr-1" /> {resumeMins > 0 ? 'Continuar' : 'Assistir'}
+          </Button>
           {!isSeries && (
-            <Button className="flex-1" onClick={playMovie}>
-              <Play className="w-4 h-4 mr-1" /> {resumeMins > 0 ? 'Continuar' : 'Assistir'}
+            <Button variant="outline" onClick={playMovie} title="Players (servidores embed, alternativa)">
+              <Clapperboard className="w-4 h-4 mr-1" /> Players
             </Button>
           )}
-          <Button variant="outline" className={isSeries ? 'flex-1' : ''} onClick={() => setStremioOpen(true)}>
-            <Clapperboard className="w-4 h-4 mr-1" /> Stremio
-          </Button>
-          <Button variant={inList ? 'default' : 'outline'} className={isSeries ? 'flex-1' : ''} onClick={toggleList}>
-            {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Minha Lista
+          <Button variant={inList ? 'default' : 'outline'} onClick={toggleList}>
+            {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Lista
           </Button>
         </div>
 

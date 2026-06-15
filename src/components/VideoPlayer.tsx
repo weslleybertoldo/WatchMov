@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2 } from 'lucide-react';
+import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles } from 'lucide-react';
 import { Browser } from '@capacitor/browser';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
+import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -33,6 +34,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [castOpen, setCastOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
 
+  // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
+  const [subsOpen, setSubsOpen] = useState(false);
+  const [subList, setSubList] = useState<StremioSubtitle[]>([]);
+  const [subVtt, setSubVtt] = useState<string | null>(null);   // blob URL ativo
+  const [subId, setSubId] = useState<string | null>(null);     // legenda selecionada (null = off)
+
   // Modo torrent (WebTorrent): resolve a streamURL de forma assíncrona.
   const [tor, setTor] = useState<{ loading: boolean; url?: string; name?: string; playable?: boolean; id?: string; error?: string }>({ loading: false });
   useEffect(() => {
@@ -45,6 +52,34 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       .catch(e => { if (alive) setTor({ loading: false, error: e instanceof Error ? e.message : 'Falha ao carregar torrent' }); });
     return () => { alive = false; if (torrentId) destroyTorrent(torrentId); };
   }, [open, torrent]);
+
+  // Buscar legendas PT só no modo <video> (directUrl/torrent) e com imdbId.
+  useEffect(() => {
+    if (!open || !(directUrl || torrent) || !imdbId) { setSubList([]); return; }
+    let alive = true;
+    fetchSubtitles({ imdbId, type, season, episode })
+      .then(list => { if (alive) setSubList(list); })
+      .catch(() => { if (alive) setSubList([]); });
+    return () => { alive = false; };
+  }, [open, directUrl, torrent, imdbId, type, season, episode]);
+
+  // Trocar legenda ativa: baixa .srt → VTT blob; revoga o anterior.
+  const pickSubtitle = async (s: StremioSubtitle | null) => {
+    setSubsOpen(false);
+    setSubVtt(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
+    setSubId(s?.id ?? null);
+    if (!s) return;
+    try {
+      const blob = await srtUrlToVttBlob(s.url);
+      setSubVtt(blob);
+    } catch {
+      toast.error('Não consegui carregar essa legenda', { description: 'Tente outra opção.' });
+      setSubId(null);
+    }
+  };
+
+  // Cleanup do blob ao desmontar/fechar.
+  useEffect(() => () => { setSubVtt(prev => { if (prev) URL.revokeObjectURL(prev); return null; }); }, []);
 
   const target: PlayerTarget = { tmdbId, imdbId, type, season, episode };
   const available = PROVIDERS.filter(p => p.build(target));
@@ -140,6 +175,27 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               </div>
             )}
           </div>
+          {directMode && (
+            <div className="relative">
+              <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${subId ? 'text-primary' : 'text-white/80'}`} title="Legendas" onClick={() => setSubsOpen(o => !o)}>
+                <Subtitles className="w-5 h-5" />
+              </Button>
+              {subsOpen && (
+                <div className="absolute right-0 top-11 z-20 bg-card border border-border rounded-lg py-1 w-52 shadow-xl max-h-72 overflow-auto">
+                  <p className="px-3 py-1 text-[10px] text-muted-foreground">Legendas {subList.length ? `(${subList.length})` : '— buscando/sem PT'}</p>
+                  <button onClick={() => pickSubtitle(null)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
+                    Desligada {subId === null && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                  {subList.map(s => (
+                    <button key={s.id} onClick={() => pickSubtitle(s)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
+                      <span className="truncate">{s.label}</span>
+                      {s.id === subId && <Check className="w-4 h-4 text-primary shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Espelhar para TV" onClick={tryCast}>
             <Tv className="w-5 h-5" />
           </Button>
@@ -179,12 +235,20 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             controls
             autoPlay
             playsInline
+            onLoadedMetadata={e => {
+              // "Continuar de onde parou" no player nativo (Stremio/torrent).
+              if (resumeAt && resumeAt > 0 && resumeAt < e.currentTarget.duration - 5) {
+                e.currentTarget.currentTime = resumeAt;
+              }
+            }}
             onTimeUpdate={e => {
               const secs = Math.floor(e.currentTarget.currentTime);
               if (secs > 0 && Math.abs(secs - lastSavedRef.current) >= 30) { lastSavedRef.current = secs; onProgress?.(secs); }
             }}
             onEnded={() => { if (!completedRef.current) { completedRef.current = true; onCompleted?.(); } }}
-          />
+          >
+            {subVtt && <track kind="subtitles" src={subVtt} srcLang="pt" label="Português" default />}
+          </video>
         ) : (
           <iframe
             key={src}

@@ -13,8 +13,21 @@ type WebTorrentCtor = new () => WTInstance;
 let ctorPromise: Promise<WebTorrentCtor> | null = null;
 function loadWebTorrent(): Promise<WebTorrentCtor> {
   if (!ctorPromise) {
-    const url = '/webtorrent.min.js';
-    ctorPromise = import(/* @vite-ignore */ url).then(m => (m.default ?? m) as WebTorrentCtor);
+    // Buscar o bundle e importar via blob URL: evita o Vite reescrever a URL
+    // (em dev o `import('/x.js')` vira `/x.js?import` e o fetch do módulo falha).
+    ctorPromise = (async () => {
+      const res = await fetch('/webtorrent.min.js');
+      if (!res.ok) throw new Error(`webtorrent.min.js HTTP ${res.status}`);
+      let code = await res.text();
+      code = code.replace(/\/\/#\s*sourceMappingURL=.*$/m, ''); // evita 404 do .map
+      const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      try {
+        const m = await import(/* @vite-ignore */ blobUrl);
+        return (m.default ?? m) as WebTorrentCtor;
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    })();
   }
   return ctorPromise;
 }

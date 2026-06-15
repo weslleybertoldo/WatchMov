@@ -10,7 +10,7 @@ import { Loader2, Play, Magnet, ExternalLink, Plus, Trash2, Settings2, RefreshCw
 import {
   type StremioAddon, type StremioStream, type StremioTarget,
   loadAddons, saveAddons, fetchStreams, normalizeAddonUrl,
-  buildMagnet, buildStremioDeepLink,
+  buildMagnet, buildStremioDeepLink, buildTorrentioRealDebrid,
 } from '@/lib/stremio';
 
 interface SeasonInfo { number: number; totalEpisodes: number }
@@ -36,10 +36,12 @@ export default function StremioStreamsDialog({ open, onOpenChange, imdbId, type,
   const [episode, setEpisode] = useState(1);
   const [manage, setManage] = useState(false);
   const [newUrl, setNewUrl] = useState('');
+  const [rdToken, setRdToken] = useState('');
   const [onlyDubbed, setOnlyDubbed] = useState(true);
 
   const shown = onlyDubbed ? streams.filter(s => s.dubbed) : streams;
   const dubCount = streams.filter(s => s.dubbed).length;
+  const hasDirect = streams.some(s => s.url);   // algum stream toca in-app (debrid/HTTP)?
 
   const target: StremioTarget = { imdbId, type, season: isSeries ? season : undefined, episode: isSeries ? episode : undefined };
 
@@ -64,6 +66,15 @@ export default function StremioStreamsDialog({ open, onOpenChange, imdbId, type,
   const removeAddon = (url: string) => {
     const next = addons.filter(a => a.url !== url);
     setAddons(next); saveAddons(next);
+  };
+  const addRealDebrid = () => {
+    const t = rdToken.trim();
+    if (!t) { toast.error('Cole o token', { description: 'Pegue em real-debrid.com/apitoken' }); return; }
+    const rd = buildTorrentioRealDebrid(t);
+    const next = [...addons.filter(a => a.name !== 'Torrentio BR+RD'), rd];   // substitui se já existe
+    setAddons(next); saveAddons(next); setRdToken('');
+    toast.success('RealDebrid configurado', { description: 'Agora os streams vêm como link direto (tocam aqui).' });
+    search();
   };
 
   const onStreamClick = (s: StremioStream) => {
@@ -131,7 +142,15 @@ export default function StremioStreamsDialog({ open, onOpenChange, imdbId, type,
         {/* Gerenciador de addons */}
         {manage && (
           <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/30">
-            <p className="text-xs text-muted-foreground">Cole a URL de instalação do addon (com debrid configurado, devolve links que tocam aqui).</p>
+            {/* RealDebrid: o jeito mais fácil de fazer tocar in-app (link direto) */}
+            <p className="text-xs font-medium text-foreground">RealDebrid (recomendado — faz os torrents tocarem aqui)</p>
+            <div className="flex gap-2">
+              <Input value={rdToken} onChange={e => setRdToken(e.target.value)} placeholder="token de real-debrid.com/apitoken" className="h-8 text-sm" />
+              <Button size="sm" className="h-8 shrink-0" onClick={addRealDebrid}>Ativar</Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">Conta paga (~€4). O token fica só neste aparelho. Monta o Torrentio+RD automaticamente.</p>
+            <div className="border-t border-border pt-2" />
+            <p className="text-xs text-muted-foreground">Ou cole a URL de um addon manualmente:</p>
             <div className="flex gap-2">
               <Input value={newUrl} onChange={e => setNewUrl(e.target.value)} placeholder="https://…/manifest.json" className="h-8 text-sm" />
               <Button size="sm" className="h-8 shrink-0" onClick={addAddon}><Plus className="w-4 h-4" /></Button>
@@ -146,6 +165,14 @@ export default function StremioStreamsDialog({ open, onOpenChange, imdbId, type,
               {addons.length === 0 && <p className="text-xs text-muted-foreground">Nenhum addon. Adicione um acima.</p>}
             </div>
           </div>
+        )}
+
+        {/* Aviso: só torrents (nenhum link direto) → sugerir RealDebrid */}
+        {!loading && streams.length > 0 && !hasDirect && (
+          <button onClick={() => setManage(true)}
+            className="text-left text-[11px] rounded-md border border-amber-600/40 bg-amber-600/10 text-amber-700 dark:text-amber-400 px-3 py-2">
+            Só há opções <b>Torrent</b> — podem não tocar aqui (precisam de peers WebRTC, raros). Toque pra configurar <b>RealDebrid</b> e receber links que tocam direto.
+          </button>
         )}
 
         {/* Lista de streams */}
@@ -177,7 +204,7 @@ export default function StremioStreamsDialog({ open, onOpenChange, imdbId, type,
                       <p className="text-xs text-muted-foreground line-clamp-2 whitespace-pre-line">{s.detail || s.filename}</p>
                       {!s.url && (
                         <div className="flex gap-3 mt-1.5 text-[11px]">
-                          <span className="text-muted-foreground">Toca via WebTorrent</span>
+                          <span className="text-amber-600">Pode não tocar (WebTorrent)</span>
                           <span onClick={openInStremio} className="flex items-center gap-1 text-primary hover:underline"><ExternalLink className="w-3 h-3" /> Stremio</span>
                           <span onClick={e => copyMagnet(e, s)} className="flex items-center gap-1 text-muted-foreground hover:text-foreground"><Magnet className="w-3 h-3" /> Magnet</span>
                         </div>

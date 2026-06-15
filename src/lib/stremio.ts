@@ -64,6 +64,18 @@ export function normalizeAddonUrl(raw: string): string {
   return u;
 }
 
+/**
+ * Monta a URL do addon Torrentio com RealDebrid → devolve links HTTP diretos
+ * (resolve o "sem peers" do WebTorrent: o RD baixa o torrent e serve por HTTP).
+ * Token em real-debrid.com/apitoken. Fica só no localStorage do usuário.
+ */
+export function buildTorrentioRealDebrid(token: string): StremioAddon {
+  const t = token.trim();
+  // preset 'brazuca' (foco PT-BR dublado) + realdebrid → links HTTP que tocam in-app.
+  const opts = `brazuca|sort=qualitysize|realdebrid=${t}`;
+  return { name: 'Torrentio BR+RD', url: `https://torrentio.strem.fun/${opts}` };
+}
+
 export function loadAddons(): StremioAddon[] {
   try {
     const raw = localStorage.getItem(ADDONS_KEY);
@@ -90,6 +102,11 @@ const QUALITY_RE = /(2160p|4k|1440p|1080p|720p|480p|360p)/i;
 const SIZE_RE = /(\d+(?:[.,]\d+)?\s?(?:GB|MB))/i;
 // Dublado/PT-BR (não conta "legendado" como dublado).
 const DUB_RE = /\b(dual|dublado|dublada|portugu[eê]s|brazilian|nacional|dual[\s.-]?[aá]udio)\b|🇧🇷|🇵🇹|pt-?br/i;
+
+/** Heurística: o release parece ter áudio dublado/PT-BR? (não considera "legendado"). */
+export function detectDubbed(text: string): boolean {
+  return DUB_RE.test(text || '');
+}
 
 function qualityRank(q?: string): number {
   if (!q) return 0;
@@ -122,7 +139,7 @@ function normalizeStream(raw: RawStream, addonName: string, idx: number): Stremi
     quality: quality?.toUpperCase(),
     qualityRank: qualityRank(quality),
     size,
-    dubbed: DUB_RE.test(haystack),
+    dubbed: detectDubbed(haystack),
     url: url || undefined,
     notWebReady: !!raw.behaviorHints?.notWebReady,
     infoHash: raw.infoHash,
@@ -162,6 +179,58 @@ export async function fetchStreams(addons: StremioAddon[], target: StremioTarget
   });
   streams.sort(sortStreams);
   return { streams, errors };
+}
+
+// ---- Legendas (recurso `subtitles` do Stremio Addon SDK) ----
+// GET {base}/subtitles/{type}/{id}.json → { subtitles: [{ id, url, lang }] }.
+const SUBTITLE_ADDONS = ['https://opensubtitles-v3.strem.io'];
+const PT_LANGS = /(pob|por|^pt|pt-?br|portugu)/i;
+
+export interface StremioSubtitle {
+  id: string;
+  lang: string;
+  label: string;
+  url: string;   // .srt (convertido pra VTT na hora de usar)
+}
+
+function ptLabel(lang: string): string {
+  if (/pob|pt-?br/i.test(lang)) return 'Português (BR)';
+  if (/por|^pt/i.test(lang)) return 'Português (PT)';
+  return lang || 'Legenda';
+}
+
+/** Busca legendas (por padrão só PT-BR/PT) dos addons de legenda. Erros isolados por addon. */
+export async function fetchSubtitles(target: StremioTarget, onlyPt = true): Promise<StremioSubtitle[]> {
+  const st = buildStremioId(target);
+  if (!st) return [];
+  const out: StremioSubtitle[] = [];
+  await Promise.allSettled(SUBTITLE_ADDONS.map(async (base) => {
+    const ep = `${normalizeAddonUrl(base)}/subtitles/${st.type}/${encodeURIComponent(st.id)}.json`;
+    const res = await fetch(ep, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return;
+    const json = (await res.json()) as { subtitles?: { id?: string; url: string; lang: string }[] };
+    (json.subtitles || []).forEach((s, i) => {
+      if (!s.url) return;
+      if (onlyPt && !PT_LANGS.test(s.lang || '')) return;
+      out.push({ id: s.id || `${s.lang}-${i}`, lang: s.lang, label: ptLabel(s.lang), url: s.url });
+    });
+  }));
+  const seen = new Set<string>();
+  return out.filter(s => (seen.has(s.url) ? false : (seen.add(s.url), true)));
+}
+
+/** Converte texto SRT em WebVTT (header + timestamps com '.' no lugar de ','). Função pura. */
+export function srtToVtt(srt: string): string {
+  const body = srt.replace(/\r/g, '').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  return /^WEBVTT/.test(body) ? body : `WEBVTT\n\n${body}`;
+}
+
+/** Baixa um .srt e devolve um blob URL WebVTT (o <track> exige VTT + CORS/same-origin). */
+export async function srtUrlToVttBlob(srtUrl: string): Promise<string> {
+  const res = await fetch(srtUrl);
+  if (!res.ok) throw new Error(`legenda HTTP ${res.status}`);
+  const vtt = srtToVtt(await res.text());
+  return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
 }
 
 const TRACKERS = [
