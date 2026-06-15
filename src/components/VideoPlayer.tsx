@@ -209,7 +209,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <Layers className="w-5 h-5" />
             </Button>
             {!directMode && sourceOpen && (
-              <div className="absolute right-0 top-11 z-20 bg-card border border-border rounded-lg py-1 w-48 shadow-xl">
+              <div className="fixed left-1/2 -translate-x-1/2 top-14 z-30 bg-card border border-border rounded-lg py-1 w-56 max-w-[90vw] shadow-xl">
                 <p className="px-3 py-1 text-[10px] text-muted-foreground">Fontes (troque se estiver em inglês ou não carregar)</p>
                 {available.map(p => (
                   <button key={p.id} onClick={() => pickSource(p.id)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
