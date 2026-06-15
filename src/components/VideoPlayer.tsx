@@ -92,10 +92,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Auto-oculta nossos controles após 4s (libera os controles do provedor embaixo).
   // Não esconde enquanto um dropdown (fonte/legenda) está aberto.
   useEffect(() => {
-    if (!open || !controlsVisible || sourceOpen || subsOpen) return;
+    if (!open || !fullscreen || !controlsVisible || sourceOpen || subsOpen) return;
     const t = setTimeout(() => setControlsVisible(false), 4000);
     return () => clearTimeout(t);
-  }, [open, controlsVisible, sourceOpen, subsOpen]);
+  }, [open, fullscreen, controlsVisible, sourceOpen, subsOpen]);
 
   // Ao fechar/desmontar o player, restaura orientação e barras do sistema.
   useEffect(() => {
@@ -195,13 +195,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   };
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-[60] bg-black animate-fade-in">
-      {/* Faixa fina no topo só quando os controles estão ocultos — revela ao tocar
-          (sem roubar toque dos controles do provedor quando nossos estão visíveis). */}
-      {!controlsVisible && (
+    <div ref={rootRef} className={`fixed inset-0 z-[60] bg-black animate-fade-in ${fullscreen ? '' : 'flex flex-col'}`}>
+      {/* Em tela cheia (paisagem): faixa fina revela os controles ocultos. */}
+      {fullscreen && !controlsVisible && (
         <button aria-hidden onClick={() => setControlsVisible(true)} className="absolute top-0 inset-x-0 h-12 z-10" />
       )}
-      <div className={`absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 py-2 bg-gradient-to-b from-black/90 via-black/70 to-transparent transition-opacity duration-200 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+      {/* Retrato: barra fixa no topo (vídeo abaixo, sem sobrepor controles do provedor).
+          Tela cheia: overlay translúcido com auto-ocultar. */}
+      <div className={fullscreen
+        ? `absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 py-2 bg-gradient-to-b from-black/90 via-black/70 to-transparent transition-opacity duration-200 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`
+        : 'relative z-20 shrink-0 flex items-center justify-between px-3 py-2 bg-black/95'}>
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
           <div className="relative" hidden={directMode}>
@@ -257,16 +260,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Espelhar para TV" onClick={tryCast}>
             <Tv className="w-5 h-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Ocultar controles" onClick={() => setControlsVisible(false)}>
-            <ChevronUp className="w-5 h-5" />
-          </Button>
+          {fullscreen && (
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Ocultar controles" onClick={() => setControlsVisible(false)}>
+              <ChevronUp className="w-5 h-5" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" onClick={onClose}>
             <X className="w-5 h-5" />
           </Button>
         </div>
       </div>
 
-      <div className="absolute inset-0">
+      <div className={fullscreen ? 'absolute inset-0' : 'flex-1 min-h-0'}>
         {torrent && tor.loading ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
             <Loader2 className="w-6 h-6 animate-spin" />
