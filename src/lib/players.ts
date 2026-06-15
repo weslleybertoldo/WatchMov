@@ -34,8 +34,30 @@ export const PROVIDERS: Provider[] = [
     },
   },
   {
+    id: 'fembed',
+    name: 'Fonte 2 (Fembed PT-BR)',
+    // Herdeiro do Superflix, catálogo dublado pt-br. TMDB id.
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://fembed.sx/e/${t.tmdbId}`
+        : `https://fembed.sx/e/${t.tmdbId}/${s(t)}-${e(t)}`;
+    },
+  },
+  {
+    id: 'embedplayapi',
+    name: 'Fonte 3 (EmbedPlayApi PT-BR)',
+    // Player BR dublado. TMDB id.
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://embedplayapi.top/embed/${t.tmdbId}`
+        : `https://embedplayapi.top/embed/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
     id: 'vidapi',
-    name: 'Fonte 2 (VidAPI)',
+    name: 'Fonte 4 (VidAPI)',
     build: (t) => {
       const id = t.imdbId || (t.tmdbId ? String(t.tmdbId) : null);
       if (!id) return null;
@@ -45,7 +67,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'vidsrc',
-    name: 'Fonte 3 (VidSrc)',
+    name: 'Fonte 5 (VidSrc)',
     build: (t) => {
       const id = t.imdbId || (t.tmdbId ? String(t.tmdbId) : null);
       if (!id) return null;
@@ -56,7 +78,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'vidlink',
-    name: 'Fonte 4 (VidLink)',
+    name: 'Fonte 6 (VidLink)',
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
@@ -66,7 +88,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'embedsu',
-    name: 'Fonte 5 (Embed.su)',
+    name: 'Fonte 7 (Embed.su)',
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
@@ -76,7 +98,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: '2embed',
-    name: 'Fonte 6 (2Embed)',
+    name: 'Fonte 8 (2Embed)',
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
@@ -86,7 +108,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'superembed',
-    name: 'Fonte 7 (SuperEmbed)',
+    name: 'Fonte 9 (SuperEmbed)',
     build: (t) => {
       if (!t.tmdbId && !t.imdbId) return null;
       const idPart = t.tmdbId ? `video_id=${t.tmdbId}&tmdb=1` : `video_id=${t.imdbId}`;
@@ -99,6 +121,8 @@ export const PROVIDERS: Provider[] = [
 // Domínios usados (para CSP frame-src)
 export const PROVIDER_HOSTS = [
   'https://betterflix.click',
+  'https://fembed.sx',
+  'https://embedplayapi.top',
   'https://vaplayer.ru',
   'https://vidsrc.xyz',
   'https://vidlink.pro',
