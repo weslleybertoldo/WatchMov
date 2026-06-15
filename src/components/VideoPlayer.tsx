@@ -108,7 +108,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   const target: PlayerTarget = { tmdbId, imdbId, type, season, episode };
   const available = PROVIDERS.filter(p => p.build(target));
-  const [providerId, setProviderId] = useState(available[0]?.id ?? 'vidapi');
+  // Lembra a fonte escolhida por título (tmdbId+type). Não muda o padrão global.
+  const srcKey = `watchmov_src_${tmdbId ?? imdbId}_${type}`;
+  const [providerId, setProviderId] = useState(() => {
+    try {
+      const saved = localStorage.getItem(srcKey);
+      if (saved && available.some(p => p.id === saved)) return saved;
+    } catch { /* ignore */ }
+    return available[0]?.id ?? 'betterflix';
+  });
   const provider = available.find(p => p.id === providerId) || available[0];
 
   const directMode = !!directUrl || !!torrent;
@@ -174,6 +182,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   const pickSource = (id: string) => {
     setProviderId(id);
+    try { localStorage.setItem(srcKey, id); } catch { /* ignore */ }
     setSourceOpen(false);
     completedRef.current = false;
     lastSavedRef.current = 0;
