@@ -8,12 +8,13 @@ export interface ContinueEntry { id: string; summary: MediaSummary }
 
 interface Props {
   entries: ContinueEntry[];
+  title?: string;
   onOpen: (m: MediaSummary) => void;
   onRemove: (id: string) => void;
   onBack: () => void;
 }
 
-export default function ContinueView({ entries, onOpen, onRemove, onBack }: Props) {
+export default function ContinueView({ entries, title = 'Continuar assistindo', onOpen, onRemove, onBack }: Props) {
   const [editing, setEditing] = useState(false);
 
   return (
@@ -23,7 +24,7 @@ export default function ContinueView({ entries, onOpen, onRemove, onBack }: Prop
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
-          <h1 className="text-xl font-bold">Continuar assistindo</h1>
+          <h1 className="text-xl font-bold">{title}</h1>
         </div>
         <Button variant={editing ? 'default' : 'outline'} size="icon" className="h-8 w-8"
           title={editing ? 'Concluir' : 'Remover itens'} onClick={() => setEditing(e => !e)}>

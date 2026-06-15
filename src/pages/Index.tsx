@@ -61,7 +61,7 @@ export default function Index() {
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]> }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [continueOpen, setContinueOpen] = useState(false);
+  const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
 
   const openMedia = useCallback((m: MediaSummary) => setSelected(m), []);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
@@ -70,11 +70,11 @@ export default function Index() {
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
     if (searchOpen) { setSearchOpen(false); return true; }
-    if (continueOpen) { setContinueOpen(false); return true; }
+    if (continueFilter) { setContinueFilter(null); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, searchOpen, continueOpen, category, tab]);
+  }, [selected, searchOpen, continueFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -86,13 +86,21 @@ export default function Index() {
   const continueMovies = continueAll.filter(i => i.type === 'movie').map(toCont);
   const continueAnimes = continueAll.filter(isAnime).map(toCont);
   const continueSeries = continueAll.filter(i => i.type === 'series' && !isAnime(i)).map(toCont);
-  const continueEntries = continueAll.map(i => ({ id: i.id, summary: toCont(i) }));
+  const continueFiltered = continueFilter === 'movie' ? continueAll.filter(i => i.type === 'movie')
+    : continueFilter === 'anime' ? continueAll.filter(isAnime)
+    : continueFilter === 'series' ? continueAll.filter(i => i.type === 'series' && !isAnime(i))
+    : continueAll;
+  const continueEntries = continueFiltered.map(i => ({ id: i.id, summary: toCont(i) }));
+  const continueTitle = continueFilter === 'movie' ? 'Continuar assistindo seus filmes'
+    : continueFilter === 'anime' ? 'Continuar assistindo seus animes'
+    : continueFilter === 'series' ? 'Continuar assistindo suas séries'
+    : 'Continuar assistindo';
   const savedList = store.myList.filter(i => i.tmdbId);
   const listMovies = savedList.filter(i => i.type === 'movie').map(itemToSummary);
   const listAnimes = savedList.filter(isAnime).map(itemToSummary);
   const listSeries = savedList.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); setContinueOpen(false); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); setContinueFilter(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -125,20 +133,20 @@ export default function Index() {
           <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
-        ) : continueOpen ? (
-          <ContinueView entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueOpen(false)} />
+        ) : continueFilter ? (
+          <ContinueView title={continueTitle} entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueFilter(null)} />
         ) : category ? (
           <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
           <div className="space-y-6">
             {continueMovies.length > 0 && (
-              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => setContinueOpen(true)} />
+              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => setContinueFilter('movie')} />
             )}
             {continueSeries.length > 0 && (
-              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => setContinueOpen(true)} />
+              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => setContinueFilter('series')} />
             )}
             {continueAnimes.length > 0 && (
-              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => setContinueOpen(true)} />
+              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => setContinueFilter('anime')} />
             )}
             <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
               loader={() => trendingWeek('movie')} onOpen={openMedia} />
