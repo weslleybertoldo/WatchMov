@@ -195,7 +195,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           )}
         </div>
         {lastWatchedLabel && (
-          <p className="text-xs text-muted-foreground">Visto por último em {lastWatchedLabel}</p>
+          <p className="text-xs text-green-400">Visto por último em {lastWatchedLabel}</p>
         )}
         {details?.genre && (
           <div className="flex flex-wrap gap-1">
