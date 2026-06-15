@@ -15,11 +15,21 @@ interface MediaRowProps {
 
 // cache simples em memória por cacheKey
 const rowCache = new Map<string, MediaSummary[]>();
+// posição do scroll horizontal por linha (sobrevive remontagem ao abrir detalhe)
+const scrollCache = new Map<string, number>();
 
 export default function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll }: MediaRowProps) {
   const [data, setData] = useState<MediaSummary[]>(() => items ?? (cacheKey ? rowCache.get(cacheKey) ?? [] : []));
   const [loading, setLoading] = useState(!items && !(cacheKey && rowCache.has(cacheKey)));
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollKey = cacheKey || title;
+
+  // Restaura a posição horizontal ao (re)montar com os dados já carregados.
+  useEffect(() => {
+    if (!loading && scrollRef.current && scrollCache.has(scrollKey)) {
+      scrollRef.current.scrollLeft = scrollCache.get(scrollKey)!;
+    }
+  }, [loading, scrollKey, data.length]);
 
   useEffect(() => {
     if (items) { setData(items); return; }
@@ -54,7 +64,7 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
         <button onClick={() => scrollBy(-1)} className="hidden md:flex absolute left-0 top-0 bottom-0 z-20 w-8 items-center justify-center bg-gradient-to-r from-background/90 to-transparent opacity-0 group-hover/row:opacity-100 transition">
           <ChevronLeft className="w-5 h-5" />
         </button>
-        <div ref={scrollRef} className="flex gap-3 overflow-x-auto scroll-smooth snap-x pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div ref={scrollRef} onScroll={() => { if (scrollRef.current) scrollCache.set(scrollKey, scrollRef.current.scrollLeft); }} className="flex gap-3 overflow-x-auto scroll-smooth snap-x pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {loading ? (
             <div className="flex items-center gap-2 text-muted-foreground py-10 px-2">
               <Loader2 className="w-4 h-4 animate-spin" /> Carregando…

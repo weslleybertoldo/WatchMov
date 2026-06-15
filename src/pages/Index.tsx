@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -63,7 +63,15 @@ export default function Index() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
 
-  const openMedia = useCallback((m: MediaSummary) => setSelected(m), []);
+  // Preserva o scroll vertical da página ao abrir um título e voltar.
+  const homeScrollRef = useRef(0);
+  const openMedia = useCallback((m: MediaSummary) => { homeScrollRef.current = window.scrollY; setSelected(m); }, []);
+  useEffect(() => {
+    if (!selected) {
+      const y = homeScrollRef.current;
+      requestAnimationFrame(() => window.scrollTo(0, y));
+    }
+  }, [selected]);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
     setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p) });
 
