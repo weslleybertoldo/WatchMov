@@ -4,8 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { WatchItem } from '@/types/watch';
 import {
-  MediaSummary, trendingWeek, recent, discoverByGenre,
-  MOVIE_GENRES, TV_GENRES, type TmdbMediaType,
+  MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime,
+  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, type TmdbMediaType,
 } from '@/lib/tmdb';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
@@ -14,9 +14,9 @@ import SearchView from '@/components/streaming/SearchView';
 import MediaCard from '@/components/streaming/MediaCard';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Bookmark, Search, LogOut, Loader2 } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, Bookmark, Search, LogOut, Loader2 } from 'lucide-react';
 
-type Tab = 'inicio' | 'filmes' | 'series' | 'lista' | 'buscar';
+type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista';
 
 function itemToSummary(i: WatchItem): MediaSummary {
   return {
@@ -29,12 +29,27 @@ function itemToSummary(i: WatchItem): MediaSummary {
   };
 }
 
+// Anime = série de animação (gênero "Animação"). Western cartoons também caem aqui.
+const isAnime = (i: WatchItem): boolean =>
+  i.type === 'series' && /anima[çc][ãa]o|anime/i.test(i.genre || '');
+
+function ListSection({ title, items, onOpen }: { title: string; items: MediaSummary[]; onOpen: (m: MediaSummary) => void }) {
+  return (
+    <div className="space-y-2">
+      <h2 className="text-base font-semibold text-foreground/90">{title}</h2>
+      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+        {items.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
+      </div>
+    </div>
+  );
+}
+
 const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'inicio', label: 'Início', icon: Home },
   { key: 'filmes', label: 'Filmes', icon: Film },
   { key: 'series', label: 'Séries', icon: Tv },
+  { key: 'animes', label: 'Animes', icon: Sparkles },
   { key: 'lista', label: 'Minha Lista', icon: Bookmark },
-  { key: 'buscar', label: 'Buscar', icon: Search },
 ];
 
 export default function Index() {
@@ -43,6 +58,7 @@ export default function Index() {
   const [tab, setTab] = useState<Tab>('inicio');
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]> }>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const openMedia = useCallback((m: MediaSummary) => setSelected(m), []);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
@@ -50,10 +66,11 @@ export default function Index() {
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
+    if (searchOpen) { setSearchOpen(false); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, category, tab]);
+  }, [selected, searchOpen, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -62,9 +79,12 @@ export default function Index() {
 
   const continueMovies = store.continueWatching.filter(i => i.tmdbId && i.type === 'movie').map(itemToSummary);
   const continueSeries = store.continueWatching.filter(i => i.tmdbId && i.type === 'series').map(itemToSummary);
-  const listItems = store.myList.filter(i => i.tmdbId).map(itemToSummary);
+  const savedList = store.myList.filter(i => i.tmdbId);
+  const listMovies = savedList.filter(i => i.type === 'movie').map(itemToSummary);
+  const listAnimes = savedList.filter(isAnime).map(itemToSummary);
+  const listSeries = savedList.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -80,9 +100,14 @@ export default function Index() {
               </button>
             ))}
           </nav>
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={signOut} title="Sair">
-            <LogOut className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => !o)} title="Buscar">
+              <Search className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={signOut} title="Sair">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -90,6 +115,8 @@ export default function Index() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
           <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
+        ) : searchOpen ? (
+          <SearchView onOpen={openMedia} />
         ) : category ? (
           <CategoryView title={category.title} loadPage={category.loadPage} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
@@ -132,19 +159,26 @@ export default function Index() {
                 onSeeAll={() => openGenre('tv', g.id, g.name)} />
             ))}
           </div>
-        ) : tab === 'lista' ? (
-          <div className="space-y-4">
-            <h1 className="text-xl font-bold">Minha Lista</h1>
-            {listItems.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Minha Lista" num título.</p>
-            ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                {listItems.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
-              </div>
-            )}
+        ) : tab === 'animes' ? (
+          <div className="space-y-6">
+            {ANIME_ROWS.map(r => (
+              <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
+                loader={() => discoverAnime(1, r.id)} onOpen={openMedia} />
+            ))}
           </div>
         ) : (
-          <SearchView onOpen={openMedia} />
+          <div className="space-y-6">
+            <h1 className="text-xl font-bold">Minha Lista</h1>
+            {listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Minha Lista" num título.</p>
+            ) : (
+              <>
+                {listMovies.length > 0 && <ListSection title="Filmes" items={listMovies} onOpen={openMedia} />}
+                {listSeries.length > 0 && <ListSection title="Séries" items={listSeries} onOpen={openMedia} />}
+                {listAnimes.length > 0 && <ListSection title="Animes" items={listAnimes} onOpen={openMedia} />}
+              </>
+            )}
+          </div>
         )}
       </main>
 

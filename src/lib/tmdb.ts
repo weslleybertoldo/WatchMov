@@ -158,6 +158,29 @@ export async function discoverByGenre(type: TmdbMediaType, genreId: number, page
   return dedupeWithPoster((d.results || []).map(r => toSummary(r, type)));
 }
 
+// Animes = TV de animação japonesa (gênero 16 + idioma original ja).
+export const ANIME_ROWS: { id: number | null; name: string }[] = [
+  { id: null, name: 'Populares' },
+  { id: 10759, name: 'Ação & Aventura' },
+  { id: 35, name: 'Comédia' },
+  { id: 18, name: 'Drama' },
+  { id: 10765, name: 'Fantasia & Ficção' },
+  { id: 9648, name: 'Mistério' },
+];
+
+export async function discoverAnime(page = 1, extraGenre?: number | null): Promise<MediaSummary[]> {
+  const d = await tmdbFetch<{ results: RawListItem[] }>(`/discover/tv`, {
+    with_genres: extraGenre ? `16,${extraGenre}` : '16',
+    with_original_language: 'ja',
+    sort_by: 'popularity.desc',
+    'vote_count.gte': '80',
+    include_adult: 'false',
+    watch_region: 'BR',
+    page: String(page),
+  });
+  return dedupeWithPoster((d.results || []).map(r => toSummary(r, 'tv')));
+}
+
 function requireKey() {
   if (!API_KEY) {
     throw new Error('TMDB não configurado (VITE_TMDB_API_KEY ausente)');
