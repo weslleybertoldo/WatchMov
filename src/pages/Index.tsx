@@ -11,14 +11,15 @@ import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
 import SearchView from '@/components/streaming/SearchView';
+import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
 import { continueLabel } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Sparkles, Bookmark, Search, LogOut, Loader2, ArrowLeft } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, LogOut, Loader2, ArrowLeft } from 'lucide-react';
 
-type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista';
+type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista' | 'procurar';
 
 function itemToSummary(i: WatchItem): MediaSummary {
   return {
@@ -41,6 +42,7 @@ const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'series', label: 'Séries', icon: Tv },
   { key: 'animes', label: 'Animes', icon: Sparkles },
   { key: 'lista', label: 'Minha Lista', icon: Bookmark },
+  { key: 'procurar', label: 'Procurar', icon: Compass },
 ];
 
 export default function Index() {
@@ -195,9 +197,12 @@ export default function Index() {
           <div className="space-y-6">
             {ANIME_ROWS.map(r => (
               <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
-                loader={() => discoverAnime(1, r.id)} onOpen={openMedia} />
+                loader={() => discoverAnime(1, r.id)} onOpen={openMedia}
+                onSeeAll={() => setCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id) })} />
             ))}
           </div>
+        ) : tab === 'procurar' ? (
+          <BrowseView onOpen={openMedia} />
         ) : (
           <div className="space-y-6">
             <h1 className="text-xl font-bold">Minha Lista</h1>

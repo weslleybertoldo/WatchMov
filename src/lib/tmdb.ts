@@ -167,6 +167,20 @@ export const ANIME_ROWS: { id: number | null; name: string }[] = [
   { id: 18, name: 'Drama' },
   { id: 10765, name: 'Fantasia & Ficção' },
   { id: 9648, name: 'Mistério' },
+  { id: 10749, name: 'Romance' },
+  { id: 16, name: 'Animação' },
+  { id: 10751, name: 'Família' },
+];
+
+// Gêneros de anime para o filtro da aba Procurar (sobre TV + idioma ja).
+export const ANIME_GENRES: { id: number; name: string }[] = [
+  { id: 10759, name: 'Ação & Aventura' },
+  { id: 35, name: 'Comédia' },
+  { id: 18, name: 'Drama' },
+  { id: 10765, name: 'Fantasia & Ficção' },
+  { id: 9648, name: 'Mistério' },
+  { id: 10749, name: 'Romance' },
+  { id: 10751, name: 'Família' },
 ];
 
 export async function discoverAnime(page = 1, extraGenre?: number | null): Promise<MediaSummary[]> {
@@ -180,6 +194,67 @@ export async function discoverAnime(page = 1, extraGenre?: number | null): Promi
     page: String(page),
   });
   return dedupeWithPoster((d.results || []).map(r => toSummary(r, 'tv')));
+}
+
+// ── Procurar (discover com filtros: tipo, gênero, ano, nota) ──
+
+export type BrowseKind = 'movie' | 'tv' | 'anime';
+
+export interface DiscoverFilters {
+  kind: BrowseKind;
+  genreId?: number | null;
+  year?: number | null;
+  minRating?: number | null;
+  page?: number;
+}
+
+// Lista de anos para o filtro (atual → 1980).
+export const BROWSE_YEARS: number[] = (() => {
+  const now = new Date().getFullYear();
+  const ys: number[] = [];
+  for (let y = now; y >= 1980; y--) ys.push(y);
+  return ys;
+})();
+
+// Notas mínimas oferecidas no filtro.
+export const BROWSE_RATINGS: { value: number; label: string }[] = [
+  { value: 9, label: '9+' },
+  { value: 8, label: '8+' },
+  { value: 7, label: '7+' },
+  { value: 6, label: '6+' },
+  { value: 5, label: '5+' },
+];
+
+export async function discoverFilter(f: DiscoverFilters): Promise<MediaSummary[]> {
+  const page = f.page ?? 1;
+  const isAnime = f.kind === 'anime';
+  const apiType: TmdbMediaType = f.kind === 'movie' ? 'movie' : 'tv';
+
+  const params: Record<string, string> = {
+    sort_by: 'popularity.desc',
+    include_adult: 'false',
+    watch_region: 'BR',
+    page: String(page),
+    // com filtros ativos, baixa o piso de votos para não esvaziar o grid
+    'vote_count.gte': '50',
+  };
+
+  // gêneros: anime sempre força animação (16); gênero escolhido entra junto
+  const genres: number[] = [];
+  if (isAnime) genres.push(16);
+  if (f.genreId) genres.push(f.genreId);
+  if (genres.length) params.with_genres = genres.join(',');
+  if (isAnime) params.with_original_language = 'ja';
+
+  if (f.minRating) params['vote_average.gte'] = String(f.minRating);
+
+  if (f.year) {
+    if (apiType === 'movie') params.primary_release_year = String(f.year);
+    else params.first_air_date_year = String(f.year);
+  }
+
+  const d = await tmdbFetch<{ results: RawListItem[] }>(`/discover/${apiType}`, params);
+  return dedupeWithPoster((d.results || []).map(r => toSummary(r, apiType)));
 }
 
 function requireKey() {
