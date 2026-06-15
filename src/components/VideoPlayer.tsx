@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles } from 'lucide-react';
+import { X, ExternalLink, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, RotateCw, Maximize, Minimize } from 'lucide-react';
 import { Browser } from '@capacitor/browser';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
@@ -10,6 +10,9 @@ import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/str
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
+
+interface ImmersivePlugin { enter(): Promise<void>; exit(): Promise<void>; toggleOrientation(): Promise<void>; }
+const Immersive = registerPlugin<ImmersivePlugin>('Immersive');
 
 interface VideoPlayerProps {
   open: boolean;
@@ -33,6 +36,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
   const [subsOpen, setSubsOpen] = useState(false);
@@ -80,6 +85,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   // Cleanup do blob ao desmontar/fechar.
   useEffect(() => () => { setSubVtt(prev => { if (prev) URL.revokeObjectURL(prev); return null; }); }, []);
+
+  // Ao fechar/desmontar o player, restaura orientação e barras do sistema.
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      if (Capacitor.isNativePlatform()) { Immersive.exit().catch(() => {}); }
+      else if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
+    };
+  }, [open]);
 
   const target: PlayerTarget = { tmdbId, imdbId, type, season, episode };
   const available = PROVIDERS.filter(p => p.build(target));
@@ -154,8 +168,31 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     lastSavedRef.current = 0;
   };
 
+  // Girar a tela (retrato/paisagem). Nativo: SO; web: Screen Orientation API (best-effort).
+  const rotate = async () => {
+    if (Capacitor.isNativePlatform()) { try { await Immersive.toggleOrientation(); } catch { /* ignore */ } return; }
+    const so = (screen as unknown as { orientation?: { type: string; lock?: (o: string) => Promise<void>; unlock?: () => void } }).orientation;
+    try {
+      if (so?.lock) { await (so.type.startsWith('landscape') ? Promise.resolve(so.unlock?.()) : so.lock('landscape')); }
+    } catch { /* orientação travada/sem suporte */ }
+  };
+
+  // Tela cheia imersiva (oculta barras + entalhe). Nativo: plugin; web: Fullscreen API.
+  const toggleFullscreen = async () => {
+    const next = !fullscreen;
+    setFullscreen(next);
+    if (Capacitor.isNativePlatform()) {
+      try { await (next ? Immersive.enter() : Immersive.exit()); } catch { /* ignore */ }
+      return;
+    }
+    try {
+      if (next) await rootRef.current?.requestFullscreen?.();
+      else if (document.fullscreenElement) await document.exitFullscreen();
+    } catch { /* ignore */ }
+  };
+
   return (
-    <div className="fixed inset-0 z-[60] bg-black flex flex-col animate-fade-in">
+    <div ref={rootRef} className="fixed inset-0 z-[60] bg-black flex flex-col animate-fade-in">
       <div className="flex items-center justify-between px-3 py-2 bg-black/90 shrink-0">
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
@@ -196,6 +233,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               )}
             </div>
           )}
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Girar tela" onClick={rotate}>
+            <RotateCw className="w-5 h-5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'} onClick={toggleFullscreen}>
+            {fullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+          </Button>
           <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Espelhar para TV" onClick={tryCast}>
             <Tv className="w-5 h-5" />
           </Button>

@@ -27,6 +27,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(ApkInstallerPlugin.class);
         registerPlugin(ScreenCastPlugin.class);
+        registerPlugin(ImmersivePlugin.class);
         super.onCreate(savedInstanceState);
 
         // Bloqueio de popups/anúncios dos players de embed (BetterFlix/Fembed etc).
