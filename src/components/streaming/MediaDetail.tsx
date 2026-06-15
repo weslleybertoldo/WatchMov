@@ -165,6 +165,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const lastWatchedLabel = liveItem?.lastWatchedAt
     ? new Date(liveItem.lastWatchedAt).toLocaleDateString('pt-BR')
     : null;
+  // Há próximo episódio na temporada atual do player?
+  const curPlayerSeason = liveItem?.seasons?.find(s => s.number === player?.season);
+  const hasNextEp = !!(player?.season && curPlayerSeason && (player.episode || 1) < curPlayerSeason.totalEpisodes);
 
   return (
     <div className="animate-fade-in pb-8">
@@ -274,6 +277,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           torrent={player.torrent}
           episodeWatched={isSeries && player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined}
           onToggleWatched={isSeries && player.season && liveItem ? () => store.setEpisodeWatched(liveItem.id, player.season!, player.episode || 1, !isEpisodeWatched(liveItem, player.season, player.episode)) : undefined}
+          onNext={isSeries && hasNextEp ? onSeriesCompleted : undefined}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />

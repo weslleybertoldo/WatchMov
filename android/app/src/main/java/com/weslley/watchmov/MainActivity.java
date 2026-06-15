@@ -1,12 +1,10 @@
 package com.weslley.watchmov;
 
 import android.content.pm.ActivityInfo;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Message;
 import android.view.View;
 import android.view.Window;
-import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -98,7 +96,9 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
-    // Liga/desliga tela cheia imersiva edge-to-edge (vídeo sob o entalhe, sem cinza).
+    // Liga/desliga tela cheia imersiva. NÃO mexe no layoutInDisplayCutoutMode pra
+    // não deixar faixa cinza residual ao sair (o sistema faz letterbox preto no
+    // entalhe em paisagem, sem resíduo).
     private void applyImmersive(boolean on) {
         Window w = getWindow();
         WindowCompat.setDecorFitsSystemWindows(w, !on);
@@ -108,13 +108,6 @@ public class MainActivity extends BridgeActivity {
             c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         } else {
             c.show(WindowInsetsCompat.Type.systemBars());
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            WindowManager.LayoutParams lp = w.getAttributes();
-            lp.layoutInDisplayCutoutMode = on
-                ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            w.setAttributes(lp);
         }
     }
 }

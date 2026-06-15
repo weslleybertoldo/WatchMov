@@ -3,9 +3,7 @@ package com.weslley.watchmov;
 import android.app.Activity;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
-import android.os.Build;
 import android.view.Window;
-import android.view.WindowManager;
 
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -38,7 +36,6 @@ public class ImmersivePlugin extends Plugin {
             WindowInsetsControllerCompat c = WindowCompat.getInsetsController(w, w.getDecorView());
             c.hide(WindowInsetsCompat.Type.systemBars());
             c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            setCutout(a, true);
         });
         call.resolve();
     }
@@ -53,7 +50,6 @@ public class ImmersivePlugin extends Plugin {
             a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             WindowInsetsControllerCompat c = WindowCompat.getInsetsController(w, w.getDecorView());
             c.show(WindowInsetsCompat.Type.systemBars());
-            setCutout(a, false);
         });
         call.resolve();
     }
@@ -71,13 +67,4 @@ public class ImmersivePlugin extends Plugin {
         call.resolve();
     }
 
-    private void setCutout(Activity a, boolean useCutout) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            WindowManager.LayoutParams lp = a.getWindow().getAttributes();
-            lp.layoutInDisplayCutoutMode = useCutout
-                ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            a.getWindow().setAttributes(lp);
-        }
-    }
 }
