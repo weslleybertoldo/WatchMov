@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { MediaSummary, getDetails, type TmdbDetails } from '@/lib/tmdb';
 import { WatchItem, Season } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
@@ -8,7 +8,7 @@ import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, Star, Loader2, Download } from 'lucide-react';
-import { episodesWatched, isEpisodeWatched } from '@/lib/watchProgress';
+import { episodesWatched, isEpisodeWatched, lastStopped } from '@/lib/watchProgress';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -51,6 +51,15 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [media.tmdbId, media.type]);
+
+  // Abre já na última temporada assistida (1x; não sobrescreve escolha manual).
+  const seasonInitRef = useRef(false);
+  useEffect(() => {
+    if (seasonInitRef.current || !details?.seasons?.length) return;
+    const ls = liveItem ? lastStopped(liveItem) : null;
+    if (ls && details.seasons.some(s => s.number === ls.season)) setSelSeason(ls.season);
+    seasonInitRef.current = true;
+  }, [details, liveItem]);
 
   const handlePlayerBack = useCallback(async (): Promise<boolean> => {
     if (player) { setPlayer(null); return true; }
