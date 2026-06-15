@@ -22,8 +22,20 @@ const e = (t: PlayerTarget) => t.episode ?? 1;
 
 export const PROVIDERS: Provider[] = [
   {
+    id: 'betterflix',
+    name: 'Fonte 1 (BetterFlix PT-BR)',
+    // Servidor BR com catálogo dublado pt-br. Só toca dentro de iframe (acesso
+    // direto à URL é bloqueado pelo provedor). Aceita só TMDB id.
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://betterflix.click/api/player?id=${t.tmdbId}&type=movie`
+        : `https://betterflix.click/api/player?id=${t.tmdbId}&type=tv&season=${s(t)}&episode=${e(t)}`;
+    },
+  },
+  {
     id: 'vidapi',
-    name: 'Fonte 1 (VidAPI)',
+    name: 'Fonte 2 (VidAPI)',
     build: (t) => {
       const id = t.imdbId || (t.tmdbId ? String(t.tmdbId) : null);
       if (!id) return null;
@@ -33,7 +45,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'vidsrc',
-    name: 'Fonte 2 (VidSrc)',
+    name: 'Fonte 3 (VidSrc)',
     build: (t) => {
       const id = t.imdbId || (t.tmdbId ? String(t.tmdbId) : null);
       if (!id) return null;
@@ -44,7 +56,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'vidlink',
-    name: 'Fonte 3 (VidLink)',
+    name: 'Fonte 4 (VidLink)',
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
@@ -54,7 +66,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'embedsu',
-    name: 'Fonte 4 (Embed.su)',
+    name: 'Fonte 5 (Embed.su)',
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
@@ -64,7 +76,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: '2embed',
-    name: 'Fonte 5 (2Embed)',
+    name: 'Fonte 6 (2Embed)',
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
@@ -74,7 +86,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'superembed',
-    name: 'Fonte 6 (SuperEmbed)',
+    name: 'Fonte 7 (SuperEmbed)',
     build: (t) => {
       if (!t.tmdbId && !t.imdbId) return null;
       const idPart = t.tmdbId ? `video_id=${t.tmdbId}&tmdb=1` : `video_id=${t.imdbId}`;
@@ -86,6 +98,7 @@ export const PROVIDERS: Provider[] = [
 
 // Domínios usados (para CSP frame-src)
 export const PROVIDER_HOSTS = [
+  'https://betterflix.click',
   'https://vaplayer.ru',
   'https://vidsrc.xyz',
   'https://vidlink.pro',
