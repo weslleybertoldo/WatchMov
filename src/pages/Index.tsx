@@ -10,7 +10,7 @@ import {
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
-import SearchView from '@/components/streaming/SearchView';
+import SearchView, { clearSearchCache } from '@/components/streaming/SearchView';
 import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
@@ -69,7 +69,7 @@ export default function Index() {
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
-    if (searchOpen) { setSearchOpen(false); return true; }
+    if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
     if (listFilter) { setListFilter(null); return true; }
     if (category) { setCategory(null); return true; }
@@ -103,7 +103,7 @@ export default function Index() {
   const listFiltered = listFilter === 'movie' ? listMovies : listFilter === 'anime' ? listAnimes : listFilter === 'series' ? listSeries : [];
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); setContinueFilter(null); setListFilter(null); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -120,7 +120,7 @@ export default function Index() {
             ))}
           </nav>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => !o)} title="Buscar">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={signOut} title="Sair">

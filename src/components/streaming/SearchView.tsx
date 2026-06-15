@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { MediaSummary, searchMulti } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { Input } from '@/components/ui/input';
-import { Search, Loader2, Clock } from 'lucide-react';
+import { Search, Loader2, Clock, X } from 'lucide-react';
 
 interface SearchViewProps {
   onOpen: (media: MediaSummary) => void;
@@ -22,6 +22,10 @@ function loadHistory(): string[] {
 // já pesquisados (em vez de voltar à tela de digitar).
 let searchCache: { query: string; results: MediaSummary[]; searched: boolean } | null = null;
 
+// Limpa o cache da busca — chamado pelo Index ao FECHAR a lupa (sair da busca).
+// Abrir um título e voltar mantém a lupa aberta, então o cache persiste.
+export function clearSearchCache() { searchCache = null; }
+
 export default function SearchView({ onOpen }: SearchViewProps) {
   const [query, setQuery] = useState(searchCache?.query ?? '');
   const [results, setResults] = useState<MediaSummary[]>(searchCache?.results ?? []);
@@ -40,6 +44,14 @@ export default function SearchView({ onOpen }: SearchViewProps) {
   const clearHistory = () => {
     setHistory([]);
     try { localStorage.removeItem(HISTORY_KEY); } catch { /* ignore */ }
+  };
+
+  // Limpa a pesquisa atual (texto + resultados + cache persistido).
+  const clearSearch = () => {
+    setQuery('');
+    setResults([]);
+    setSearched(false);
+    searchCache = null;
   };
 
   const run = async (term = query) => {
@@ -71,8 +83,14 @@ export default function SearchView({ onOpen }: SearchViewProps) {
           onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); run(); } }}
           placeholder="Buscar filmes, séries e animes..."
-          className="pl-9 bg-muted/50 border-border h-11"
+          className="pl-9 pr-9 bg-muted/50 border-border h-11"
         />
+        {(query || searched) && (
+          <button onClick={clearSearch} title="Limpar"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Histórico: aparece quando ainda não buscou nesta sessão e há histórico. */}

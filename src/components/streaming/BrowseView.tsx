@@ -137,61 +137,58 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
     set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
 
   return (
-    <div className="flex gap-3 sm:gap-4 animate-fade-in">
-      {/* Sidebar de tipos */}
-      <aside className="shrink-0 flex flex-col gap-2 w-16 sm:w-32">
+    <div className="space-y-4 animate-fade-in">
+      {/* Tipos: 3 lado a lado no topo */}
+      <div className="grid grid-cols-3 gap-2">
         {KINDS.map(k => {
           const Icon = k.icon;
           const active = k.key === kind;
           return (
             <button key={k.key} onClick={() => changeKind(k.key)}
-              className={`flex flex-col sm:flex-row items-center sm:gap-2 gap-1 rounded-lg px-2 py-3 text-xs sm:text-sm font-medium transition border ${
-                active ? 'bg-primary/15 text-primary border-primary/40' : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/50'
+              className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2.5 text-sm font-medium transition border ${
+                active ? 'bg-primary/15 text-primary border-primary/40' : 'text-muted-foreground border-border hover:text-foreground hover:bg-muted/50'
               }`}>
-              <Icon className="w-5 h-5" />
+              <Icon className="w-4 h-4" />
               {k.label}
             </button>
           );
         })}
-      </aside>
-
-      {/* Conteúdo */}
-      <div className="flex-1 min-w-0 space-y-4">
-        {/* Filtros */}
-        <div className="flex flex-wrap gap-2">
-          <MultiSelect label="Categorias" selected={genreIds}
-            options={genres.map(g => ({ value: g.id, label: g.name }))}
-            onToggle={v => toggle(genreIds, setGenreIds, v)} />
-          <MultiSelect label="Anos" selected={years}
-            options={BROWSE_YEARS.map(y => ({ value: y, label: String(y) }))}
-            onToggle={v => toggle(years, setYears, v)} />
-          <select
-            className="h-9 rounded-lg bg-muted/60 border border-border px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            value={minRating ?? ''} onChange={e => setMinRating(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">Qualquer nota</option>
-            {BROWSE_RATINGS.map(r => <option key={r.value} value={r.value}>Nota {r.label}</option>)}
-          </select>
-        </div>
-
-        {/* Grid */}
-        {items.length > 0 && (
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-            {items.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
-          </div>
-        )}
-
-        {loading && (
-          <div className="flex justify-center py-6 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
-        )}
-
-        {!loading && items.length === 0 && (
-          <p className="text-center text-sm text-muted-foreground py-10">Nada encontrado com esses filtros.</p>
-        )}
-
-        {!loading && !done && items.length > 0 && (
-          <Button variant="outline" className="w-full" onClick={loadMore}>Carregar mais</Button>
-        )}
       </div>
+
+      {/* Filtros */}
+      <div className="flex flex-wrap gap-2">
+        <MultiSelect label="Categorias" selected={genreIds}
+          options={genres.map(g => ({ value: g.id, label: g.name }))}
+          onToggle={v => toggle(genreIds, setGenreIds, v)} />
+        <MultiSelect label="Anos" selected={years}
+          options={BROWSE_YEARS.map(y => ({ value: y, label: String(y) }))}
+          onToggle={v => toggle(years, setYears, v)} />
+        <select
+          className="h-9 rounded-lg bg-muted/60 border border-border px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          value={minRating ?? ''} onChange={e => setMinRating(e.target.value ? Number(e.target.value) : null)}>
+          <option value="">Qualquer nota</option>
+          {BROWSE_RATINGS.map(r => <option key={r.value} value={r.value}>Nota {r.label}</option>)}
+        </select>
+      </div>
+
+      {/* Grid (largura total) */}
+      {items.length > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+          {items.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
+        </div>
+      )}
+
+      {loading && (
+        <div className="flex justify-center py-6 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
+      )}
+
+      {!loading && items.length === 0 && (
+        <p className="text-center text-sm text-muted-foreground py-10">Nada encontrado com esses filtros.</p>
+      )}
+
+      {!loading && !done && items.length > 0 && (
+        <Button variant="outline" className="w-full" onClick={loadMore}>Carregar mais</Button>
+      )}
     </div>
   );
 }
