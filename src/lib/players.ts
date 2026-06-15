@@ -15,6 +15,10 @@ export interface Provider {
   id: string;
   name: string;
   build: (t: PlayerTarget) => string | null;
+  // Provedores BR que abrem popups/redirects de anúncio ao dar play. Quando true,
+  // o iframe recebe sandbox sem allow-popups/allow-top-navigation → bloqueia os
+  // links externos mantendo o vídeo. (Não usar nos provedores que recusam sandbox.)
+  blockPopups?: boolean;
 }
 
 const s = (t: PlayerTarget) => t.season ?? 1;
@@ -24,6 +28,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: 'betterflix',
     name: 'Fonte 1 (BetterFlix PT-BR)',
+    blockPopups: true,
     // Servidor BR com catálogo dublado pt-br. Só toca dentro de iframe (acesso
     // direto à URL é bloqueado pelo provedor). Aceita só TMDB id.
     // source=server2 = "Servidor Premium" (carregamento direto, LIVRE DE ANÚNCIOS/
@@ -39,6 +44,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: 'fembed',
     name: 'Fonte 2 (Fembed PT-BR)',
+    blockPopups: true,
     // Herdeiro do Superflix, catálogo dublado pt-br. TMDB id.
     build: (t) => {
       if (!t.tmdbId) return null;
@@ -50,6 +56,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: 'embedplayapi',
     name: 'Fonte 3 (EmbedPlayApi PT-BR)',
+    blockPopups: true,
     // Player BR dublado. TMDB id.
     build: (t) => {
       if (!t.tmdbId) return null;
