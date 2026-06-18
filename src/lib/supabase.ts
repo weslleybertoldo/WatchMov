@@ -3,6 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// Schema do ambiente: "public" (prod) ou "staging". Dirige PostgREST e realtime.
+export const DB_SCHEMA = (import.meta.env.VITE_DB_SCHEMA as string) || "public";
+
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY sao obrigatorios");
 }
@@ -54,7 +57,9 @@ function createResilientFetch(retries = 2, timeout = 15000) {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
     fetch: createResilientFetch(2, 15000),
+    headers: { "x-schema": DB_SCHEMA },
   },
+  db: { schema: DB_SCHEMA as "public" },
   auth: {
     persistSession: true,
     autoRefreshToken: true,
