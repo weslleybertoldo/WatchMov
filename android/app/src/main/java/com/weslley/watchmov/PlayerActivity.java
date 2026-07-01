@@ -394,7 +394,12 @@ public class PlayerActivity extends Activity {
 
     private void prepare(String url, String mimeType, long startMs) {
         if (player == null) return;
-        MediaItem item = new MediaItem.Builder().setUri(url).setMimeType(mimeType).build();
+        // HLS: toca via ProxyServer local (127.0.0.1). Vários CDNs BR (SuperFlix) servem
+        // o m3u8 gzip/text-plain que o ExoPlayer recebe cru → "Input does not start with
+        // #EXTM3U" (MANIFEST_MALFORMED). O proxy descomprime, garante #EXTM3U e reescreve
+        // os segmentos (mesmo caminho que o cast já usa OK). MP4 toca direto.
+        String playUri = MimeTypes.APPLICATION_M3U8.equals(mimeType) ? ProxyServer.local(url, mReferer) : url;
+        MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
         player.setMediaItem(item);
         if (startMs > 0) player.seekTo(startMs);
         player.setPlayWhenReady(true);
