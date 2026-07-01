@@ -227,6 +227,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
     }).then(res => {
       if (!res) return;
+      // Estado final de "assistido" vem no resultado (o evento ao vivo se perde com o
+      // WebView em background) → fonte da verdade ao fechar; garante mark E unmark.
+      if (typeof res.watched === 'boolean') onSetWatched?.(res.watched);
       if (res.positionMs > 0) {
         setStreamPosition(res.positionMs, tmdbId, type, season, episode);
         onProgress?.(Math.floor(res.positionMs / 1000));

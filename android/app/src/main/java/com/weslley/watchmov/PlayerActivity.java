@@ -69,6 +69,7 @@ public class PlayerActivity extends Activity {
     public static final String RESULT_NEXT = "next";
     public static final String RESULT_SERVER = "server";
     public static final String RESULT_RECAPTURE = "recapture";
+    public static final String RESULT_WATCHED = "watched";
 
     private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
@@ -246,7 +247,16 @@ public class PlayerActivity extends Activity {
             if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
             else stopCasting(true);
         });
-        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castRow); castCol.addView(stopCast);
+        // Barra de progresso arrastável (controla o remoto: DLNA/CC).
+        castSeek = new android.widget.SeekBar(this);
+        castSeek.setMax(1000);
+        castSeek.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { castSeeking = true; }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) { castSeeking = false; remoteSeekTo((long) sb.getProgress() * 1000); }
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) {}
+        });
+        LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.7), ViewGroup.LayoutParams.WRAP_CONTENT);
+        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp); castCol.addView(castRow); castCol.addView(stopCast);
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -527,6 +537,8 @@ public class PlayerActivity extends Activity {
     private FrameLayout castOverlay;
     private TextView castStatusTv, castTimeTv;
     private Button castPlayBtn;
+    private android.widget.SeekBar castSeek;
+    private boolean castSeeking = false;
 
     private com.google.android.gms.cast.framework.media.RemoteMediaClient rmc() {
         com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
@@ -594,7 +606,24 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    private void remoteSeekTo(long absMs) {
+        if (castMode == CAST_CC) {
+            com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+            if (r != null) r.seek(new com.google.android.gms.cast.MediaSeekOptions.Builder().setPosition(Math.max(0, absMs)).build());
+        } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
+            final String c = dlnaCtrl; final long t = Math.max(0, absMs);
+            new Thread(() -> { try { DlnaCastPlugin.seekSync(c, t); } catch (Exception ignored) {} }).start();
+        }
+    }
+
     private void updatePlayIcon(boolean playing) { if (castPlayBtn != null) castPlayBtn.setText(playing ? "⏸" : "▶"); }
+
+    // Reflete a posição do remoto na barra (em segundos); não mexe enquanto o user arrasta.
+    private void updateCastSeek() {
+        if (castSeek == null || castSeeking) return;
+        int dur = (int) (lastRemoteDurMs / 1000);
+        if (dur > 0) { castSeek.setMax(dur); castSeek.setProgress((int) (lastRemotePosMs / 1000)); }
+    }
 
     private String fmtClock(long ms) {
         long s = Math.max(0, ms) / 1000;
@@ -608,6 +637,7 @@ public class PlayerActivity extends Activity {
                 com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
                 if (r != null) { lastRemotePosMs = r.getApproximateStreamPosition(); lastRemoteDurMs = r.getStreamDuration(); updatePlayIcon(r.isPlaying()); }
                 if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                updateCastSeek();
                 progressHandler.postDelayed(this, 1000);
             } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
                 final String c = dlnaCtrl;
@@ -618,6 +648,7 @@ public class PlayerActivity extends Activity {
                         if (castMode != CAST_DLNA) return;
                         if (f != null) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
                         if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                        updateCastSeek();
                     });
                 }).start();
                 progressHandler.postDelayed(this, 2000);
@@ -897,6 +928,7 @@ public class PlayerActivity extends Activity {
         data.putExtra(RESULT_NEXT, next);
         data.putExtra(RESULT_SERVER, server);
         data.putExtra(RESULT_RECAPTURE, recapture);
+        data.putExtra(RESULT_WATCHED, watched); // estado final do "assistido" (fonte da verdade no fechar)
         setResult(RESULT_OK, data);
         resultSaved = true;
         finish();
@@ -914,6 +946,7 @@ public class PlayerActivity extends Activity {
             Intent data = new Intent();
             data.putExtra(RESULT_POSITION, player.getCurrentPosition());
             data.putExtra(RESULT_URL, currentUrl);
+            data.putExtra(RESULT_WATCHED, watched);
             setResult(RESULT_OK, data);
         }
         super.onPause();
