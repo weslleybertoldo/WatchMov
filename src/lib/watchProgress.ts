@@ -38,8 +38,16 @@ function fmtClock(ms: number): string {
 // streamCache cai pro store. Retorna null (sem barra) quando não há posição confiável.
 export function continueProgress(item: WatchItem): { pct: number; label: string } | null {
   const latest = latestPosition(item.tmdbId);
-  if (latest && latest.positionMs > 0 && latest.durationMs && latest.durationMs > 0) {
-    return { pct: Math.min(1, latest.positionMs / latest.durationMs), label: `${fmtClock(latest.positionMs)} / ${fmtClock(latest.durationMs)}` };
+  if (latest && latest.positionMs > 0) {
+    // Duração REAL do player; se ainda não foi salva (jogado em versão antiga),
+    // cai pro episodeDuration da temporada (aprox., corrige ao reproduzir na v3.02+).
+    let durMs = latest.durationMs && latest.durationMs > 0 ? latest.durationMs : 0;
+    if (!durMs && item.type === 'series') {
+      const s = (item.seasons || []).find(x => x.number === latest.season);
+      if (s?.episodeDuration) durMs = s.episodeDuration * 60000;
+    }
+    if (durMs > 0) return { pct: Math.min(1, latest.positionMs / durMs), label: `${fmtClock(latest.positionMs)} / ${fmtClock(durMs)}` };
+    return { pct: 0, label: fmtClock(latest.positionMs) }; // sem duração: só o tempo decorrido
   }
   // Filme sem posição no streamCache: usa watchedDuration/totalDuration (minutos).
   if (item.type === 'movie') {
