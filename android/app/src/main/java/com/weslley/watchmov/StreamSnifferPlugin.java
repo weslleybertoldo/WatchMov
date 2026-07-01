@@ -81,13 +81,23 @@ public class StreamSnifferPlugin extends Plugin {
         probeCount++;
         pool.submit(() -> {
             try {
-                Request.Builder rb = new Request.Builder().url(url).header("Range", "bytes=0-1");
+                Request.Builder rb = new Request.Builder().url(url).header("Range", "bytes=0-255");
                 if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) {
                     if (e.getKey() != null && e.getValue() != null && !e.getKey().equalsIgnoreCase("Range")) rb.header(e.getKey(), e.getValue());
                 }
                 try (Response resp = http.newCall(rb.build()).execute()) {
                     String ct = resp.header("Content-Type");
-                    if (isVideoContentType(ct)) report(url, ref, ct);
+                    if (isVideoContentType(ct)) { report(url, ref, ct); return; }
+                    // Content-Type genérico (octet-stream/text/nulo): confere os 1os bytes.
+                    if (ct == null || ct.toLowerCase().contains("octet-stream") || ct.toLowerCase().contains("text/")
+                        || ct.toLowerCase().contains("application/binary")) {
+                        if (resp.body() != null) {
+                            byte[] b = resp.body().bytes();
+                            String head = new String(b, 0, Math.min(b.length, 64));
+                            if (head.contains("#EXTM3U")) { report(url, ref, "application/vnd.apple.mpegurl"); }
+                            else if (head.contains("ftyp")) { report(url, ref, "video/mp4"); }
+                        }
+                    }
                 }
             } catch (Exception ignored) {}
         });
