@@ -550,6 +550,10 @@ public class PlayerActivity extends Activity {
     private String dlnaCtrl;
     private boolean dlnaPaused = false;
     private long lastRemotePosMs = 0, lastRemoteDurMs = 0;
+    // Geração da sessão de cast: incrementa a cada start/stop. O poll DLNA captura a
+    // geração e só atualiza/reagenda se ainda for a mesma — evita que uma thread de
+    // poll em voo (de uma sessão anterior) reagende um segundo laço em paralelo.
+    private int castGen = 0;
     private FrameLayout castOverlay;
     private TextView castStatusTv, castTimeTv;
     private Button castPlayBtn;
@@ -563,6 +567,7 @@ public class PlayerActivity extends Activity {
 
     // Conectou: pausa o player local e mostra o overlay de controle da TV.
     private void startCasting(int mode, String ctrl) {
+        castGen++; // nova sessão — invalida qualquer poll da sessão anterior
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
         activeCastMode = mode; activeDlnaCtrl = (mode == CAST_DLNA ? ctrl : null); activeCastKey = resumeKey; // p/ retomar ao voltar
         // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
@@ -591,6 +596,7 @@ public class PlayerActivity extends Activity {
             final String c = dlnaCtrl;
             new Thread(() -> { try { DlnaCastPlugin.controlSync(c, "Stop"); } catch (Exception ignored) {} }).start();
         }
+        castGen++; // encerra a sessão — o poll em voo não reagenda
         castMode = CAST_NONE; dlnaCtrl = null;
         activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; // sessão encerrada
         updateCastButton(false); // volta o botão pro branco (desconectado)
@@ -659,19 +665,28 @@ public class PlayerActivity extends Activity {
                 progressHandler.postDelayed(this, 1000);
             } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
                 final String c = dlnaCtrl;
+                final int gen = castGen;
+                // Poll SERIALIZADO: agenda o próximo ciclo só DEPOIS que este terminar.
+                // O postDelayed fixo (antigo) não esperava a thread anterior → quando a
+                // TV demorava (TRANSITIONING no início) as chamadas SOAP empilhavam e
+                // afogavam o controle UPnP da TV → travava/dava timeout. Serializando,
+                // no máximo 1 par de chamadas fica em voo por vez.
                 new Thread(() -> {
                     long[] pd; try { pd = DlnaCastPlugin.getPositionSync(c); } catch (Exception e) { pd = null; }
                     String st; try { st = DlnaCastPlugin.getStateSync(c); } catch (Exception e) { st = null; }
                     final long[] f = pd; final String fst = st;
                     runOnUiThread(() -> {
-                        if (castMode != CAST_DLNA) return;
+                        if (castMode != CAST_DLNA || gen != castGen) return; // sessão trocou/encerrou
                         if (f != null && (f[0] > 0 || f[1] > 0)) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
-                        if (fst != null && !fst.isEmpty()) { dlnaPaused = !"PLAYING".equals(fst); updatePlayIcon(!dlnaPaused); }
+                        // Só PAUSED_PLAYBACK é pausa real. PLAYING e TRANSITIONING (a TV
+                        // ainda carregando) contam como tocando — senão o ícone virava ▶
+                        // no início enquanto a TV só estava abrindo o stream.
+                        if (fst != null && !fst.isEmpty()) { dlnaPaused = "PAUSED_PLAYBACK".equals(fst); updatePlayIcon(!dlnaPaused); }
                         if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
                         updateCastSeek();
+                        progressHandler.postDelayed(castPoll, 1500); // próximo ciclo só agora
                     });
                 }).start();
-                progressHandler.postDelayed(this, 1500);
             }
         }
     };

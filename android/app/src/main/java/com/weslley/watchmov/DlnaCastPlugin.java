@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,7 +40,22 @@ import okhttp3.Response;
 @CapacitorPlugin(name = "DlnaCast")
 public class DlnaCastPlugin extends Plugin {
 
-    private static final OkHttpClient http = new OkHttpClient();
+    // Comandos (describe/cast/control/seek): timeouts LIMITADOS. O padrão do OkHttp
+    // (sem callTimeout) segura a thread até 10s por chamada; numa TV lenta isso
+    // empilhava requisições. Aqui abandona em ~10s no pior caso, não "para sempre".
+    private static final OkHttpClient http = new OkHttpClient.Builder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
+        .build();
+    // POLL (GetPositionInfo/GetTransportInfo): a TV é consultada a cada ciclo. Se
+    // uma resposta demora (ex.: TRANSITIONING no início), abandona rápido (~3s) em
+    // vez de travar a thread e afogar o controle UPnP da TV com chamadas empilhadas.
+    private static final OkHttpClient httpPoll = new OkHttpClient.Builder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(2500, TimeUnit.MILLISECONDS)
+        .callTimeout(3, TimeUnit.SECONDS)
+        .build();
     private static final String AVT = "urn:schemas-upnp-org:service:AVTransport:1";
     private static final Pattern LOCATION = Pattern.compile("(?im)^LOCATION:\\s*(.+?)\\s*$");
     private static final Pattern NAME = Pattern.compile("(?is)<friendlyName>(.*?)</friendlyName>");
@@ -194,7 +210,8 @@ public class DlnaCastPlugin extends Plugin {
         Request req = new Request.Builder().url(controlUrl)
             .addHeader("SOAPAction", "\"" + AVT + "#" + action + "\"")
             .post(RequestBody.create(body, MediaType.parse("text/xml; charset=\"utf-8\""))).build();
-        try (Response resp = http.newCall(req).execute()) {
+        // cliente de poll (timeout curto) — não segura a thread numa TV lenta
+        try (Response resp = httpPoll.newCall(req).execute()) {
             String rb = resp.body() != null ? resp.body().string() : "";
             if (!resp.isSuccessful()) throw new Exception(action + " HTTP " + resp.code());
             return rb;
