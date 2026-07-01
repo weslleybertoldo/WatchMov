@@ -238,11 +238,20 @@ public class PlayerActivity extends Activity {
         LinearLayout castRow = new LinearLayout(this);
         castRow.setOrientation(LinearLayout.HORIZONTAL); castRow.setGravity(Gravity.CENTER);
         Button rew60 = pill("−60s", v -> remoteSeekBy(-60000));
-        Button rew10 = pill("⏪ 10s", v -> remoteSeekBy(-10000));
+        Button rew10 = pill("−10s", v -> remoteSeekBy(-10000));
         castPlayBtn = pill("⏸", v -> remotePlayPause());
-        Button ff10 = pill("10s ⏩", v -> remoteSeekBy(10000));
+        Button ff10 = pill("+10s", v -> remoteSeekBy(10000));
         Button ff60 = pill("+60s", v -> remoteSeekBy(60000));
+        for (Button b : new Button[]{ rew60, rew10, castPlayBtn, ff10, ff60 }) {
+            b.setTextSize(20); b.setPadding(28, 22, 28, 22);  // botões maiores
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(8, 0, 8, 0); b.setLayoutParams(lp);
+        }
         castRow.addView(rew60); castRow.addView(rew10); castRow.addView(castPlayBtn); castRow.addView(ff10); castRow.addView(ff60);
+        // Rolável na horizontal pra caber todos os botões (não cortar o +60s).
+        android.widget.HorizontalScrollView castRowScroll = new android.widget.HorizontalScrollView(this);
+        castRowScroll.setHorizontalScrollBarEnabled(false);
+        castRowScroll.addView(castRow);
         Button stopCast = pill("Parar espelhamento", v -> {
             if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
             else stopCasting(true);
@@ -256,7 +265,7 @@ public class PlayerActivity extends Activity {
             @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) {}
         });
         LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.7), ViewGroup.LayoutParams.WRAP_CONTENT);
-        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp); castCol.addView(castRow); castCol.addView(stopCast);
+        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp); castCol.addView(castRowScroll); castCol.addView(stopCast);
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 

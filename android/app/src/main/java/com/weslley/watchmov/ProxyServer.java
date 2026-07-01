@@ -96,6 +96,13 @@ public class ProxyServer extends NanoHTTPD {
                 rb.header("Referer", r);
                 try { URL ru = new URL(r); rb.header("Origin", ru.getProtocol() + "://" + ru.getHost()); } catch (Exception ignored) {}
             }
+            // Cookies do WebView (mesma sessão que capturou): vários CDNs (SuperFlix)
+            // devolvem HTML "security error" (anti-bot) sem o cookie de sessão. O proxy
+            // roda no mesmo processo → lê o CookieManager e reenvia.
+            try {
+                String cookie = android.webkit.CookieManager.getInstance().getCookie(u);
+                if (cookie != null && !cookie.isEmpty()) rb.header("Cookie", cookie);
+            } catch (Exception ignored) {}
             String range = session.getHeaders().get("range");
             if (range != null) rb.header("Range", range);
 
