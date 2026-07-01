@@ -151,20 +151,25 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Ao abrir: carrega a lista salva; se há um último link escolhido, reabre nele
   // (ExoPlayer). O sniffer fica SEMPRE ativo no modo servidor, acumulando links
   // novos na lista salva (mesmo no meio do filme) — nunca perde os já achados.
+  // (A) Auto-abrir do cache — SÓ ao abrir o TÍTULO (não depende de embedUrl, pra
+  // trocar de provedor no servidor NÃO reabrir o reprodutor sozinho).
   useEffect(() => {
     if (!open) return;
     setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
-    if (directMode || !embedUrl || !isNative()) { setCapturedList([]); return; }
-
+    if (directMode || !isNative()) return;
     const entry = getEntry(tmdbId, type, season, episode);
-    const saved = entry?.streams ?? [];
-    setCapturedList(saved);
     if (entry?.chosenUrl) {
       const ck = streamKey(entry.chosenUrl);
-      setOwnStream(saved.find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
+      setOwnStream((entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
     }
+  }, [open, directMode, tmdbId, type, season, episode]);
 
+  // (B) Lista salva + captura passiva — roda também ao trocar de provedor (embedUrl),
+  // acumulando links sem mexer no que já está tocando/escolhido.
+  useEffect(() => {
+    if (!open || directMode || !embedUrl || !isNative()) { setCapturedList([]); return; }
+    setCapturedList(getEntry(tmdbId, type, season, episode)?.streams ?? []);
     let alive = true;
     let stop = () => {};
     watchStream(r => {
