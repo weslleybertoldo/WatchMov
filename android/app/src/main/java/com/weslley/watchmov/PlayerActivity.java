@@ -283,14 +283,49 @@ public class PlayerActivity extends Activity {
 
     private void playUrl(String url, String mime, long startMs) {
         currentUrl = url;
-        // Toca direto (a maioria dos CDNs aceita; Referer só se foi capturado o real).
-        MediaItem.Builder item = new MediaItem.Builder().setUri(url);
-        if (mime != null) {
-            if (mime.contains("mpegurl")) item.setMimeType(MimeTypes.APPLICATION_M3U8);
-            else if (mime.contains("dash")) item.setMimeType(MimeTypes.APPLICATION_MPD);
-            else item.setMimeType(MimeTypes.VIDEO_MP4);
-        }
-        player.setMediaItem(item.build());
+        // O mime capturado nem sempre chega certo (SuperFlix/EmbedPlay servem HLS como
+        // text/plain em master.txt/`/m3/` sem extensão). Se o mime já diz HLS/DASH,
+        // usa direto; senão SNIFFA os bytes reais (OkHttp descomprime gzip) e decide
+        // pelo conteúdo (#EXTM3U=HLS, ftyp=mp4) — fonte da verdade, não depende da
+        // captura. Roda em thread e prepara na UI.
+        final String mimeLc = mime != null ? mime.toLowerCase() : "";
+        if (mimeLc.contains("mpegurl")) { prepare(url, MimeTypes.APPLICATION_M3U8, startMs); return; }
+        if (mimeLc.contains("dash"))    { prepare(url, MimeTypes.APPLICATION_MPD, startMs); return; }
+        status.setText("Carregando vídeo…"); status.setVisibility(View.VISIBLE);
+        new Thread(() -> {
+            String resolved = sniffMime(url);
+            runOnUiThread(() -> { if (url.equals(currentUrl)) prepare(url, resolved, startMs); });
+        }).start();
+    }
+
+    // Descobre o tipo pelo conteúdo real (o servidor mente na extensão/Content-Type).
+    private String sniffMime(String url) {
+        try {
+            okhttp3.OkHttpClient c = new okhttp3.OkHttpClient();
+            okhttp3.Request rq = new okhttp3.Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                .header("Range", "bytes=0-511").build();
+            try (okhttp3.Response rp = c.newCall(rq).execute()) {
+                String ct = rp.header("Content-Type", "");
+                if (ct != null && ct.toLowerCase().contains("mpegurl")) return MimeTypes.APPLICATION_M3U8;
+                if (ct != null && ct.toLowerCase().contains("dash+xml")) return MimeTypes.APPLICATION_MPD;
+                byte[] b = rp.body() != null ? rp.body().bytes() : new byte[0];
+                String head = new String(b, 0, Math.min(b.length, 256));
+                if (head.contains("#EXTM3U")) return MimeTypes.APPLICATION_M3U8;
+                if (head.contains("<MPD") || head.contains("dash")) return MimeTypes.APPLICATION_MPD;
+            }
+        } catch (Exception ignored) {}
+        // fallback pela extensão
+        String p = url.split("\\?")[0].toLowerCase();
+        if (p.endsWith(".m3u8") || p.contains("master") || p.contains("/m3/")) return MimeTypes.APPLICATION_M3U8;
+        if (p.endsWith(".mpd")) return MimeTypes.APPLICATION_MPD;
+        return MimeTypes.VIDEO_MP4;
+    }
+
+    private void prepare(String url, String mimeType, long startMs) {
+        if (player == null) return;
+        MediaItem item = new MediaItem.Builder().setUri(url).setMimeType(mimeType).build();
+        player.setMediaItem(item);
         if (startMs > 0) player.seekTo(startMs);
         player.setPlayWhenReady(true);
         player.prepare();
