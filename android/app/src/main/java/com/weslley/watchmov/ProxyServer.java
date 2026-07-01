@@ -85,19 +85,20 @@ public class ProxyServer extends NanoHTTPD {
             okhttp3.Response up = http.newCall(rb.build()).execute();
             String ct = up.header("Content-Type", "application/octet-stream");
             String lu = u.toLowerCase(), lct = ct != null ? ct.toLowerCase() : "";
-            // O SuperFlix serve o HLS como text/plain em master.txt / /m3/ (sem .m3u8).
-            // Só olhar mpegurl/.m3u8 deixava passar como passthrough → o Chromecast
-            // recebia text/plain e não tocava. Se o corpo é textual (por content-type
-            // ou url), confirma pelo conteúdo (#EXTM3U) e serve como HLS. Binário
-            // (segmentos, mesmo disfarçados de .js) segue passthrough — não bufferiza.
-            boolean textish = lct.contains("mpegurl") || lct.contains("text/plain") || lct.contains("text/html") || lct.contains("vnd.apple");
-            boolean urlish = lu.contains(".m3u8") || lu.contains("/m3/") || lu.endsWith(".txt") || lu.contains("master") || lu.contains("playlist");
-            if ((textish || urlish) && up.body() != null) {
+            // HLS do SuperFlix vem como text/plain em master.txt / /m3/ (sem .m3u8).
+            // MAS os SEGMENTOS às vezes também vêm text/plain/html (disfarçados) — se eu
+            // bufferizasse por content-type, leria o TS binário como String e corrompia
+            // (tela preta). Então SÓ trato como playlist por PADRÃO DE URL (ou mpegurl
+            // explícito) e confirmo por #EXTM3U; todo o resto = passthrough binário.
+            boolean maybePlaylist = lct.contains("mpegurl")
+                || lu.contains(".m3u8") || lu.contains("/m3/") || lu.endsWith(".txt")
+                || lu.contains("/master") || lu.contains("playlist") || lu.contains(".m3u");
+            if (maybePlaylist && up.body() != null) {
                 String body = up.body().string();
                 if (body.contains("#EXTM3U")) {
                     return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
                 }
-                // Era texto mesmo (não HLS): devolve como veio (o corpo já foi lido).
+                // Não era playlist: devolve o texto como veio (corpo já lido).
                 return cors(newFixedLengthResponse(up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK, ct, body));
             }
 
