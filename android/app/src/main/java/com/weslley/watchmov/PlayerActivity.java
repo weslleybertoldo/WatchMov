@@ -339,28 +339,13 @@ public class PlayerActivity extends Activity {
                     status.setText("Link expirou — recapturando…");
                     progressHandler.postDelayed(() -> finishWithResult(false, false, true), 1500);
                 }
-                // MANIFEST_MALFORMED: o gunzip não bastou → mostra os 1ºs bytes REAIS que
-                // o CDN devolve (HTML/bloqueio? gzip? m3u8?) pra achar a causa.
+                // MANIFEST_MALFORMED: o player nativo não conseguiu parsear (CDN devolve
+                // HTML/anti-bot, ex. SuperFlix "security error"). O iframe roda no WebView
+                // (navegador real) e passa o anti-bot → cai automático no modo Servidor.
                 if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED) {
-                    final String diagUrl = currentUrl;
-                    new Thread(() -> {
-                        String head = "?";
-                        try {
-                            okhttp3.OkHttpClient c = new okhttp3.OkHttpClient();
-                            okhttp3.Request.Builder rb = new okhttp3.Request.Builder().url(diagUrl)
-                                .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
-                            if (mReferer != null && !mReferer.isEmpty()) rb.header("Referer", mReferer);
-                            try (okhttp3.Response rp = c.newCall(rb.build()).execute()) {
-                                byte[] b = rp.body() != null ? rp.body().bytes() : new byte[0];
-                                boolean gz = b.length > 1 && (b[0] & 0xff) == 0x1f && (b[1] & 0xff) == 0x8b;
-                                String ct = rp.header("Content-Type", "?");
-                                String snippet = new String(b, 0, Math.min(b.length, 140), java.nio.charset.StandardCharsets.UTF_8).replace("\n", " ");
-                                head = "HTTP " + rp.code() + " ct=" + ct + (gz ? " [GZIP]" : "") + " » " + snippet;
-                            }
-                        } catch (Exception e) { head = "fetch falhou: " + e.getMessage(); }
-                        final String fhead = head;
-                        runOnUiThread(() -> { status.setText(fhead); android.widget.Toast.makeText(PlayerActivity.this, fhead, android.widget.Toast.LENGTH_LONG).show(); });
-                    }).start();
+                    status.setText("Player nativo bloqueado — abrindo no servidor…");
+                    android.widget.Toast.makeText(PlayerActivity.this, "Servidor com proteção — abrindo no player do site.", android.widget.Toast.LENGTH_LONG).show();
+                    progressHandler.postDelayed(() -> finishWithResult(false, true, false), 1500);
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
