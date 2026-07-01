@@ -109,7 +109,12 @@ public class ProxyServer extends NanoHTTPD {
 
             long len = up.body() != null ? up.body().contentLength() : -1;
             Response.Status st = up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK;
-            Response resp = newFixedLengthResponse(st, ct, up.body().byteStream(), len);
+            // Tamanho conhecido → fixed-length (suporta Range/seek). Desconhecido (-1,
+            // upstream chunked) → chunked, senão o newFixedLengthResponse trunca o
+            // segmento e a TV para após ~2s. Como o WVC (copia o stream até acabar).
+            Response resp = len >= 0
+                ? newFixedLengthResponse(st, ct, up.body().byteStream(), len)
+                : newChunkedResponse(st, ct, up.body().byteStream());
             String cr = up.header("Content-Range");
             if (cr != null) resp.addHeader("Content-Range", cr);
             resp.addHeader("Accept-Ranges", "bytes");

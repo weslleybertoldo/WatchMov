@@ -42,17 +42,10 @@ export function continueProgress(item: WatchItem): { pct: number; label: string 
   if (latest && latest.positionMs > 0) {
     posMs = latest.positionMs;
     durMs = latest.durationMs && latest.durationMs > 0 ? latest.durationMs : 0;
-    if (!durMs) {
-      // Duração real não salva (jogado em versão antiga): aproxima pelo TMDB —
-      // série = episodeDuration da temporada; filme = totalDuration. Corrige ao
-      // reproduzir de novo na v3.02+ (que salva a duração real).
-      if (item.type === 'series') {
-        const s = (item.seasons || []).find(x => x.number === latest.season);
-        if (s?.episodeDuration) durMs = s.episodeDuration * 60000;
-      } else if (item.totalDuration) {
-        durMs = item.totalDuration * 60000;
-      }
-    }
+    // Filme sem duração real: usa totalDuration do TMDB (é preciso p/ filme).
+    // Série: NÃO usa episodeDuration (é média genérica errada, ex. 24 num ep de 46) —
+    // mostra só o tempo decorrido até o player salvar a duração REAL do arquivo.
+    if (!durMs && item.type === 'movie' && (item.totalDuration || 0) > 0) durMs = (item.totalDuration as number) * 60000;
   } else if (item.type === 'movie' && (item.watchedDuration || 0) > 0 && (item.totalDuration || 0) > 0) {
     // Filme sem entrada no streamCache: usa o progresso do store (minutos).
     posMs = (item.watchedDuration as number) * 60000;
@@ -64,11 +57,16 @@ export function continueProgress(item: WatchItem): { pct: number; label: string 
 }
 
 // Legenda do card "Continuar assistindo" (séries): "EP 5/12 | Temporada 4".
+// Usa o episódio EM ANDAMENTO (streamCache), não só o marcado como assistido —
+// assim aparece já ao começar a assistir. Fallback = último ep marcado.
 export function continueLabel(item: WatchItem): string | undefined {
   if (item.type !== 'series') return undefined;
+  const latest = latestPosition(item.tmdbId);
   const ls = lastStopped(item);
-  if (!ls) return undefined;
-  const s = (item.seasons || []).find(x => x.number === ls.season);
+  const season = latest ? latest.season : ls?.season;
+  const episode = latest ? latest.episode : ls?.episode;
+  if (season == null || episode == null) return undefined;
+  const s = (item.seasons || []).find(x => x.number === season);
   const total = s?.totalEpisodes;
-  return `EP ${ls.episode}${total ? `/${total}` : ''} | Temporada ${ls.season}`;
+  return `EP ${episode}${total ? `/${total}` : ''} | Temporada ${season}`;
 }
