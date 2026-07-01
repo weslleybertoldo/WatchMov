@@ -31,6 +31,13 @@
 
         </activity>
 
+        <activity
+            android:name=".PlayerActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|uiMode|density"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

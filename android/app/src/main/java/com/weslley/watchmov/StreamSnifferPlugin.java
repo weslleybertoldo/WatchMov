@@ -6,6 +6,10 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * Sniffer PASSIVO (estilo Web Video Cast): o iframe do servidor toca no WebView
  * principal do app; o WebViewClient do MainActivity observa o tráfego e, quando o
@@ -17,7 +21,7 @@ public class StreamSnifferPlugin extends Plugin {
 
     private static StreamSnifferPlugin instance;
     private static volatile boolean watching = false;
-    private static volatile String lastUrl = null;
+    private static final Set<String> emitted = Collections.synchronizedSet(new HashSet<String>());
 
     @Override
     public void load() { instance = this; }
@@ -38,8 +42,7 @@ public class StreamSnifferPlugin extends Plugin {
 
     public static void onVideoUrl(String url, String referer) {
         if (instance == null || !watching || url == null) return;
-        if (url.equals(lastUrl)) return;   // dedup
-        lastUrl = url;
+        if (!emitted.add(url)) return;   // já emitido → ignora (mantém lista sem repetir)
         JSObject d = new JSObject();
         d.put("url", url);
         if (referer != null) d.put("referer", referer);
@@ -52,7 +55,7 @@ public class StreamSnifferPlugin extends Plugin {
 
     // JS arma/desarma a captura (evita capturar o próprio hls.js do player).
     @PluginMethod
-    public void startWatching(PluginCall call) { watching = true; lastUrl = null; call.resolve(); }
+    public void startWatching(PluginCall call) { watching = true; emitted.clear(); call.resolve(); }
 
     @PluginMethod
     public void stopWatching(PluginCall call) { watching = false; call.resolve(); }
