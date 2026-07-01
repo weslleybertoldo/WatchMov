@@ -298,8 +298,14 @@ public class PlayerActivity extends Activity {
                 }
             }
             @Override public void onPlayerError(PlaybackException error) {
-                status.setText("Erro ao tocar: " + error.getErrorCodeName());
+                // Detalha o motivo (código + causa: ex. "Response code: 403", codec, etc.)
+                // pra diagnosticar o SuperFlix — o Weslley manda esse texto.
+                String cause = error.getCause() != null ? (" — " + error.getCause().getClass().getSimpleName()
+                    + (error.getCause().getMessage() != null ? ": " + error.getCause().getMessage() : "")) : "";
+                String msg = "Erro: " + error.getErrorCodeName() + " (" + error.errorCode + ")" + cause;
+                status.setText(msg);
                 status.setVisibility(View.VISIBLE);
+                android.widget.Toast.makeText(PlayerActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
             }
             @Override public void onPlaybackStateChanged(int state) {
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
