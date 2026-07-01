@@ -19,6 +19,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -154,6 +155,55 @@ public class DlnaCastPlugin extends Plugin {
     }
 
     private static final Pattern ERRDESC = Pattern.compile("(?is)<errorDescription>(.*?)</errorDescription>");
+
+    // ---- Controle remoto (o celular vira controle da TV) ----
+    // Play / Pause / Stop no AVTransport.
+    public static void controlSync(String controlUrl, String action) throws Exception {
+        String inner = "<InstanceID>0</InstanceID>" + ("Play".equals(action) ? "<Speed>1</Speed>" : "");
+        soap(controlUrl, action, envelope(action, inner));
+    }
+
+    // Seek absoluto por tempo (REL_TIME = H:MM:SS).
+    public static void seekSync(String controlUrl, long targetMs) throws Exception {
+        soap(controlUrl, "Seek", envelope("Seek",
+            "<InstanceID>0</InstanceID><Unit>REL_TIME</Unit><Target>" + hms(targetMs) + "</Target>"));
+    }
+
+    // Posição/duração atuais: {posMs, durMs}. Para o tempo no overlay.
+    public static long[] getPositionSync(String controlUrl) throws Exception {
+        String body = soapResult(controlUrl, "GetPositionInfo", envelope("GetPositionInfo", "<InstanceID>0</InstanceID>"));
+        return new long[]{ parseTime(tag(body, "RelTime")), parseTime(tag(body, "TrackDuration")) };
+    }
+
+    private static String soapResult(String controlUrl, String action, String body) throws Exception {
+        Request req = new Request.Builder().url(controlUrl)
+            .addHeader("SOAPAction", "\"" + AVT + "#" + action + "\"")
+            .post(RequestBody.create(body, MediaType.parse("text/xml; charset=\"utf-8\""))).build();
+        try (Response resp = http.newCall(req).execute()) {
+            String rb = resp.body() != null ? resp.body().string() : "";
+            if (!resp.isSuccessful()) throw new Exception(action + " HTTP " + resp.code());
+            return rb;
+        }
+    }
+
+    private static String hms(long ms) {
+        long s = Math.max(0, ms) / 1000;
+        return String.format(Locale.US, "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60);
+    }
+
+    private static long parseTime(String t) {
+        if (t == null) return 0;
+        String[] p = t.trim().split(":");
+        try {
+            if (p.length == 3) return (long) ((Long.parseLong(p[0]) * 3600 + Long.parseLong(p[1]) * 60 + Double.parseDouble(p[2])) * 1000);
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
+    private static String tag(String body, String name) {
+        Matcher m = Pattern.compile("(?is)<" + name + ">(.*?)</" + name + ">").matcher(body);
+        return m.find() ? m.group(1) : null;
+    }
 
     private static String esc(String s) { return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"); }
 

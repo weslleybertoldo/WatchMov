@@ -219,6 +219,33 @@ public class PlayerActivity extends Activity {
         status.setText("Carregando vídeo…");
         root.addView(status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
 
+        // Overlay de controle remoto (some por padrão; aparece ao espelhar).
+        castOverlay = new FrameLayout(this);
+        castOverlay.setBackgroundColor(Color.parseColor("#E6000000"));
+        castOverlay.setClickable(true);
+        castOverlay.setVisibility(View.GONE);
+        LinearLayout castCol = new LinearLayout(this);
+        castCol.setOrientation(LinearLayout.VERTICAL);
+        castCol.setGravity(Gravity.CENTER);
+        castStatusTv = new TextView(this);
+        castStatusTv.setTextColor(Color.WHITE); castStatusTv.setTextSize(18); castStatusTv.setGravity(Gravity.CENTER);
+        castTimeTv = new TextView(this);
+        castTimeTv.setTextColor(Color.parseColor("#B0FFFFFF")); castTimeTv.setTextSize(14); castTimeTv.setGravity(Gravity.CENTER);
+        castTimeTv.setPadding(0, 12, 0, 24);
+        LinearLayout castRow = new LinearLayout(this);
+        castRow.setOrientation(LinearLayout.HORIZONTAL); castRow.setGravity(Gravity.CENTER);
+        Button rew10 = pill("⏪ 10s", v -> remoteSeekBy(-10000));
+        castPlayBtn = pill("⏸", v -> remotePlayPause());
+        Button ff10 = pill("10s ⏩", v -> remoteSeekBy(10000));
+        castRow.addView(rew10); castRow.addView(castPlayBtn); castRow.addView(ff10);
+        Button stopCast = pill("Parar espelhamento", v -> {
+            if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
+            else stopCasting(true);
+        });
+        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castRow); castCol.addView(stopCast);
+        castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         setContentView(root);
 
         // Inicializa o Cast cedo: registra o provider do Google Cast no MediaRouter
@@ -443,6 +470,102 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    // ---- Espelhamento: controle remoto da TV (o player local pausa) ----
+    private static final int CAST_NONE = 0, CAST_CC = 1, CAST_DLNA = 2;
+    private int castMode = CAST_NONE;
+    private String dlnaCtrl;
+    private boolean dlnaPaused = false;
+    private long lastRemotePosMs = 0, lastRemoteDurMs = 0;
+    private FrameLayout castOverlay;
+    private TextView castStatusTv, castTimeTv;
+    private Button castPlayBtn;
+
+    private com.google.android.gms.cast.framework.media.RemoteMediaClient rmc() {
+        com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
+        return s != null ? s.getRemoteMediaClient() : null;
+    }
+
+    // Conectou: pausa o player local e mostra o overlay de controle da TV.
+    private void startCasting(int mode, String ctrl) {
+        castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
+        if (player != null) player.setPlayWhenReady(false);
+        if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
+        if (castOverlay != null) castOverlay.setVisibility(View.VISIBLE);
+        if (view != null) view.hideController();
+        updatePlayIcon(true);
+        progressHandler.removeCallbacks(castPoll);
+        progressHandler.postDelayed(castPoll, 800);
+    }
+
+    // Parou/desconectou: esconde o overlay e volta a tocar local na posição da TV.
+    private void stopCasting(boolean resumeLocal) {
+        if (castMode == CAST_NONE) return;
+        final long tvPos = lastRemotePosMs;
+        if (castMode == CAST_DLNA && dlnaCtrl != null) {
+            final String c = dlnaCtrl;
+            new Thread(() -> { try { DlnaCastPlugin.controlSync(c, "Stop"); } catch (Exception ignored) {} }).start();
+        }
+        castMode = CAST_NONE; dlnaCtrl = null;
+        progressHandler.removeCallbacks(castPoll);
+        if (castOverlay != null) castOverlay.setVisibility(View.GONE);
+        if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
+    }
+
+    private void remotePlayPause() {
+        if (castMode == CAST_CC) {
+            com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+            if (r == null) return;
+            if (r.isPlaying()) r.pause(); else r.play();
+        } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
+            final String c = dlnaCtrl; final boolean pause = !dlnaPaused; dlnaPaused = pause;
+            updatePlayIcon(!pause);
+            new Thread(() -> { try { DlnaCastPlugin.controlSync(c, pause ? "Pause" : "Play"); } catch (Exception ignored) {} }).start();
+        }
+    }
+
+    private void remoteSeekBy(long deltaMs) {
+        if (castMode == CAST_CC) {
+            com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+            if (r == null) return;
+            long target = Math.max(0, r.getApproximateStreamPosition() + deltaMs);
+            r.seek(new com.google.android.gms.cast.MediaSeekOptions.Builder().setPosition(target).build());
+        } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
+            final String c = dlnaCtrl; final long target = Math.max(0, lastRemotePosMs + deltaMs);
+            new Thread(() -> { try { DlnaCastPlugin.seekSync(c, target); } catch (Exception ignored) {} }).start();
+        }
+    }
+
+    private void updatePlayIcon(boolean playing) { if (castPlayBtn != null) castPlayBtn.setText(playing ? "⏸" : "▶"); }
+
+    private String fmtClock(long ms) {
+        long s = Math.max(0, ms) / 1000;
+        return String.format(java.util.Locale.US, "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60);
+    }
+
+    // Atualiza o tempo no overlay (CC lê do RemoteMediaClient; DLNA faz GetPositionInfo).
+    private final Runnable castPoll = new Runnable() {
+        @Override public void run() {
+            if (castMode == CAST_CC) {
+                com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+                if (r != null) { lastRemotePosMs = r.getApproximateStreamPosition(); lastRemoteDurMs = r.getStreamDuration(); updatePlayIcon(r.isPlaying()); }
+                if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                progressHandler.postDelayed(this, 1000);
+            } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
+                final String c = dlnaCtrl;
+                new Thread(() -> {
+                    long[] pd; try { pd = DlnaCastPlugin.getPositionSync(c); } catch (Exception e) { pd = null; }
+                    final long[] f = pd;
+                    runOnUiThread(() -> {
+                        if (castMode != CAST_DLNA) return;
+                        if (f != null) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
+                        if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                    });
+                }).start();
+                progressHandler.postDelayed(this, 2000);
+            }
+        }
+    };
+
     private void castViaChromecast() {
         final com.google.android.gms.cast.framework.CastContext castContext;
         try {
@@ -506,7 +629,7 @@ public class PlayerActivity extends Activity {
                 android.widget.Toast.makeText(PlayerActivity.this, "Estabelecendo sessão Cast…", android.widget.Toast.LENGTH_SHORT).show();
             }
             @Override public void onSessionEnding(com.google.android.gms.cast.framework.CastSession s) {}
-            @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) { castConnected = false; updateCastButton(false); }
+            @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) { castConnected = false; updateCastButton(false); stopCasting(true); }
             @Override public void onSessionResuming(com.google.android.gms.cast.framework.CastSession s, String id) {}
             @Override public void onSessionResumeFailed(com.google.android.gms.cast.framework.CastSession s, int e) {}
             @Override public void onSessionSuspended(com.google.android.gms.cast.framework.CastSession s, int r) { castConnected = false; updateCastButton(false); }
@@ -539,6 +662,7 @@ public class PlayerActivity extends Activity {
         rmc.load(req).setResultCallback(result -> {
             if (result.getStatus().isSuccess()) {
                 android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
+                startCasting(CAST_CC, null);
             } else {
                 android.widget.Toast.makeText(this, "Chromecast conectou mas recusou o vídeo (código " + result.getStatus().getStatusCode() + "). Formato pode não ser suportado.", android.widget.Toast.LENGTH_LONG).show();
             }
@@ -581,7 +705,10 @@ public class PlayerActivity extends Activity {
                         try { DlnaCastPlugin.castSync(dev.controlUrl, castUrl, "WatchMov"); }
                         catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                         final String ferr = err;
-                        runOnUiThread(() -> android.widget.Toast.makeText(this, ferr == null ? "Tocando na TV — o app vira controle" : ferr, android.widget.Toast.LENGTH_LONG).show());
+                        runOnUiThread(() -> {
+                            android.widget.Toast.makeText(this, ferr == null ? "Tocando na TV — o app vira controle" : ferr, android.widget.Toast.LENGTH_LONG).show();
+                            if (ferr == null) startCasting(CAST_DLNA, dev.controlUrl);
+                        });
                     }).start();
                 }).show();
             });
@@ -648,6 +775,7 @@ public class PlayerActivity extends Activity {
     @Override
     protected void onDestroy() {
         progressHandler.removeCallbacks(progressTick);
+        progressHandler.removeCallbacks(castPoll);
         if (player != null) { player.release(); player = null; }
         if (castSessionManager != null && castSessionListener != null) {
             castSessionManager.removeSessionManagerListener(castSessionListener, com.google.android.gms.cast.framework.CastSession.class);
