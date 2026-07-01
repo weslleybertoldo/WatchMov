@@ -34,6 +34,14 @@ public class NativePlayerPlugin extends Plugin {
         instance.notifyListeners("playerProgress", d);
     }
 
+    // Episódio/filme marcado como assistido (faltando 1 min pro fim, ou pelo botão).
+    public static void reportWatched(boolean watched) {
+        if (instance == null) return;
+        JSObject d = new JSObject();
+        d.put("watched", watched);
+        instance.notifyListeners("playerWatched", d);
+    }
+
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
     public static void reportQuality(String url, int height) {
         if (instance == null || url == null || height <= 0) return;
@@ -56,6 +64,7 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_START_MS, call.getLong("startMs", 0L));
         intent.putExtra(PlayerActivity.EXTRA_KEY, call.getString("key"));
         intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));
+        intent.putExtra(PlayerActivity.EXTRA_WATCHED, Boolean.TRUE.equals(call.getBoolean("watched", false)));
         intent.putExtra(PlayerActivity.EXTRA_URLS, toArray(call.getArray("urls", null)));
         intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         intent.putExtra(PlayerActivity.EXTRA_QUALITIES, toArray(call.getArray("qualities", null)));

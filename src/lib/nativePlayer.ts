@@ -1,12 +1,13 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
-interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string }
+interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean }
 interface PlayResult { positionMs: number; url?: string; next?: boolean; server?: boolean }
 
 interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'playerWatched', cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle>;
 }
 
 const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
@@ -22,6 +23,12 @@ export function onPlayerProgress(cb: (d: { url: string; positionMs: number }) =>
 export function onPlayerQuality(cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerQuality', cb);
+}
+
+// "Assistido" vindo do player nativo (botão, ou faltando 1 min pro fim).
+export function onPlayerWatched(cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle> | null {
+  if (!Capacitor.isNativePlatform()) return null;
+  return NativePlayer.addListener('playerWatched', cb);
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link

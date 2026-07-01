@@ -9,7 +9,7 @@ import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl } from '@/lib/streamCache';
-import { playNative, onPlayerProgress, onPlayerQuality } from '@/lib/nativePlayer';
+import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched } from '@/lib/nativePlayer';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
 // no reprodutor se já tiver link capturado.
@@ -35,13 +35,13 @@ interface VideoPlayerProps {
   torrent?: { magnet: string; fileIdx?: number };  // WebTorrent (Stremio sem debrid)
   onProgress?: (seconds: number) => void;
   onCompleted?: () => void;
-  episodeWatched?: boolean;        // série: episódio atual marcado como assistido
-  onToggleWatched?: () => void;    // alterna a marcação do episódio atual
+  watched?: boolean;               // assistido (episódio atual ou filme)
+  onSetWatched?: (v: boolean) => void;  // define a marcação de assistido (true/false)
   onNext?: () => void;             // série: avança pro próximo episódio
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted, episodeWatched, onToggleWatched, onNext } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onNext } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -224,7 +224,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
       urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
       qualities: capturedList.map(s => s.quality ?? ''), hasNext: !!onNext,
-      key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`,
+      key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
     }).then(res => {
       if (!res) return;
       if (res.positionMs > 0) {
@@ -250,6 +250,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
   }, [open, directMode, tmdbId, type, season, episode]);
+
+  // "Assistido" reportado pelo player nativo (botão ou faltando 1 min pro fim).
+  useEffect(() => {
+    if (!open || !isNative() || !onSetWatched) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerWatched?.(({ watched: w }) => onSetWatched(w))?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, tmdbId, type, season, episode, onSetWatched]);
 
   // Aprende a resolução real do link (do ExoPlayer) e rotula na lista.
   useEffect(() => {
@@ -410,9 +418,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               )}
             </div>
           )}
-          {onToggleWatched && (
-            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${episodeWatched ? 'text-primary' : 'text-white/80'}`} title={episodeWatched ? 'Assistido (toque pra desmarcar)' : 'Marcar como assistido'} onClick={onToggleWatched}>
-              {episodeWatched ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+          {onSetWatched && (
+            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${watched ? 'text-primary' : 'text-white/80'}`} title={watched ? 'Assistido (toque pra desmarcar)' : 'Marcar como assistido'} onClick={() => onSetWatched(!watched)}>
+              {watched ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
             </Button>
           )}
           {onNext && (
@@ -483,6 +491,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             onTimeUpdate={e => {
               const secs = Math.floor(e.currentTarget.currentTime);
               if (secs > 0 && Math.abs(secs - lastSavedRef.current) >= 30) { lastSavedRef.current = secs; onProgress?.(secs); }
+              const dur = e.currentTarget.duration;
+              if (dur > 60 && e.currentTarget.currentTime >= dur - 60 && !watched) onSetWatched?.(true);
             }}
             onEnded={() => { if (!completedRef.current) { completedRef.current = true; onCompleted?.(); } }}
           >

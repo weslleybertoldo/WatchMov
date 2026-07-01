@@ -61,6 +61,8 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_START_MS = "startMs";
     public static final String EXTRA_KEY = "resumeKey";
     public static final String EXTRA_HAS_NEXT = "hasNext";
+    public static final String EXTRA_WATCHED = "watched";
+    private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
     private static final String RESUME_PREFS = "watchmov_resume";
     public static final String RESULT_POSITION = "positionMs";
     public static final String RESULT_URL = "url";
@@ -78,6 +80,8 @@ public class PlayerActivity extends Activity {
     private String[] qualities;
     private String mReferer;
     private boolean hasNext = false;
+    private boolean watched = false;              // estado atual do "assistido"
+    private android.widget.ImageButton watchedBtn;
     private boolean resultSaved = false;
     private String resumeKey;
     private android.content.SharedPreferences resumePrefs;
@@ -88,6 +92,11 @@ public class PlayerActivity extends Activity {
             saveResume();
             if (player != null && player.getCurrentPosition() > 0) {
                 NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());
+            }
+            // "Assistido" automático: quando falta ≤1 min pro fim.
+            if (!watched && player != null) {
+                long dur = player.getDuration(), pos = player.getCurrentPosition();
+                if (dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
             }
             progressHandler.postDelayed(this, 5000);
         }
@@ -129,6 +138,7 @@ public class PlayerActivity extends Activity {
         final String ua = getIntent().getStringExtra(EXTRA_UA);
         final long startMs = getIntent().getLongExtra(EXTRA_START_MS, 0);
         hasNext = getIntent().getBooleanExtra(EXTRA_HAS_NEXT, false);
+        watched = getIntent().getBooleanExtra(EXTRA_WATCHED, false);
         resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
         long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
@@ -198,22 +208,37 @@ public class PlayerActivity extends Activity {
         titleBar.setPadding(32, 12, 32, 120);
         root.addView(titleBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START));
 
-        // Ícone de espelhar (cast) no canto inferior direito, ao lado da legenda.
+        // Canto inferior direito: [assistido][espelhar], ao lado da legenda.
+        final LinearLayout brBar = new LinearLayout(this);
+        brBar.setOrientation(LinearLayout.HORIZONTAL);
+        brBar.setGravity(Gravity.CENTER_VERTICAL);
+
+        // Botão "assistido": marca (e pula p/ faltar 1 min) ou desmarca (toggle).
+        watchedBtn = new android.widget.ImageButton(this);
+        watchedBtn.setImageResource(R.drawable.ic_check_circle);
+        watchedBtn.setBackgroundColor(Color.TRANSPARENT);
+        watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
+        watchedBtn.setPadding(16, 16, 16, 16);
+        watchedBtn.setOnClickListener(v -> toggleWatched());
+
         final android.widget.ImageButton castBtn = new android.widget.ImageButton(this);
         castBtn.setImageResource(R.drawable.ic_cast);
         castBtn.setBackgroundColor(Color.TRANSPARENT);
         castBtn.setColorFilter(Color.WHITE);
         castBtn.setPadding(16, 16, 16, 16);
         castBtn.setOnClickListener(v -> castToTv());
-        FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
-        clp.bottomMargin = 40; clp.rightMargin = 280;
-        root.addView(castBtn, clp);
+
+        brBar.addView(watchedBtn);
+        brBar.addView(castBtn);
+        FrameLayout.LayoutParams brlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        brlp.bottomMargin = 40; brlp.rightMargin = 200;
+        root.addView(brBar, brlp);
 
         // A barra some/aparece junto com os controles do player.
         view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             bar.setVisibility(visibility);
             titleBar.setVisibility(visibility);
-            castBtn.setVisibility(visibility);
+            brBar.setVisibility(visibility);
         });
 
         status = new TextView(this);
@@ -273,6 +298,28 @@ public class PlayerActivity extends Activity {
         });
 
         playUrl(currentUrl, getIntent().getStringExtra(EXTRA_MIME), resolvedStart);
+    }
+
+    // Toggle do botão "assistido": marca (e pula p/ faltar 1 min, como pedido) ou
+    // desmarca. As 3 formas de marcar convergem aqui/no tick: botão, assistir até
+    // faltar 1 min, ou o checkbox do overlay (via JS).
+    private void toggleWatched() {
+        if (!watched) {
+            setWatched(true);
+            if (player != null) {
+                long dur = player.getDuration();
+                if (dur > WATCHED_THRESHOLD_MS) player.seekTo(dur - WATCHED_THRESHOLD_MS);
+            }
+        } else {
+            setWatched(false);
+        }
+    }
+
+    private void setWatched(boolean w) {
+        if (watched == w) return;
+        watched = w;
+        if (watchedBtn != null) watchedBtn.setColorFilter(w ? Color.parseColor("#4ADE80") : Color.WHITE);
+        NativePlayerPlugin.reportWatched(w);
     }
 
     private void saveResume() {

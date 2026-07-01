@@ -108,7 +108,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const playMovie = async () => { const it = await ensureLib(); markWatched(it); setPlayer({}); };
   const playEpisode = async (seasonNum: number, ep: number) => {
     const it = await ensureLib();
-    if (it) store.setEpisodeWatched(it.id, seasonNum, ep, true); // marca assistido ao abrir (check no grid + continuar)
+    markWatched(it); // entra em "Continuar assistindo"; NÃO marca assistido (só faltando 1 min ou manual)
     setPlayer({ season: seasonNum, episode: ep });
   };
   const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
@@ -335,8 +335,15 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           resumeAt={resumeMins > 0 ? resumeMins * 60 : undefined}
           directUrl={player.directUrl}
           torrent={player.torrent}
-          episodeWatched={isSeries && player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined}
-          onToggleWatched={isSeries && player.season && liveItem ? () => store.setEpisodeWatched(liveItem.id, player.season!, player.episode || 1, !isEpisodeWatched(liveItem, player.season, player.episode)) : undefined}
+          watched={isSeries ? (player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined) : movieWatched}
+          onSetWatched={
+            isSeries
+              ? (player.season && liveItem ? (v: boolean) => store.setEpisodeWatched(liveItem.id, player.season!, player.episode || 1, v) : undefined)
+              : async (v: boolean) => {
+                  const it = await ensureLib();
+                  if (it) store.updateItem(it.id, v ? { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() } : { completed: false });
+                }
+          }
           onNext={isSeries && hasNextEp ? onSeriesCompleted : undefined}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
