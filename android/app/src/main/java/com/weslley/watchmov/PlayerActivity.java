@@ -163,9 +163,9 @@ public class PlayerActivity extends Activity {
         watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
         watchedBtn.setOnClickListener(v -> toggleWatched());
 
-        android.widget.ImageButton castBtn = view.findViewById(R.id.wm_cast);
+        castBtn = view.findViewById(R.id.wm_cast);
         castBtn.setColorFilter(Color.WHITE);
-        castBtn.setOnClickListener(v -> castToTv());
+        castBtn.setOnClickListener(v -> onCastButton());
 
         final LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -224,7 +224,13 @@ public class PlayerActivity extends Activity {
         // Inicializa o Cast cedo: registra o provider do Google Cast no MediaRouter
         // ainda no onCreate, senão selecionar a rota conecta no MediaRouter mas NÃO
         // cria a CastSession (fica preso em "conectando" sem onSessionStarted).
-        try { com.google.android.gms.cast.framework.CastContext.getSharedInstance(this); } catch (Exception ignored) {}
+        // Registra o listener já aqui p/ o botão refletir o estado desde o início.
+        try {
+            com.google.android.gms.cast.framework.CastContext cc = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this);
+            registerCastListener(cc);
+            com.google.android.gms.cast.framework.CastSession cur = cc.getSessionManager().getCurrentCastSession();
+            if (cur != null && cur.isConnected()) { castConnected = true; updateCastButton(true); }
+        } catch (Exception ignored) {}
 
         // DataSource baseado em OkHttp (como o Web Video Cast): o OkHttp descomprime
         // gzip transparente. Vários players BR (SuperFlix/EmbedPlay) servem o m3u8 como
@@ -415,6 +421,27 @@ public class PlayerActivity extends Activity {
     private com.google.android.gms.cast.framework.SessionManager castSessionManager;
     private com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession> castSessionListener;
     private boolean castConnected = false;
+    private android.widget.ImageButton castBtn;
+
+    // Cor do botão espelhar: verde quando há sessão Cast ativa, branco quando não.
+    private void updateCastButton(boolean connected) {
+        if (castBtn != null) castBtn.setColorFilter(connected ? Color.parseColor("#4ADE80") : Color.WHITE);
+    }
+
+    // Clique no botão espelhar: se já tem Cast conectado, oferece desconectar;
+    // senão abre a caixa de escolha (Chromecast/DLNA).
+    private void onCastButton() {
+        com.google.android.gms.cast.framework.CastSession s =
+            castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
+        if (s != null && s.isConnected()) {
+            new AlertDialog.Builder(this).setTitle("Chromecast conectado")
+                .setMessage("Desconectar da TV?")
+                .setPositiveButton("Desconectar", (d, w) -> { if (castSessionManager != null) castSessionManager.endCurrentSession(true); })
+                .setNegativeButton("Cancelar", null).show();
+        } else {
+            castToTv();
+        }
+    }
 
     private void castViaChromecast() {
         final com.google.android.gms.cast.framework.CastContext castContext;
@@ -468,20 +495,21 @@ public class PlayerActivity extends Activity {
         castSessionManager = castContext.getSessionManager();
         if (castSessionListener != null) return;
         castSessionListener = new com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession>() {
-            @Override public void onSessionStarted(com.google.android.gms.cast.framework.CastSession s, String id) { castConnected = true; loadOnCast(s); }
-            @Override public void onSessionResumed(com.google.android.gms.cast.framework.CastSession s, boolean w) { castConnected = true; loadOnCast(s); }
+            @Override public void onSessionStarted(com.google.android.gms.cast.framework.CastSession s, String id) { castConnected = true; updateCastButton(true); loadOnCast(s); }
+            @Override public void onSessionResumed(com.google.android.gms.cast.framework.CastSession s, boolean w) { castConnected = true; updateCastButton(true); loadOnCast(s); }
             @Override public void onSessionStartFailed(com.google.android.gms.cast.framework.CastSession s, int err) {
                 castConnected = true; // já respondeu (com falha) — não dispara o timeout
+                updateCastButton(false);
                 android.widget.Toast.makeText(PlayerActivity.this, "Falha ao conectar no Chromecast (código " + err + ").", android.widget.Toast.LENGTH_LONG).show();
             }
             @Override public void onSessionStarting(com.google.android.gms.cast.framework.CastSession s) {
                 android.widget.Toast.makeText(PlayerActivity.this, "Estabelecendo sessão Cast…", android.widget.Toast.LENGTH_SHORT).show();
             }
             @Override public void onSessionEnding(com.google.android.gms.cast.framework.CastSession s) {}
-            @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) {}
+            @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) { castConnected = false; updateCastButton(false); }
             @Override public void onSessionResuming(com.google.android.gms.cast.framework.CastSession s, String id) {}
             @Override public void onSessionResumeFailed(com.google.android.gms.cast.framework.CastSession s, int e) {}
-            @Override public void onSessionSuspended(com.google.android.gms.cast.framework.CastSession s, int r) {}
+            @Override public void onSessionSuspended(com.google.android.gms.cast.framework.CastSession s, int r) { castConnected = false; updateCastButton(false); }
         };
         castSessionManager.addSessionManagerListener(castSessionListener, com.google.android.gms.cast.framework.CastSession.class);
     }
@@ -490,9 +518,15 @@ public class PlayerActivity extends Activity {
         com.google.android.gms.cast.framework.media.RemoteMediaClient rmc = session.getRemoteMediaClient();
         if (rmc == null) { android.widget.Toast.makeText(this, "Chromecast conectou, mas o player remoto não respondeu.", android.widget.Toast.LENGTH_LONG).show(); return; }
         String title = getIntent().getStringExtra(EXTRA_TITLE);
+        // O Chromecast busca a URL sozinho e o CDN costuma bloquear (IP/fingerprint)
+        // ou servir HLS gzip que o receiver não parseia → fica "carregando". Serve
+        // pela LAN: o Chromecast busca do celular (refaz fetch com headers, descomprime
+        // gzip, reescreve o HLS). Fallback = URL direta se não achar o IP.
+        String ip = localIp();
+        String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
         com.google.android.gms.cast.MediaMetadata md = new com.google.android.gms.cast.MediaMetadata(com.google.android.gms.cast.MediaMetadata.MEDIA_TYPE_MOVIE);
         md.putString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE, title != null ? title : "WatchMov");
-        com.google.android.gms.cast.MediaInfo info = new com.google.android.gms.cast.MediaInfo.Builder(currentUrl)
+        com.google.android.gms.cast.MediaInfo info = new com.google.android.gms.cast.MediaInfo.Builder(castUrl)
             .setStreamType(com.google.android.gms.cast.MediaInfo.STREAM_TYPE_BUFFERED)
             .setContentType(castContentType(currentUrl))
             .setMetadata(md)
