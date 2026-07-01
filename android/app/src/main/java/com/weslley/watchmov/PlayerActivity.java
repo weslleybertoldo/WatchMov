@@ -68,6 +68,7 @@ public class PlayerActivity extends Activity {
     public static final String RESULT_URL = "url";
     public static final String RESULT_NEXT = "next";
     public static final String RESULT_SERVER = "server";
+    public static final String RESULT_RECAPTURE = "recapture";
 
     private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
@@ -306,6 +307,12 @@ public class PlayerActivity extends Activity {
                 status.setText(msg);
                 status.setVisibility(View.VISIBLE);
                 android.widget.Toast.makeText(PlayerActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
+                // 403/410/HTTP ruim = link com token expirado → recaptura automática
+                // (invalida o link morto e volta pro servidor pra capturar um fresco).
+                if (error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
+                    status.setText("Link expirou — recapturando…");
+                    progressHandler.postDelayed(() -> finishWithResult(false, false, true), 1500);
+                }
             }
             @Override public void onPlaybackStateChanged(int state) {
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
@@ -840,13 +847,16 @@ public class PlayerActivity extends Activity {
             .show();
     }
 
-    private void finishWithResult(boolean next, boolean server) {
+    private void finishWithResult(boolean next, boolean server) { finishWithResult(next, server, false); }
+
+    private void finishWithResult(boolean next, boolean server, boolean recapture) {
         saveResume();
         Intent data = new Intent();
         if (player != null) data.putExtra(RESULT_POSITION, player.getCurrentPosition());
         data.putExtra(RESULT_URL, currentUrl);
         data.putExtra(RESULT_NEXT, next);
         data.putExtra(RESULT_SERVER, server);
+        data.putExtra(RESULT_RECAPTURE, recapture);
         setResult(RESULT_OK, data);
         resultSaved = true;
         finish();

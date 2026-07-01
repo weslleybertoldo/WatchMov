@@ -92,6 +92,7 @@ public class NativePlayerPlugin extends Plugin {
             res.put("url", result.getData().getStringExtra(PlayerActivity.RESULT_URL));
             res.put("next", result.getData().getBooleanExtra(PlayerActivity.RESULT_NEXT, false));
             res.put("server", result.getData().getBooleanExtra(PlayerActivity.RESULT_SERVER, false));
+            res.put("recapture", result.getData().getBooleanExtra(PlayerActivity.RESULT_RECAPTURE, false));
         }
         res.put("positionMs", pos);
         call.resolve(res);

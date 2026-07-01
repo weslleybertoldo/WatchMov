@@ -231,6 +231,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         setStreamPosition(res.positionMs, tmdbId, type, season, episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
       }
+      if (res.recapture) { setCapturedList([]); goServer(); return; }  // link expirou (403/410) → recaptura fresco
       if (res.server) { goServer(); return; }                 // botão Servidor → modo servidor
       if (res.next) { pendingNextInPlayer = true; onNext?.(); return; }  // Próximo ep
       if (res.url) setChosen(res.url, tmdbId, type, season, episode);    // guarda o link atual
