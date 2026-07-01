@@ -11,7 +11,6 @@ import fi.iki.elonen.NanoHTTPD;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
-import okhttp3.Response;
 
 /**
  * Proxy HTTP local (como o Web Video Cast). O player/TV toca via 127.0.0.1/IP-LAN
@@ -65,7 +64,7 @@ public class ProxyServer extends NanoHTTPD {
             String range = session.getHeaders().get("range");
             if (range != null) rb.header("Range", range);
 
-            Response up = http.newCall(rb.build()).execute();
+            okhttp3.Response up = http.newCall(rb.build()).execute();
             String ct = up.header("Content-Type", "application/octet-stream");
             boolean isHls = (ct != null && ct.toLowerCase().contains("mpegurl")) || u.toLowerCase().contains(".m3u8");
 
