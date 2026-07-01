@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import Hls from 'hls.js';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
-import { sniffStream, cancelSniff, type SniffResult } from '@/lib/streamSniffer';
+import { sniffStream, type SniffResult } from '@/lib/streamSniffer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -142,24 +142,25 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : snifferUrl;
   const src: string | null = ownPlayer ? videoSrc : embedUrl;
 
-  // Tenta o sniffer ao abrir/trocar de servidor (só APK; web/local usa iframe).
+  // Reseta a captura ao abrir/trocar de servidor ou título (não dispara sozinho:
+  // é opt-in pelo botão "Meu player" → abre o WebView visível de captura).
   useEffect(() => {
     setForceIframe(false);
-    if (!open || directMode || !embedUrl || !Capacitor.isNativePlatform()) { setSniff({ status: 'idle' }); return; }
-    let alive = true;
-    setSniff({ status: 'trying' });
-    sniffStream(embedUrl, 20000)
-      .then(r => {
-        if (!alive) return;
-        if (r?.url) { setSniff({ status: 'ok', res: r }); }
-        else {
-          setSniff({ status: 'fail', res: r ?? undefined });
-          if (r?.seenCount != null) toast.info(`Não capturei o vídeo (${r.seenCount} req vistas)`, { description: 'Tocando pelo servidor.' });
-        }
-      })
-      .catch(() => { if (alive) setSniff({ status: 'fail' }); });
-    return () => { alive = false; cancelSniff(); };
+    setSniff({ status: 'idle' });
   }, [open, embedUrl, directMode]);
+
+  // Abre o WebView visível de captura; se pegar a URL, toca no player próprio.
+  const captureFromServer = async () => {
+    if (sniff.status === 'ok' && sniff.res?.url) { setForceIframe(false); return; }  // já capturou → só volta
+    if (!embedUrl || !Capacitor.isNativePlatform()) {
+      toast.info('Disponível só no app', { description: 'A captura do vídeo roda no APK Android.' });
+      return;
+    }
+    setSniff({ status: 'trying' });
+    const r = await sniffStream(embedUrl);
+    if (r?.url) { setForceIframe(false); setSniff({ status: 'ok', res: r }); }
+    else { setSniff({ status: 'fail' }); }   // cancelou/não capturou → segue no servidor
+  };
 
   // Anexa a fonte ao <video> (hls.js pra .m3u8; src direto pro resto).
   useEffect(() => {
@@ -277,10 +278,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               </div>
             )}
           </div>
-          {!directMode && sniff.status !== 'idle' && (
-            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${forceIframe || sniff.status !== 'ok' ? 'text-primary' : 'text-white/80'}`}
-              title={ownPlayer ? 'Assistir pelo servidor (player do provedor)' : 'No servidor'}
-              onClick={() => setForceIframe(f => !f)}>
+          {!directMode && !ownPlayer && (
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
+              title="Assistir no meu player (captura do servidor)" onClick={captureFromServer} disabled={sniff.status === 'trying'}>
+              {sniff.status === 'trying' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+            </Button>
+          )}
+          {!directMode && ownPlayer && (
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-primary hover:bg-white/10"
+              title="Voltar pro servidor" onClick={() => setForceIframe(true)}>
               <Server className="w-5 h-5" />
             </Button>
           )}
