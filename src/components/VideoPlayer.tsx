@@ -215,7 +215,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
     playNative({
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
-      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''), hasNext: !!onNext,
+      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
+      qualities: capturedList.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`,
     }).then(res => {
       if (!res) return;
@@ -513,7 +514,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               return (
                 <button key={s.url} onClick={() => chooseStream(s)} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">Link {i + 1} <span className="text-[10px] text-muted-foreground">({s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4'})</span>{qualityFromUrl(s.url) && <span className="text-[10px] text-primary ml-1">{qualityFromUrl(s.url)}</span>}</p>
+                    <p className="text-sm text-foreground">Link {i + 1} <span className="text-[10px] text-muted-foreground">({s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4'})</span>{(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
                   </div>
                   {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}

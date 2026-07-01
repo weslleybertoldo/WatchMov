@@ -57,7 +57,7 @@ export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, 
   for (const s of list) {
     const key = streamKey(s.url);
     const idx = arr.findIndex(x => streamKey(x.url) === key);
-    if (idx >= 0) arr[idx] = { url: s.url, mime: s.mime || arr[idx].mime, referer: s.referer || arr[idx].referer };
+    if (idx >= 0) arr[idx] = { url: s.url, mime: s.mime || arr[idx].mime, referer: s.referer || arr[idx].referer, quality: s.quality || arr[idx].quality };
     else arr.push(s);
   }
   d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, lastMode: prev?.lastMode, positionMs: prev?.positionMs, ts: Date.now() };

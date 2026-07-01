@@ -52,6 +52,7 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_URL = "url";
     public static final String EXTRA_URLS = "urls";
     public static final String EXTRA_MIMES = "mimes";
+    public static final String EXTRA_QUALITIES = "qualities";
     public static final String EXTRA_REFERER = "referer";
     public static final String EXTRA_UA = "ua";
     public static final String EXTRA_MIME = "mime";
@@ -72,6 +73,7 @@ public class PlayerActivity extends Activity {
     private String currentUrl;
     private String[] urls;
     private String[] mimes;
+    private String[] qualities;
     private boolean hasNext = false;
     private boolean resultSaved = false;
     private String resumeKey;
@@ -118,6 +120,7 @@ public class PlayerActivity extends Activity {
         if (currentUrl == null) { finish(); return; }
         urls = getIntent().getStringArrayExtra(EXTRA_URLS);
         mimes = getIntent().getStringArrayExtra(EXTRA_MIMES);
+        qualities = getIntent().getStringArrayExtra(EXTRA_QUALITIES);
         final String referer = getIntent().getStringExtra(EXTRA_REFERER);
         final String ua = getIntent().getStringExtra(EXTRA_UA);
         final long startMs = getIntent().getLongExtra(EXTRA_START_MS, 0);
@@ -318,7 +321,7 @@ public class PlayerActivity extends Activity {
         for (int i = 0; i < urls.length; i++) {
             String m = (mimes != null && i < mimes.length && mimes[i] != null) ? mimes[i] : "";
             String tag = m.contains("mpegurl") ? "HLS" : m.contains("dash") ? "DASH" : "MP4";
-            String q = qualityFromUrl(urls[i]);
+            String q = (qualities != null && i < qualities.length && qualities[i] != null && !qualities[i].isEmpty()) ? qualities[i] : qualityFromUrl(urls[i]);
             labels[i] = "Link " + (i + 1) + " (" + tag + ")" + (q.isEmpty() ? "" : " " + q) + (urls[i].equals(currentUrl) ? "  ✓" : "");
         }
         final long pos = player != null ? player.getCurrentPosition() : 0;   // continua no mesmo tempo

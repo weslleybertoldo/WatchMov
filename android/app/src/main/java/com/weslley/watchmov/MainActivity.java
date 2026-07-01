@@ -105,13 +105,7 @@ public class MainActivity extends BridgeActivity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
-                    String u = request.getUrl().toString();
-                    if (StreamSnifferPlugin.looksLikeVideo(u)) {
-                        String ref = null;
-                        Map<String, String> h = request.getRequestHeaders();
-                        if (h != null) ref = h.get("Referer");
-                        StreamSnifferPlugin.onVideoUrl(u, ref);
-                    }
+                    StreamSnifferPlugin.inspect(request.getUrl().toString(), request.getRequestHeaders());
                 }
                 return super.shouldInterceptRequest(view, request);
             }
@@ -125,13 +119,7 @@ public class MainActivity extends BridgeActivity {
                     @Override
                     public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
                         if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
-                            String u = request.getUrl().toString();
-                            if (StreamSnifferPlugin.looksLikeVideo(u)) {
-                                String ref = null;
-                                Map<String, String> h = request.getRequestHeaders();
-                                if (h != null) ref = h.get("Referer");
-                                StreamSnifferPlugin.onVideoUrl(u, ref);
-                            }
+                            StreamSnifferPlugin.inspect(request.getUrl().toString(), request.getRequestHeaders());
                         }
                         return null;
                     }

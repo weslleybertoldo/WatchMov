@@ -8,13 +8,23 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 /**
- * Sniffer PASSIVO (estilo Web Video Cast): o iframe do servidor toca no WebView
- * principal do app; o WebViewClient do MainActivity observa o tráfego e, quando o
- * JS está "armado" (startWatching), reporta a URL do stream via evento streamFound.
- * O JS decide (banner "Reproduzir no meu player / Ficar no servidor") e cacheia.
+ * Sniffer passivo (estilo Web Video Cast). O iframe do servidor toca no WebView
+ * principal do app; MainActivity observa o tráfego (WebViewClient + Service
+ * Worker) e chama inspect(). Detecta vídeo por EXTENSÃO e, quando não tem, por
+ * CONTENT-TYPE (probe OkHttp com os headers — como o fpa.c do WVC). Ao achar um
+ * HLS, baixa o master e lê a RESOLUTION pra rotular a qualidade.
  */
 @CapacitorPlugin(name = "StreamSniffer")
 public class StreamSnifferPlugin extends Plugin {
@@ -22,40 +32,111 @@ public class StreamSnifferPlugin extends Plugin {
     private static StreamSnifferPlugin instance;
     private static volatile boolean watching = false;
     private static final Set<String> emitted = Collections.synchronizedSet(new HashSet<String>());
+    private static final Set<String> probed = Collections.synchronizedSet(new HashSet<String>());
+    private static final ExecutorService pool = Executors.newFixedThreadPool(3);
+    private static final OkHttpClient http = new OkHttpClient();
+    private static int probeCount = 0;
 
     @Override
     public void load() { instance = this; }
 
     public static boolean isWatching() { return watching; }
 
-    // Detecção por extensão (mesma lista do WVC), ignorando segmentos HLS (.ts).
+    private static String noQuery(String url) { int q = url.indexOf('?'); return q >= 0 ? url.substring(0, q) : url; }
+
     public static boolean looksLikeVideo(String url) {
         if (url == null) return false;
         String u = url.toLowerCase();
-        int q = u.indexOf('?');
-        String path = q >= 0 ? u.substring(0, q) : u;
+        String path = noQuery(u);
         if (path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".mp4")
             || path.endsWith(".mkv") || path.endsWith(".webm") || path.endsWith(".m4v")
             || path.endsWith(".mov") || path.endsWith(".avi") || path.endsWith(".flv")) return true;
         return u.contains("master.m3u8") || u.contains(".m3u8") || u.contains(".mpd") || u.contains("/manifest");
     }
 
-    public static void onVideoUrl(String url, String referer) {
-        if (instance == null || !watching || url == null) return;
-        if (!emitted.add(url)) return;   // já emitido → ignora (mantém lista sem repetir)
-        JSObject d = new JSObject();
-        d.put("url", url);
-        if (referer != null) d.put("referer", referer);
-        String lu = url.toLowerCase();
-        d.put("mime", lu.contains(".mpd") ? "application/dash+xml"
-            : (lu.contains(".m3u8") || lu.contains("/manifest")) ? "application/vnd.apple.mpegurl"
-            : "video/mp4");
-        instance.notifyListeners("streamFound", d);
+    // Requests que NÃO vale a pena probar (recursos óbvios não-vídeo).
+    private static boolean skipProbe(String url) {
+        String p = noQuery(url.toLowerCase());
+        return p.endsWith(".js") || p.endsWith(".css") || p.endsWith(".png") || p.endsWith(".jpg")
+            || p.endsWith(".jpeg") || p.endsWith(".gif") || p.endsWith(".webp") || p.endsWith(".svg")
+            || p.endsWith(".ico") || p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf")
+            || p.endsWith(".ts") || p.endsWith(".html") || p.endsWith(".json") || p.endsWith(".php")
+            || p.startsWith("data:") || p.startsWith("blob:");
     }
 
-    // JS arma/desarma a captura (evita capturar o próprio hls.js do player).
+    private static boolean isVideoContentType(String ct) {
+        if (ct == null) return false;
+        String c = ct.toLowerCase();
+        return c.contains("mpegurl") || c.contains("dash+xml") || c.contains("video/")
+            || c.contains("x-matroska") || c.contains("mp2t");
+    }
+
+    // Chamado pelo MainActivity (WebView + Service Worker) pra cada request.
+    public static void inspect(String url, Map<String, String> headers) {
+        if (!watching || url == null) return;
+        String ref = headers != null ? headers.get("Referer") : null;
+        if (looksLikeVideo(url)) { report(url, ref, mimeFor(url)); return; }
+        if (skipProbe(url)) return;
+        if (probeCount > 60 || !probed.add(noQuery(url))) return;   // teto e dedup de probes
+        probeCount++;
+        pool.submit(() -> {
+            try {
+                Request.Builder rb = new Request.Builder().url(url).header("Range", "bytes=0-1");
+                if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) {
+                    if (e.getKey() != null && e.getValue() != null && !e.getKey().equalsIgnoreCase("Range")) rb.header(e.getKey(), e.getValue());
+                }
+                try (Response resp = http.newCall(rb.build()).execute()) {
+                    String ct = resp.header("Content-Type");
+                    if (isVideoContentType(ct)) report(url, ref, ct);
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
+    private static String mimeFor(String url) {
+        String u = url.toLowerCase();
+        if (u.contains(".m3u8") || u.contains("master") || u.contains("/manifest")) return "application/vnd.apple.mpegurl";
+        if (u.contains(".mpd")) return "application/dash+xml";
+        return "video/mp4";
+    }
+
+    private static void report(String url, String referer, String mime) {
+        if (instance == null || !watching || url == null) return;
+        if (!emitted.add(noQuery(url))) return;
+        final String fMime = mime != null ? mime : mimeFor(url);
+        final boolean isHls = fMime.toLowerCase().contains("mpegurl") || url.toLowerCase().contains(".m3u8");
+        // HLS: baixa o master e lê a maior RESOLUTION pra rotular a qualidade.
+        pool.submit(() -> {
+            String quality = isHls ? hlsQuality(url, referer) : "";
+            JSObject d = new JSObject();
+            d.put("url", url);
+            if (referer != null) d.put("referer", referer);
+            d.put("mime", fMime);
+            if (!quality.isEmpty()) d.put("quality", quality);
+            instance.notifyListeners("streamFound", d);
+        });
+    }
+
+    private static final Pattern RES = Pattern.compile("RESOLUTION=\\d{2,4}x(\\d{2,4})");
+
+    private static String hlsQuality(String url, String referer) {
+        try {
+            Request.Builder rb = new Request.Builder().url(url);
+            if (referer != null) rb.header("Referer", referer);
+            rb.header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+            try (Response resp = http.newCall(rb.build()).execute()) {
+                if (resp.body() == null) return "";
+                String body = resp.body().string();
+                int max = 0;
+                Matcher m = RES.matcher(body);
+                while (m.find()) { int h = Integer.parseInt(m.group(1)); if (h > max) max = h; }
+                return max > 0 ? max + "p" : "";
+            }
+        } catch (Exception e) { return ""; }
+    }
+
     @PluginMethod
-    public void startWatching(PluginCall call) { watching = true; emitted.clear(); call.resolve(); }
+    public void startWatching(PluginCall call) { watching = true; emitted.clear(); probed.clear(); probeCount = 0; call.resolve(); }
 
     @PluginMethod
     public void stopWatching(PluginCall call) { watching = false; call.resolve(); }
