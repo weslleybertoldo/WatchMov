@@ -148,17 +148,24 @@ public class PlayerActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
-        view = new PlayerView(this);
+        // PlayerView com controller customizado (wm_player_control_view.xml): título +
+        // botões assistido/espelhar ficam DENTRO da barra de baixo, junto de legenda/config.
+        view = (PlayerView) getLayoutInflater().inflate(R.layout.wm_player_view, root, false);
         view.setKeepScreenOn(true);
-        view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
-        view.setShowFastForwardButton(true);
-        view.setShowRewindButton(true);
-        view.setShowSubtitleButton(true);
-        view.setShowNextButton(false);
-        view.setShowPreviousButton(false);
-        view.setControllerShowTimeoutMs(3500);
         view.setResizeMode(resizeModes[resizeIdx]);
+        view.setControllerShowTimeoutMs(3500);
         root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView wmTitle = view.findViewById(R.id.wm_title);
+        wmTitle.setText(getIntent().getStringExtra(EXTRA_TITLE));
+
+        watchedBtn = view.findViewById(R.id.wm_watched);
+        watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
+        watchedBtn.setOnClickListener(v -> toggleWatched());
+
+        android.widget.ImageButton castBtn = view.findViewById(R.id.wm_cast);
+        castBtn.setColorFilter(Color.WHITE);
+        castBtn.setOnClickListener(v -> castToTv());
 
         final LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -199,46 +206,11 @@ public class PlayerActivity extends Activity {
         bar.addView(qualityBtn); bar.addView(speed); bar.addView(resize); bar.addView(rotate);
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
-        // Título + temporada/ep, logo acima da barra de progresso.
-        final TextView titleBar = new TextView(this);
-        titleBar.setTextColor(Color.WHITE);
-        titleBar.setTextSize(14);
-        titleBar.setShadowLayer(6f, 0f, 0f, Color.BLACK);
-        titleBar.setText(getIntent().getStringExtra(EXTRA_TITLE));
-        titleBar.setPadding(32, 12, 32, 120);
-        root.addView(titleBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START));
-
-        // Canto inferior direito: [assistido][espelhar], ao lado da legenda.
-        final LinearLayout brBar = new LinearLayout(this);
-        brBar.setOrientation(LinearLayout.HORIZONTAL);
-        brBar.setGravity(Gravity.CENTER_VERTICAL);
-
-        // Botão "assistido": marca (e pula p/ faltar 1 min) ou desmarca (toggle).
-        watchedBtn = new android.widget.ImageButton(this);
-        watchedBtn.setImageResource(R.drawable.ic_check_circle);
-        watchedBtn.setBackgroundColor(Color.TRANSPARENT);
-        watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
-        watchedBtn.setPadding(16, 16, 16, 16);
-        watchedBtn.setOnClickListener(v -> toggleWatched());
-
-        final android.widget.ImageButton castBtn = new android.widget.ImageButton(this);
-        castBtn.setImageResource(R.drawable.ic_cast);
-        castBtn.setBackgroundColor(Color.TRANSPARENT);
-        castBtn.setColorFilter(Color.WHITE);
-        castBtn.setPadding(16, 16, 16, 16);
-        castBtn.setOnClickListener(v -> castToTv());
-
-        brBar.addView(watchedBtn);
-        brBar.addView(castBtn);
-        FrameLayout.LayoutParams brlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
-        brlp.bottomMargin = 40; brlp.rightMargin = 200;
-        root.addView(brBar, brlp);
-
-        // A barra some/aparece junto com os controles do player.
+        // A barra de cima some/aparece junto com os controles do player (o título e os
+        // botões assistido/espelhar já fazem parte do controller de baixo, então se
+        // escondem sozinhos com ele).
         view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             bar.setVisibility(visibility);
-            titleBar.setVisibility(visibility);
-            brBar.setVisibility(visibility);
         });
 
         status = new TextView(this);
