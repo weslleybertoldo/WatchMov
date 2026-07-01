@@ -465,16 +465,18 @@ public class PlayerActivity extends Activity {
     // Clique no botão espelhar: se já tem Cast conectado, oferece desconectar;
     // senão abre a caixa de escolha (Chromecast/DLNA).
     private void onCastButton() {
-        com.google.android.gms.cast.framework.CastSession s =
-            castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
-        if (s != null && s.isConnected()) {
-            new AlertDialog.Builder(this).setTitle("Chromecast conectado")
-                .setMessage("Desconectar da TV?")
-                .setPositiveButton("Desconectar", (d, w) -> { if (castSessionManager != null) castSessionManager.endCurrentSession(true); })
+        // Já espelhando (Chromecast OU DLNA) → oferece parar; senão abre a escolha.
+        if (castMode != CAST_NONE) {
+            new AlertDialog.Builder(this).setTitle("Espelhando na TV")
+                .setMessage("Parar o espelhamento?")
+                .setPositiveButton("Parar", (d, w) -> {
+                    if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
+                    else stopCasting(true);
+                })
                 .setNegativeButton("Cancelar", null).show();
-        } else {
-            castToTv();
+            return;
         }
+        castToTv();
     }
 
     // ---- Espelhamento: controle remoto da TV (o player local pausa) ----
@@ -496,6 +498,7 @@ public class PlayerActivity extends Activity {
     private void startCasting(int mode, String ctrl) {
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
         if (player != null) player.setPlayWhenReady(false);
+        updateCastButton(true); // botão verde (conectado) nos 2 modos
         if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
         // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
         String ip = localIp();
@@ -519,6 +522,7 @@ public class PlayerActivity extends Activity {
             new Thread(() -> { try { DlnaCastPlugin.controlSync(c, "Stop"); } catch (Exception ignored) {} }).start();
         }
         castMode = CAST_NONE; dlnaCtrl = null;
+        updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
         if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
