@@ -8,7 +8,7 @@ import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon } from 'lucide-react';
-import { episodesWatched, isEpisodeWatched, lastStopped } from '@/lib/watchProgress';
+import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
 import { useDownloads, setDownloaded, movieKey, epKey } from '@/lib/downloads';
 
 interface StoreLike {
@@ -223,6 +223,24 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         {lastWatchedLabel && (
           <p className="text-xs text-green-400">Visto por último em {lastWatchedLabel}</p>
         )}
+        {liveItem && (() => {
+          const contLabel = continueLabel(liveItem);
+          const prog = continueProgress(liveItem);
+          if (!contLabel && !prog) return null;
+          return (
+            <div className="space-y-1">
+              {contLabel && <p className="text-xs font-medium text-foreground">{contLabel}</p>}
+              {prog && (
+                <div className="max-w-xs">
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-primary" style={{ width: `${Math.round(prog.pct * 100)}%` }} />
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{prog.label}</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {details?.genre && (
           <div className="flex flex-wrap gap-1">
             {details.genre.split(',').map((g, i) => (
