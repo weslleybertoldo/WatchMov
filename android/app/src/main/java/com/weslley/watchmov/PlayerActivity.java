@@ -221,6 +221,11 @@ public class PlayerActivity extends Activity {
 
         setContentView(root);
 
+        // Inicializa o Cast cedo: registra o provider do Google Cast no MediaRouter
+        // ainda no onCreate, senão selecionar a rota conecta no MediaRouter mas NÃO
+        // cria a CastSession (fica preso em "conectando" sem onSessionStarted).
+        try { com.google.android.gms.cast.framework.CastContext.getSharedInstance(this); } catch (Exception ignored) {}
+
         // DataSource baseado em OkHttp (como o Web Video Cast): o OkHttp descomprime
         // gzip transparente. Vários players BR (SuperFlix/EmbedPlay) servem o m3u8 como
         // text/plain GZIP e o DefaultHttpDataSource do ExoPlayer NÃO descomprime o
@@ -409,6 +414,7 @@ public class PlayerActivity extends Activity {
     // ---- Chromecast (Google Cast) ----
     private com.google.android.gms.cast.framework.SessionManager castSessionManager;
     private com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession> castSessionListener;
+    private boolean castConnected = false;
 
     private void castViaChromecast() {
         final com.google.android.gms.cast.framework.CastContext castContext;
@@ -447,8 +453,13 @@ public class PlayerActivity extends Activity {
             for (int i = 0; i < routes.size(); i++) names[i] = routes.get(i).getName();
             new AlertDialog.Builder(this).setTitle("Chromecast").setItems(names, (d, i) -> {
                 registerCastListener(castContext);
+                castConnected = false;
                 android.widget.Toast.makeText(this, "Conectando a " + routes.get(i).getName() + "…", android.widget.Toast.LENGTH_SHORT).show();
                 routes.get(i).select();
+                // Se em 15s não abrir sessão, provavelmente a TV não tem Cast integrado.
+                progressHandler.postDelayed(() -> {
+                    if (!castConnected) android.widget.Toast.makeText(this, "Não conectou. Essa TV tem Chromecast/Google Cast integrado? (TV só-DLNA não funciona pelo Chromecast — use a opção DLNA.)", android.widget.Toast.LENGTH_LONG).show();
+                }, 15000);
             }).show();
         }, 4000);
     }
@@ -457,12 +468,15 @@ public class PlayerActivity extends Activity {
         castSessionManager = castContext.getSessionManager();
         if (castSessionListener != null) return;
         castSessionListener = new com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession>() {
-            @Override public void onSessionStarted(com.google.android.gms.cast.framework.CastSession s, String id) { loadOnCast(s); }
-            @Override public void onSessionResumed(com.google.android.gms.cast.framework.CastSession s, boolean w) { loadOnCast(s); }
+            @Override public void onSessionStarted(com.google.android.gms.cast.framework.CastSession s, String id) { castConnected = true; loadOnCast(s); }
+            @Override public void onSessionResumed(com.google.android.gms.cast.framework.CastSession s, boolean w) { castConnected = true; loadOnCast(s); }
             @Override public void onSessionStartFailed(com.google.android.gms.cast.framework.CastSession s, int err) {
-                android.widget.Toast.makeText(PlayerActivity.this, "Falha ao conectar no Chromecast (" + err + ").", android.widget.Toast.LENGTH_LONG).show();
+                castConnected = true; // já respondeu (com falha) — não dispara o timeout
+                android.widget.Toast.makeText(PlayerActivity.this, "Falha ao conectar no Chromecast (código " + err + ").", android.widget.Toast.LENGTH_LONG).show();
             }
-            @Override public void onSessionStarting(com.google.android.gms.cast.framework.CastSession s) {}
+            @Override public void onSessionStarting(com.google.android.gms.cast.framework.CastSession s) {
+                android.widget.Toast.makeText(PlayerActivity.this, "Estabelecendo sessão Cast…", android.widget.Toast.LENGTH_SHORT).show();
+            }
             @Override public void onSessionEnding(com.google.android.gms.cast.framework.CastSession s) {}
             @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) {}
             @Override public void onSessionResuming(com.google.android.gms.cast.framework.CastSession s, String id) {}
@@ -487,8 +501,14 @@ public class PlayerActivity extends Activity {
             .setMediaInfo(info).setAutoplay(true)
             .setCurrentTime(player != null ? player.getCurrentPosition() : 0)
             .build();
-        rmc.load(req);
-        android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
+        android.widget.Toast.makeText(this, "Enviando vídeo pro Chromecast…", android.widget.Toast.LENGTH_SHORT).show();
+        rmc.load(req).setResultCallback(result -> {
+            if (result.getStatus().isSuccess()) {
+                android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
+            } else {
+                android.widget.Toast.makeText(this, "Chromecast conectou mas recusou o vídeo (código " + result.getStatus().getStatusCode() + "). Formato pode não ser suportado.", android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     private String castContentType(String url) {
@@ -519,7 +539,12 @@ public class PlayerActivity extends Activity {
                     android.widget.Toast.makeText(this, "Enviando para " + dev.name + "…", android.widget.Toast.LENGTH_SHORT).show();
                     new Thread(() -> {
                         String err = null;
-                        try { DlnaCastPlugin.castSync(dev.controlUrl, currentUrl, "WatchMov"); }
+                        // A TV não alcança a URL do CDN (punycode/HLS) → "resource not found".
+                        // Serve pela LAN: a TV busca do celular (que refaz o fetch com headers,
+                        // descomprime gzip e reescreve o HLS). Fallback = URL direta.
+                        String ip = localIp();
+                        String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
+                        try { DlnaCastPlugin.castSync(dev.controlUrl, castUrl, "WatchMov"); }
                         catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                         final String ferr = err;
                         runOnUiThread(() -> android.widget.Toast.makeText(this, ferr == null ? "Tocando na TV — o app vira controle" : ferr, android.widget.Toast.LENGTH_LONG).show());
