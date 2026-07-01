@@ -95,6 +95,7 @@ public class PlayerActivity extends Activity {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
         AspectRatioFrameLayout.RESIZE_MODE_FILL,
     };
+    private final String[] resizeNames = { "Ajustar", "Zoom", "Esticar" };
     private int resizeIdx = 0;
     private boolean landscape = true;
 
@@ -125,6 +126,7 @@ public class PlayerActivity extends Activity {
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
         long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
         final long resolvedStart = savedPos > 3000 ? savedPos : startMs;
+        if (resumeKey != null) resizeIdx = resumePrefs.getInt(resumeKey + "_resize", 0);   // modo de tela salvo por título
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -138,7 +140,7 @@ public class PlayerActivity extends Activity {
         view.setShowNextButton(false);
         view.setShowPreviousButton(false);
         view.setControllerShowTimeoutMs(3500);
-        view.setResizeMode(resizeModes[0]);
+        view.setResizeMode(resizeModes[resizeIdx]);
         root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         final LinearLayout bar = new LinearLayout(this);
@@ -157,9 +159,11 @@ public class PlayerActivity extends Activity {
             player.setPlaybackParameters(new PlaybackParameters(speeds[speedIdx]));
             speed.setText(speeds[speedIdx] + "x");
         });
-        Button resize = pill("Tela", v -> {
+        Button resize = pill("Tela: " + resizeNames[resizeIdx], v -> {
             resizeIdx = (resizeIdx + 1) % resizeModes.length;
             view.setResizeMode(resizeModes[resizeIdx]);
+            ((Button) v).setText("Tela: " + resizeNames[resizeIdx]);
+            if (resumeKey != null) resumePrefs.edit().putInt(resumeKey + "_resize", resizeIdx).apply();
         });
         Button rotate = pill("Girar", v -> {
             landscape = !landscape;
