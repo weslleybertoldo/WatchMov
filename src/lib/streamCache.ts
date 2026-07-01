@@ -9,6 +9,7 @@ const TTL_MS = 12 * 60 * 60 * 1000;
 export interface StreamEntry {
   streams: SniffResult[];
   chosenUrl?: string;
+  lastMode?: 'native' | 'server';  // como assistiu por último (reabre igual)
   positionMs?: number;
   ts: number;
 }
@@ -46,15 +47,23 @@ export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, 
     if (idx >= 0) arr[idx] = { url: s.url, mime: s.mime || arr[idx].mime, referer: s.referer || arr[idx].referer };
     else arr.push(s);
   }
-  d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, positionMs: prev?.positionMs, ts: Date.now() };
+  d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, lastMode: prev?.lastMode, positionMs: prev?.positionMs, ts: Date.now() };
   write(d);
 }
 
-// Marca o último link aberto (o que reabre automaticamente).
+// Assistiu por link (reprodutor) → reabre no reprodutor nesse link.
 export function setChosen(url: string, tmdbId?: number, type?: string, season?: number, episode?: number) {
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
   const prev = d[k] || { streams: [], ts: Date.now() };
-  d[k] = { ...prev, chosenUrl: url, ts: Date.now() };
+  d[k] = { ...prev, chosenUrl: url, lastMode: 'native', ts: Date.now() };
+  write(d);
+}
+
+// Assistiu pelo servidor → reabre no servidor (não no reprodutor).
+export function setServerMode(tmdbId?: number, type?: string, season?: number, episode?: number) {
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const prev = d[k] || { streams: [], ts: Date.now() };
+  d[k] = { ...prev, lastMode: 'server', ts: Date.now() };
   write(d);
 }
 

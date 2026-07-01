@@ -8,7 +8,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getEntry, addStreams, setChosen, setStreamPosition, streamKey } from '@/lib/streamCache';
+import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey } from '@/lib/streamCache';
 import { playNative } from '@/lib/nativePlayer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
@@ -159,7 +159,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     playedRef.current = false;
     if (directMode || !isNative()) return;
     const entry = getEntry(tmdbId, type, season, episode);
-    if (entry?.chosenUrl) {
+    // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
+    if (entry?.lastMode === 'native' && entry.chosenUrl) {
       const ck = streamKey(entry.chosenUrl);
       setOwnStream((entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
     }
@@ -197,12 +198,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setOwnStream(r);
   };
 
-  // Assistir pelo servidor (iframe): não muda o "último link" (ao reabrir volta nele).
+  // Assistir pelo servidor (iframe): grava que a última vez foi no servidor
+  // (ao reabrir o título abre o servidor, não o reprodutor).
   const goServer = () => {
     setPickerOpen(false);
     setOwnStream(null);
     setPreferIframe(true);
     playedRef.current = false;
+    setServerMode(tmdbId, type, season, episode);
   };
 
   // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
