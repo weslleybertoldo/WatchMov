@@ -509,7 +509,9 @@ public class PlayerActivity extends Activity {
     // Conectou: pausa o player local e mostra o overlay de controle da TV.
     private void startCasting(int mode, String ctrl) {
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
-        if (player != null) player.setPlayWhenReady(false);
+        // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
+        // o áudio do celular disputava foco com a TV → oscilava. Mudo garante silêncio.
+        if (player != null) { player.pause(); player.setPlayWhenReady(false); player.setVolume(0f); }
         updateCastButton(true); // botão verde (conectado) nos 2 modos
         if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
         // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
@@ -537,6 +539,7 @@ public class PlayerActivity extends Activity {
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
+        if (player != null) player.setVolume(1f); // restaura o áudio local
         if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
     }
 

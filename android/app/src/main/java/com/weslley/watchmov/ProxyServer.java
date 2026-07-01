@@ -38,6 +38,18 @@ public class ProxyServer extends NanoHTTPD {
 
     private static String enc(String s) { try { return URLEncoder.encode(s == null ? "" : s, "UTF-8"); } catch (Exception e) { return ""; } }
 
+    // Descomprime se os bytes começarem com o magic gzip (1f 8b) — cobre CDNs que
+    // mandam gzip sem o header Content-Encoding (o OkHttp não descomprime sozinho).
+    private static byte[] gunzipIfNeeded(byte[] b) {
+        if (b == null || b.length < 2 || (b[0] & 0xff) != 0x1f || (b[1] & 0xff) != 0x8b) return b;
+        try (java.util.zip.GZIPInputStream gz = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(b))) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192]; int n;
+            while ((n = gz.read(buf)) > 0) out.write(buf, 0, n);
+            return out.toByteArray();
+        } catch (Exception e) { return b; }
+    }
+
     // URL local (ExoPlayer no próprio aparelho).
     public static String local(String url, String referer) {
         ensure();
@@ -99,7 +111,10 @@ public class ProxyServer extends NanoHTTPD {
                 || lu.contains(".m3u8") || lu.contains("/m3/") || lu.endsWith(".txt")
                 || lu.contains("/master") || lu.contains("playlist") || lu.contains(".m3u");
             if (maybePlaylist && up.body() != null) {
-                String body = up.body().string();
+                // Alguns CDNs (SuperFlix) mandam o m3u8 gzip SEM Content-Encoding → o
+                // OkHttp não descomprime. Detecta o magic 1f8b e descomprime na mão,
+                // senão o ExoPlayer recebe bytes gzip → "não começa com #EXTM3U".
+                String body = new String(gunzipIfNeeded(up.body().bytes()), java.nio.charset.StandardCharsets.UTF_8);
                 if (body.contains("#EXTM3U")) {
                     return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
                 }
