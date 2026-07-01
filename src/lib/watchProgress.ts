@@ -38,23 +38,29 @@ function fmtClock(ms: number): string {
 // streamCache cai pro store. Retorna null (sem barra) quando não há posição confiável.
 export function continueProgress(item: WatchItem): { pct: number; label: string } | null {
   const latest = latestPosition(item.tmdbId);
+  let posMs = 0, durMs = 0;
   if (latest && latest.positionMs > 0) {
-    // Duração REAL do player; se ainda não foi salva (jogado em versão antiga),
-    // cai pro episodeDuration da temporada (aprox., corrige ao reproduzir na v3.02+).
-    let durMs = latest.durationMs && latest.durationMs > 0 ? latest.durationMs : 0;
-    if (!durMs && item.type === 'series') {
-      const s = (item.seasons || []).find(x => x.number === latest.season);
-      if (s?.episodeDuration) durMs = s.episodeDuration * 60000;
+    posMs = latest.positionMs;
+    durMs = latest.durationMs && latest.durationMs > 0 ? latest.durationMs : 0;
+    if (!durMs) {
+      // Duração real não salva (jogado em versão antiga): aproxima pelo TMDB —
+      // série = episodeDuration da temporada; filme = totalDuration. Corrige ao
+      // reproduzir de novo na v3.02+ (que salva a duração real).
+      if (item.type === 'series') {
+        const s = (item.seasons || []).find(x => x.number === latest.season);
+        if (s?.episodeDuration) durMs = s.episodeDuration * 60000;
+      } else if (item.totalDuration) {
+        durMs = item.totalDuration * 60000;
+      }
     }
-    if (durMs > 0) return { pct: Math.min(1, latest.positionMs / durMs), label: `${fmtClock(latest.positionMs)} / ${fmtClock(durMs)}` };
-    return { pct: 0, label: fmtClock(latest.positionMs) }; // sem duração: só o tempo decorrido
+  } else if (item.type === 'movie' && (item.watchedDuration || 0) > 0 && (item.totalDuration || 0) > 0) {
+    // Filme sem entrada no streamCache: usa o progresso do store (minutos).
+    posMs = (item.watchedDuration as number) * 60000;
+    durMs = (item.totalDuration as number) * 60000;
   }
-  // Filme sem posição no streamCache: usa watchedDuration/totalDuration (minutos).
-  if (item.type === 'movie') {
-    const total = (item.totalDuration || 0) * 60000, watched = (item.watchedDuration || 0) * 60000;
-    if (watched > 0 && total > 0) return { pct: Math.min(1, watched / total), label: `${fmtClock(watched)} / ${fmtClock(total)}` };
-  }
-  return null;
+  if (!posMs) return null;
+  if (durMs > 0) return { pct: Math.min(1, posMs / durMs), label: `${fmtClock(posMs)} / ${fmtClock(durMs)}` };
+  return { pct: 0, label: fmtClock(posMs) }; // sem duração alguma: só o tempo decorrido
 }
 
 // Legenda do card "Continuar assistindo" (séries): "EP 5/12 | Temporada 4".

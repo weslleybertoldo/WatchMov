@@ -490,9 +490,13 @@ public class PlayerActivity extends Activity {
     private void startCasting(int mode, String ctrl) {
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
         if (player != null) player.setPlayWhenReady(false);
+        if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
+        // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
         String ip = localIp();
-        String diag = ip != null ? "\nSe não tocar, teste http://" + ip + ":" + ProxyServer.PORT + "/ping de outro aparelho no Wi-Fi" : "";
-        if (castStatusTv != null) castStatusTv.setText((mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)") + diag);
+        android.widget.Toast.makeText(this,
+            ip != null ? ("Proxy: http://" + ip + ":" + ProxyServer.PORT + "  — teste /ping de outro aparelho no Wi-Fi")
+                       : "Sem IP de Wi-Fi detectado (o celular está no Wi-Fi?).",
+            android.widget.Toast.LENGTH_LONG).show();
         if (castOverlay != null) castOverlay.setVisibility(View.VISIBLE);
         if (view != null) view.hideController();
         updatePlayIcon(true);
