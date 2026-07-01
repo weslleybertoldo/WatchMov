@@ -116,6 +116,28 @@ public class MainActivity extends BridgeActivity {
                 return super.shouldInterceptRequest(view, request);
             }
         });
+
+        // Muitos players buscam o stream via SERVICE WORKER — que não passa pelo
+        // WebViewClient acima. Intercepta o SW também (como o Web Video Cast).
+        if (android.os.Build.VERSION.SDK_INT >= 24) {
+            try {
+                android.webkit.ServiceWorkerController.getInstance().setServiceWorkerClient(new android.webkit.ServiceWorkerClient() {
+                    @Override
+                    public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                        if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
+                            String u = request.getUrl().toString();
+                            if (StreamSnifferPlugin.looksLikeVideo(u)) {
+                                String ref = null;
+                                Map<String, String> h = request.getRequestHeaders();
+                                if (h != null) ref = h.get("Referer");
+                                StreamSnifferPlugin.onVideoUrl(u, ref);
+                            }
+                        }
+                        return null;
+                    }
+                });
+            } catch (Exception ignored) {}
+        }
     }
 
     // Liga/desliga tela cheia imersiva. NÃO mexe no layoutInDisplayCutoutMode pra

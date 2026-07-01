@@ -8,7 +8,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getCachedStream, setCachedStream, setStreamPosition, invalidateStream } from '@/lib/streamCache';
+import { getCachedStream, setCachedStream, setStreamPosition } from '@/lib/streamCache';
 import { playNative } from '@/lib/nativePlayer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
@@ -55,7 +55,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [pickerOpen, setPickerOpen] = useState(false);                   // lista pra escolher
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
-  const [retry, setRetry] = useState(0);                                 // força recaptura
   const ownRef = useRef<SniffResult | null>(null); ownRef.current = ownStream;
   const prefRef = useRef(false); prefRef.current = preferIframe;
   const playedRef = useRef(false);   // evita reabrir o ExoPlayer em loop
@@ -169,7 +168,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       setCapturedList(prev => prev.some(x => x.url === r.url) ? prev : [...prev, r]);
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
-  }, [open, embedUrl, directMode, tmdbId, type, season, episode, retry]);
+  }, [open, embedUrl, directMode, tmdbId, type, season, episode]);
 
   // Escolhe um stream detectado → fixa no cache e toca no ExoPlayer.
   const chooseStream = (r: SniffResult) => {
@@ -179,12 +178,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setOwnStream(r);
   };
 
-  // Volta pro servidor pra escolher outro vídeo (limpa a escolha + recaptura).
+  // Trocar vídeo: volta pro servidor MANTENDO os já detectados e abre a lista.
+  // O listener segue vivo (ownRef=null volta a acumular). Não limpa nem recaptura.
   const changeSource = () => {
-    invalidateStream(tmdbId, type, season, episode);
-    setOwnStream(null); setCapturedList([]); setPreferIframe(false);
     playedRef.current = false;
-    setRetry(n => n + 1);
+    setOwnStream(null);
+    setPreferIframe(false);
+    setPickerOpen(capturedList.length > 0);
   };
 
   // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
