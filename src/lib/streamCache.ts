@@ -80,6 +80,20 @@ export function setServerMode(tmdbId?: number, type?: string, season?: number, e
   write(d);
 }
 
+// Última posição salva de um título (o episódio mais recente, no caso de série):
+// usado no card "Continuar assistindo" pra mostrar o progresso do EP atual.
+export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number } | null {
+  if (tmdbId == null) return null;
+  const d = read();
+  let best: { season: number; episode: number; positionMs: number; ts: number } | null = null;
+  for (const [k, e] of Object.entries(d)) {
+    const [tid, , s, ep] = k.split(':');
+    if (tid !== String(tmdbId) || !e.positionMs || Date.now() - e.ts > TTL_MS) continue;
+    if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, ts: e.ts };
+  }
+  return best ? { season: best.season, episode: best.episode, positionMs: best.positionMs } : null;
+}
+
 export function setStreamPosition(positionMs: number, tmdbId?: number, type?: string, season?: number, episode?: number) {
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
   const e = d[k];

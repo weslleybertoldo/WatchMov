@@ -1,4 +1,5 @@
 import { WatchItem, Season } from '@/types/watch';
+import { latestPosition } from '@/lib/streamCache';
 
 // Episódios assistidos de uma temporada. Compat: itens antigos só têm a contagem
 // sequencial (watchedEpisodes), então deriva 1..N quando não há watchedList.
@@ -43,19 +44,20 @@ export function continueProgress(item: WatchItem): { pct: number; label: string 
     const pct = total > 0 ? Math.min(1, watched / total) : 0;
     return { pct, label: fmtMin(watched) + (total > 0 ? ` / ${fmtMin(total)}` : '') };
   }
+  // Série/anime: progresso do EPISÓDIO atual (onde parou), não a soma da temporada.
   const seasons = item.seasons || [];
-  let watchedMin = 0, totalMin = 0, watchedEps = 0, totalEps = 0;
-  for (const s of seasons) {
-    const dur = s.episodeDuration || 0;
-    const eps = episodesWatched(s).length;
-    watchedMin += eps * dur + (s.partialEpisodeTime || 0);
-    totalMin += (s.totalEpisodes || 0) * dur;
-    watchedEps += eps;
-    totalEps += s.totalEpisodes || 0;
+  const latest = latestPosition(item.tmdbId);
+  if (latest && latest.positionMs > 0) {
+    const cur = seasons.find(s => s.number === latest.season);
+    const total = cur?.episodeDuration || 0;
+    const watched = latest.positionMs / 60000; // ms → min
+    const pct = total > 0 ? Math.min(1, watched / total) : 0;
+    return { pct, label: fmtMin(watched) + (total > 0 ? ` / ${fmtMin(total)}` : '') };
   }
-  if (!watchedEps && !watchedMin) return null;
-  if (totalMin > 0) return { pct: Math.min(1, watchedMin / totalMin), label: fmtMin(watchedMin) + ` / ${fmtMin(totalMin)}` };
-  // sem duração salva: cai pra fração de episódios
+  // Sem posição salva (nunca tocou no app / expirou): fração de episódios.
+  let watchedEps = 0, totalEps = 0;
+  for (const s of seasons) { watchedEps += episodesWatched(s).length; totalEps += s.totalEpisodes || 0; }
+  if (!watchedEps) return null;
   const pct = totalEps > 0 ? Math.min(1, watchedEps / totalEps) : 0;
   return { pct, label: `${watchedEps}${totalEps ? `/${totalEps}` : ''} eps` };
 }
