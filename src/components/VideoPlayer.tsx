@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import Hls from 'hls.js';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
+import { sniffStream, cancelSniff, type SniffResult } from '@/lib/streamSniffer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -41,6 +43,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Sniffer: tenta capturar a URL do stream do servidor pra tocar no player próprio.
+  // 'trying' = tentando; 'ok' = achou; 'fail' = não achou (cai no iframe do servidor).
+  const [sniff, setSniff] = useState<{ status: 'idle' | 'trying' | 'ok' | 'fail'; res?: SniffResult }>({ status: 'idle' });
+  const [forceIframe, setForceIframe] = useState(false);   // fallback manual pro servidor (botão)
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
   const [subsOpen, setSubsOpen] = useState(false);
@@ -120,17 +128,47 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const provider = available.find(p => p.id === providerId) || available[0];
 
   const directMode = !!directUrl || !!torrent;
-  let src: string | null;
-  if (torrent) {
-    src = tor.url ?? null;
-  } else if (directUrl) {
-    src = directUrl;
-  } else {
-    src = provider ? provider.build(target) : null;
-    if (src && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
-      src += `&resumeAt=${Math.floor(resumeAt)}`;
-    }
+
+  // URL do embed do servidor (iframe, como hoje).
+  let embedUrl: string | null = provider ? provider.build(target) : null;
+  if (embedUrl && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
+    embedUrl += `&resumeAt=${Math.floor(resumeAt)}`;
   }
+
+  // Toca no player próprio (<video>) quando: Stremio/torrent (directMode) OU o
+  // sniffer capturou o stream e o usuário não forçou o servidor.
+  const snifferUrl = sniff.status === 'ok' && !forceIframe ? sniff.res?.url ?? null : null;
+  const ownPlayer = directMode || !!snifferUrl;
+  const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : snifferUrl;
+  const src: string | null = ownPlayer ? videoSrc : embedUrl;
+
+  // Tenta o sniffer ao abrir/trocar de servidor (só APK; web/local usa iframe).
+  useEffect(() => {
+    setForceIframe(false);
+    if (!open || directMode || !embedUrl || !Capacitor.isNativePlatform()) { setSniff({ status: 'idle' }); return; }
+    let alive = true;
+    setSniff({ status: 'trying' });
+    sniffStream(embedUrl, 20000)
+      .then(r => { if (alive) setSniff(r ? { status: 'ok', res: r } : { status: 'fail' }); })
+      .catch(() => { if (alive) setSniff({ status: 'fail' }); });
+    return () => { alive = false; cancelSniff(); };
+  }, [open, embedUrl, directMode]);
+
+  // Anexa a fonte ao <video> (hls.js pra .m3u8; src direto pro resto).
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!open || !ownPlayer || !videoSrc || !v) return;
+    const isHls = /\.m3u8(\?|$)/i.test(videoSrc) || sniff.res?.mime?.includes('mpegurl');
+    let hls: Hls | null = null;
+    if (isHls && !v.canPlayType('application/vnd.apple.mpegurl') && Hls.isSupported()) {
+      hls = new Hls({ enableWorker: true });
+      hls.loadSource(videoSrc);
+      hls.attachMedia(v);
+    } else {
+      v.src = videoSrc;
+    }
+    return () => { if (hls) hls.destroy(); };
+  }, [open, ownPlayer, videoSrc, sniff.res?.mime]);
 
   useEffect(() => {
     if (!open) return;
@@ -232,6 +270,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               </div>
             )}
           </div>
+          {!directMode && sniff.status !== 'idle' && (
+            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${forceIframe || sniff.status !== 'ok' ? 'text-primary' : 'text-white/80'}`}
+              title={ownPlayer ? 'Assistir pelo servidor (player do provedor)' : 'No servidor'}
+              onClick={() => setForceIframe(f => !f)}>
+              <Server className="w-5 h-5" />
+            </Button>
+          )}
           {directMode && (
             <div className="relative">
               <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${subId ? 'text-primary' : 'text-white/80'}`} title="Legendas" onClick={() => setSubsOpen(o => !o)}>
@@ -297,12 +342,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-amber-400">Formato não suportado no navegador: {tor.name}</p>
             <p className="text-white/50 text-xs">O navegador só decodifica MP4 (H.264) e WebM. Este arquivo (provável .mkv/.avi) não toca aqui — escolha uma opção MP4 ou abra no Stremio.</p>
           </div>
+        ) : !directMode && sniff.status === 'trying' ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <p>Preparando o vídeo…</p>
+            <p className="text-white/50 text-xs">Se não conseguir, abre direto no servidor.</p>
+          </div>
         ) : !src ? (
           <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
-        ) : directMode ? (
+        ) : ownPlayer ? (
           <video
-            key={src}
-            src={src}
+            ref={videoRef}
+            key={videoSrc ?? 'video'}
             className="w-full h-full bg-black"
             controls
             autoPlay

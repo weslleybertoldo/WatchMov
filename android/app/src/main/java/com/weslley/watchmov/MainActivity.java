@@ -41,6 +41,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ApkInstallerPlugin.class);
         registerPlugin(ScreenCastPlugin.class);
         registerPlugin(ImmersivePlugin.class);
+        registerPlugin(StreamSnifferPlugin.class);
         super.onCreate(savedInstanceState);
 
         WebView webView = this.bridge.getWebView();
