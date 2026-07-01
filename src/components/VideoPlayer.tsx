@@ -8,7 +8,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getEntry, addStreams, setChosen, setStreamPosition } from '@/lib/streamCache';
+import { getEntry, addStreams, setChosen, setStreamPosition, streamKey } from '@/lib/streamCache';
 import { playNative } from '@/lib/nativePlayer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
@@ -161,14 +161,23 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const saved = entry?.streams ?? [];
     setCapturedList(saved);
     if (entry?.chosenUrl) {
-      setOwnStream(saved.find(x => x.url === entry.chosenUrl) || { url: entry.chosenUrl });
+      const ck = streamKey(entry.chosenUrl);
+      setOwnStream(saved.find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
     }
 
     let alive = true;
     let stop = () => {};
     watchStream(r => {
       if (!alive) return;
-      setCapturedList(prev => prev.some(x => x.url === r.url) ? prev : [...prev, r]);
+      // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar.
+      setCapturedList(prev => {
+        const key = streamKey(r.url);
+        const idx = prev.findIndex(x => streamKey(x.url) === key);
+        if (idx < 0) return [...prev, r];
+        const copy = [...prev];
+        copy[idx] = { url: r.url, mime: r.mime || copy[idx].mime, referer: r.referer || copy[idx].referer };
+        return copy;
+      });
       addStreams([r], tmdbId, type, season, episode);
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
@@ -196,13 +205,17 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!nativeOwn || !ownStream || playedRef.current) return;
     playedRef.current = true;
     const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
-    playNative({ url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs })
-      .then(res => {
-        if (res && res.positionMs > 0) {
-          setStreamPosition(res.positionMs, tmdbId, type, season, episode);
-          onProgress?.(Math.floor(res.positionMs / 1000));
-        }
-      });
+    playNative({
+      url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
+      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
+    }).then(res => {
+      if (!res) return;
+      if (res.url) setChosen(res.url, tmdbId, type, season, episode);   // link que ficou tocando
+      if (res.positionMs > 0) {
+        setStreamPosition(res.positionMs, tmdbId, type, season, episode);
+        onProgress?.(Math.floor(res.positionMs / 1000));
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeOwn, ownStream]);
 

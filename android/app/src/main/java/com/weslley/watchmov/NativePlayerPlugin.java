@@ -3,12 +3,15 @@ package com.weslley.watchmov;
 import android.app.Activity;
 import android.content.Intent;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+
+import java.util.List;
 
 /**
  * Abre o player nativo (ExoPlayer) pra tocar o stream capturado com Referer/UA.
@@ -28,7 +31,19 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_MIME, call.getString("mime"));
         intent.putExtra(PlayerActivity.EXTRA_TITLE, call.getString("title"));
         intent.putExtra(PlayerActivity.EXTRA_START_MS, call.getLong("startMs", 0L));
+        intent.putExtra(PlayerActivity.EXTRA_URLS, toArray(call.getArray("urls", null)));
+        intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         startActivityForResult(call, intent, "playerResult");
+    }
+
+    private static String[] toArray(JSArray arr) {
+        if (arr == null) return null;
+        try {
+            List<Object> list = arr.toList();
+            String[] out = new String[list.size()];
+            for (int i = 0; i < list.size(); i++) out[i] = list.get(i) == null ? null : String.valueOf(list.get(i));
+            return out;
+        } catch (Exception e) { return null; }
     }
 
     @ActivityCallback
@@ -38,6 +53,7 @@ public class NativePlayerPlugin extends Plugin {
         long pos = 0;
         if (result != null && result.getData() != null) {
             pos = result.getData().getLongExtra(PlayerActivity.RESULT_POSITION, 0);
+            res.put("url", result.getData().getStringExtra(PlayerActivity.RESULT_URL));
         }
         res.put("positionMs", pos);
         call.resolve(res);

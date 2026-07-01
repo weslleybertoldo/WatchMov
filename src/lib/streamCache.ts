@@ -29,15 +29,24 @@ export function getEntry(tmdbId?: number, type?: string, season?: number, episod
   return e;
 }
 
-// Adiciona links à lista (dedup por url; mantém os já salvos, novos entram no fim).
+// Chave estável do stream: URL sem a query (o token muda a cada captura, mas o
+// caminho é o mesmo) → o mesmo vídeo não duplica.
+export function streamKey(url: string): string { return url.split('?')[0]; }
+
+// Adiciona links (dedup por streamKey; se já existe, atualiza o token/URL fresca;
+// só entra novo se for um vídeo diferente).
 export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, season?: number, episode?: number) {
   if (!list.length) return;
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
   const prev = d[k];
-  const map = new Map<string, SniffResult>();
-  (prev?.streams || []).forEach(s => map.set(s.url, s));
-  list.forEach(s => { if (!map.has(s.url)) map.set(s.url, s); });
-  d[k] = { streams: [...map.values()], chosenUrl: prev?.chosenUrl, positionMs: prev?.positionMs, ts: Date.now() };
+  const arr: SniffResult[] = [...(prev?.streams || [])];
+  for (const s of list) {
+    const key = streamKey(s.url);
+    const idx = arr.findIndex(x => streamKey(x.url) === key);
+    if (idx >= 0) arr[idx] = { url: s.url, mime: s.mime || arr[idx].mime, referer: s.referer || arr[idx].referer };
+    else arr.push(s);
+  }
+  d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, positionMs: prev?.positionMs, ts: Date.now() };
   write(d);
 }
 
