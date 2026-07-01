@@ -24,17 +24,15 @@ export const PROVIDERS: Provider[] = [
   {
     id: 'betterflix',
     name: 'Fonte 1 (BetterFlix PT-BR)',
-    // Servidor BR com catálogo dublado pt-br. Só toca dentro de iframe (acesso
-    // direto à URL é bloqueado pelo provedor). Aceita só TMDB id.
-    // source=source3 = "Servidor 3" (default que toca bem). SEM singleSource pra o
-    // seletor de Servidor (1-5) do BetterFlix ficar disponível e o próprio player
-    // lembrar a escolha (storage do iframe; não dá pra ler de fora, cross-origin).
+    // 01/07: o domínio antigo (betterflix.click) e o endpoint /api/player MORRERAM
+    // (404). BetterFlix migrou pra betterflix.xyz com páginas /filme/{id} e
+    // /serie/{id}/{s}/{e} (igual SuperFlix/MyEmbed) — toca em iframe/sniffer.
     build: (t) => {
-      if (!t.tmdbId) return null;
-      const base = t.type === 'movie'
-        ? `https://betterflix.click/api/player?id=${t.tmdbId}&type=movie`
-        : `https://betterflix.click/api/player?id=${t.tmdbId}&type=tv&season=${s(t)}&episode=${e(t)}`;
-      return `${base}&source=source3`;
+      const id = t.tmdbId ?? t.imdbId;
+      if (!id) return null;
+      return t.type === 'movie'
+        ? `https://betterflix.xyz/filme/${id}`
+        : `https://betterflix.xyz/serie/${id}/${s(t)}/${e(t)}`;
     },
   },
   {
@@ -107,7 +105,7 @@ export const PROVIDERS: Provider[] = [
 
 // Domínios usados (para CSP frame-src)
 export const PROVIDER_HOSTS = [
-  'https://betterflix.click',
+  'https://betterflix.xyz',
   'https://fembed.sx',
   'https://embedplayapi.top',
   'https://superflixapi.cyou',
