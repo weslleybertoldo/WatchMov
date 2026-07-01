@@ -276,8 +276,8 @@ public class PlayerActivity extends Activity {
 
     private void playUrl(String url, String mime, long startMs) {
         currentUrl = url;
-        // Toca via proxy local → Referer/UA/Origin corretos (resolve 403).
-        MediaItem.Builder item = new MediaItem.Builder().setUri(ProxyServer.local(url, mReferer));
+        // Toca direto (a maioria dos CDNs aceita; Referer só se foi capturado o real).
+        MediaItem.Builder item = new MediaItem.Builder().setUri(url);
         if (mime != null) {
             if (mime.contains("mpegurl")) item.setMimeType(MimeTypes.APPLICATION_M3U8);
             else if (mime.contains("dash")) item.setMimeType(MimeTypes.APPLICATION_MPD);
@@ -356,9 +356,7 @@ public class PlayerActivity extends Activity {
                     android.widget.Toast.makeText(this, "Enviando para " + dev.name + "…", android.widget.Toast.LENGTH_SHORT).show();
                     new Thread(() -> {
                         boolean ok = true;
-                        // A TV toca via proxy (IP do celular) → Referer resolvido.
-                        String castUrl = ProxyServer.lan(currentUrl, mReferer, localIp());
-                        try { DlnaCastPlugin.castSync(dev.controlUrl, castUrl, "WatchMov"); } catch (Exception e) { ok = false; }
+                        try { DlnaCastPlugin.castSync(dev.controlUrl, currentUrl, "WatchMov"); } catch (Exception e) { ok = false; }
                         final boolean fok = ok;
                         runOnUiThread(() -> android.widget.Toast.makeText(this, fok ? "Tocando na TV — o app vira controle" : "A TV recusou o vídeo (pode exigir Referer)", android.widget.Toast.LENGTH_LONG).show());
                     }).start();
