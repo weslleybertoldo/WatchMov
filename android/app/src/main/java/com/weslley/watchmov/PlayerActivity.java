@@ -613,10 +613,11 @@ public class PlayerActivity extends Activity {
                 castConnected = false;
                 android.widget.Toast.makeText(this, "Conectando a " + routes.get(i).getName() + "…", android.widget.Toast.LENGTH_SHORT).show();
                 routes.get(i).select();
-                // Se em 15s não abrir sessão, provavelmente a TV não tem Cast integrado.
+                // Se em 25s não abrir sessão, provavelmente a TV não tem Cast integrado
+                // (ou a conexão Cast falhou — vale tentar de novo).
                 progressHandler.postDelayed(() -> {
-                    if (!castConnected) android.widget.Toast.makeText(this, "Não conectou. Essa TV tem Chromecast/Google Cast integrado? (TV só-DLNA não funciona pelo Chromecast — use a opção DLNA.)", android.widget.Toast.LENGTH_LONG).show();
-                }, 15000);
+                    if (!castConnected) android.widget.Toast.makeText(this, "Não conectou. Tente de novo; se persistir, essa TV pode não ter Chromecast/Google Cast integrado (TV só-DLNA use a opção DLNA).", android.widget.Toast.LENGTH_LONG).show();
+                }, 25000);
             }).show();
         }, 4000);
     }

@@ -84,12 +84,21 @@ public class ProxyServer extends NanoHTTPD {
 
             okhttp3.Response up = http.newCall(rb.build()).execute();
             String ct = up.header("Content-Type", "application/octet-stream");
-            boolean isHls = (ct != null && ct.toLowerCase().contains("mpegurl")) || u.toLowerCase().contains(".m3u8");
-
-            if (isHls && up.body() != null) {
+            String lu = u.toLowerCase(), lct = ct != null ? ct.toLowerCase() : "";
+            // O SuperFlix serve o HLS como text/plain em master.txt / /m3/ (sem .m3u8).
+            // Só olhar mpegurl/.m3u8 deixava passar como passthrough → o Chromecast
+            // recebia text/plain e não tocava. Se o corpo é textual (por content-type
+            // ou url), confirma pelo conteúdo (#EXTM3U) e serve como HLS. Binário
+            // (segmentos, mesmo disfarçados de .js) segue passthrough — não bufferiza.
+            boolean textish = lct.contains("mpegurl") || lct.contains("text/plain") || lct.contains("text/html") || lct.contains("vnd.apple");
+            boolean urlish = lu.contains(".m3u8") || lu.contains("/m3/") || lu.endsWith(".txt") || lu.contains("master") || lu.contains("playlist");
+            if ((textish || urlish) && up.body() != null) {
                 String body = up.body().string();
-                String rewritten = rewrite(body, u, r);
-                return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewritten));
+                if (body.contains("#EXTM3U")) {
+                    return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
+                }
+                // Era texto mesmo (não HLS): devolve como veio (o corpo já foi lido).
+                return cors(newFixedLengthResponse(up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK, ct, body));
             }
 
             long len = up.body() != null ? up.body().contentLength() : -1;
