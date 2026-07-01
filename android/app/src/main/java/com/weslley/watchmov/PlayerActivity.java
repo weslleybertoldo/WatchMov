@@ -3,16 +3,25 @@ package com.weslley.watchmov;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
+import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import java.util.HashMap;
@@ -20,8 +29,9 @@ import java.util.Map;
 
 /**
  * Player nativo (Media3/ExoPlayer) — como o Web Video Cast. Toca a URL capturada
- * mandando Referer/User-Agent em CADA request (resolve 403/CORS que o <video>/hls.js
- * do WebView não consegue) e com buffer generoso (aguarda carregar → menos travada).
+ * mandando Referer/User-Agent (resolve 403/CORS) com buffer generoso, e expõe os
+ * controles do WVC: play/pause, seek ±10s, barra/tempo, velocidade, ajuste de
+ * tela (fit/zoom/preencher), girar e legendas.
  */
 @UnstableApi
 public class PlayerActivity extends Activity {
@@ -35,6 +45,16 @@ public class PlayerActivity extends Activity {
     public static final String RESULT_POSITION = "positionMs";
 
     private ExoPlayer player;
+    private PlayerView view;
+    private final float[] speeds = {1f, 1.25f, 1.5f, 2f, 0.5f};
+    private int speedIdx = 0;
+    private final int[] resizeModes = {
+        AspectRatioFrameLayout.RESIZE_MODE_FIT,
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+        AspectRatioFrameLayout.RESIZE_MODE_FILL,
+    };
+    private int resizeIdx = 0;
+    private boolean landscape = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,11 +69,50 @@ public class PlayerActivity extends Activity {
         final String mime = getIntent().getStringExtra(EXTRA_MIME);
         final long startMs = getIntent().getLongExtra(EXTRA_START_MS, 0);
 
-        PlayerView view = new PlayerView(this);
-        view.setKeepScreenOn(true);
-        setContentView(view);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
 
-        // DataSource com headers (Referer/UA) — a chave pra tocar os streams protegidos.
+        view = new PlayerView(this);
+        view.setKeepScreenOn(true);
+        view.setShowFastForwardButton(true);
+        view.setShowRewindButton(true);
+        view.setShowSubtitleButton(true);
+        view.setShowNextButton(false);
+        view.setShowPreviousButton(false);
+        view.setControllerShowTimeoutMs(3500);
+        view.setResizeMode(resizeModes[0]);
+        root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // Barra de ações extra (topo direito): velocidade, ajuste de tela, girar, voltar.
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setPadding(16, 16, 16, 16);
+
+        Button back = pill("‹ Voltar", v -> finishWithPosition());
+        Button speed = pill("1x", null);
+        speed.setOnClickListener(v -> {
+            speedIdx = (speedIdx + 1) % speeds.length;
+            player.setPlaybackParameters(new PlaybackParameters(speeds[speedIdx]));
+            speed.setText(speeds[speedIdx] + "x");
+        });
+        Button resize = pill("Tela", v -> {
+            resizeIdx = (resizeIdx + 1) % resizeModes.length;
+            view.setResizeMode(resizeModes[resizeIdx]);
+        });
+        Button rotate = pill("Girar", v -> {
+            landscape = !landscape;
+            setRequestedOrientation(landscape ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        });
+
+        bar.addView(back);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        View spacer = new View(this); bar.addView(spacer, sp);
+        bar.addView(speed); bar.addView(resize); bar.addView(rotate);
+        root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+
+        setContentView(root);
+
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setUserAgent(ua != null ? ua
@@ -65,7 +124,6 @@ public class PlayerActivity extends Activity {
         }
         if (!headers.isEmpty()) http.setDefaultRequestProperties(headers);
 
-        // Buffer generoso: aguarda encher antes de liberar (menos travamento).
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
             .setBufferDurationsMs(30000, 120000, 3000, 6000)
             .build();
@@ -73,6 +131,8 @@ public class PlayerActivity extends Activity {
         player = new ExoPlayer.Builder(this)
             .setMediaSourceFactory(new DefaultMediaSourceFactory(http))
             .setLoadControl(loadControl)
+            .setSeekBackIncrementMs(10000)
+            .setSeekForwardIncrementMs(10000)
             .build();
         view.setPlayer(player);
 
@@ -86,6 +146,21 @@ public class PlayerActivity extends Activity {
         if (startMs > 0) player.seekTo(startMs);
         player.setPlayWhenReady(true);
         player.prepare();
+    }
+
+    private Button pill(String text, View.OnClickListener onClick) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(Color.WHITE);
+        b.setBackgroundColor(Color.parseColor("#66000000"));
+        b.setMinWidth(0); b.setMinHeight(0);
+        b.setPadding(24, 10, 24, 10);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = 8;
+        b.setLayoutParams(lp);
+        if (onClick != null) b.setOnClickListener(onClick);
+        return b;
     }
 
     private void finishWithPosition() {
