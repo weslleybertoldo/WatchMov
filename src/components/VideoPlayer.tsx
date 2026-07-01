@@ -245,8 +245,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!open || directMode || !isNative()) return;
     let handle: { remove: () => void } | null = null;
-    onPlayerProgress?.(({ positionMs }) => {
-      if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode);
+    onPlayerProgress?.(({ positionMs, durationMs }) => {
+      if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode, durationMs);
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
   }, [open, directMode, tmdbId, type, season, episode]);

@@ -11,6 +11,7 @@ export interface StreamEntry {
   chosenUrl?: string;
   lastMode?: 'native' | 'server';  // como assistiu por último (reabre igual)
   positionMs?: number;
+  durationMs?: number;             // duração REAL do arquivo (do player), p/ a barra
   ts: number;
 }
 
@@ -82,20 +83,20 @@ export function setServerMode(tmdbId?: number, type?: string, season?: number, e
 
 // Última posição salva de um título (o episódio mais recente, no caso de série):
 // usado no card "Continuar assistindo" pra mostrar o progresso do EP atual.
-export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number } | null {
+export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number; durationMs?: number } | null {
   if (tmdbId == null) return null;
   const d = read();
-  let best: { season: number; episode: number; positionMs: number; ts: number } | null = null;
+  let best: { season: number; episode: number; positionMs: number; durationMs?: number; ts: number } | null = null;
   for (const [k, e] of Object.entries(d)) {
     const [tid, , s, ep] = k.split(':');
     if (tid !== String(tmdbId) || !e.positionMs || Date.now() - e.ts > TTL_MS) continue;
-    if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, ts: e.ts };
+    if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, durationMs: e.durationMs, ts: e.ts };
   }
-  return best ? { season: best.season, episode: best.episode, positionMs: best.positionMs } : null;
+  return best ? { season: best.season, episode: best.episode, positionMs: best.positionMs, durationMs: best.durationMs } : null;
 }
 
-export function setStreamPosition(positionMs: number, tmdbId?: number, type?: string, season?: number, episode?: number) {
+export function setStreamPosition(positionMs: number, tmdbId?: number, type?: string, season?: number, episode?: number, durationMs?: number) {
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
   const e = d[k];
-  if (e) { e.positionMs = positionMs; write(d); }
+  if (e) { e.positionMs = positionMs; if (durationMs && durationMs > 0) e.durationMs = durationMs; write(d); }
 }

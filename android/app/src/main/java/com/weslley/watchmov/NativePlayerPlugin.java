@@ -26,11 +26,12 @@ public class NativePlayerPlugin extends Plugin {
     public void load() { instance = this; }
 
     // Chamado pela PlayerActivity a cada ~5s → JS salva a posição (robusto).
-    public static void reportProgress(String url, long positionMs) {
+    public static void reportProgress(String url, long positionMs, long durationMs) {
         if (instance == null || url == null) return;
         JSObject d = new JSObject();
         d.put("url", url);
         d.put("positionMs", positionMs);
+        d.put("durationMs", durationMs > 0 ? durationMs : 0);
         instance.notifyListeners("playerProgress", d);
     }
 

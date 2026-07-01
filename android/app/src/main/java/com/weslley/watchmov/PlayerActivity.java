@@ -91,7 +91,7 @@ public class PlayerActivity extends Activity {
             // Salva a posição a cada 5s (robusto — não depende só do fechar).
             saveResume();
             if (player != null && player.getCurrentPosition() > 0) {
-                NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());
+                NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition(), player.getDuration());
             }
             // "Assistido" automático: quando falta ≤1 min pro fim.
             if (!watched && player != null) {
@@ -792,7 +792,7 @@ public class PlayerActivity extends Activity {
         saveResume();
         // Back moderno/gesto/home nem sempre chama onBackPressed → salva aqui também.
         if (!resultSaved && player != null) {
-            NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());
+            NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition(), player.getDuration());
             Intent data = new Intent();
             data.putExtra(RESULT_POSITION, player.getCurrentPosition());
             data.putExtra(RESULT_URL, currentUrl);

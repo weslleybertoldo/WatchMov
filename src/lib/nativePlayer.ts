@@ -5,7 +5,7 @@ interface PlayResult { positionMs: number; url?: string; next?: boolean; server?
 
 interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
-  addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerWatched', cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle>;
 }
@@ -14,7 +14,7 @@ const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
 
 // Progresso periódico do player nativo (a cada ~5s) — salva a posição de forma
 // robusta (não depende de o ExoPlayer devolver o result ao fechar).
-export function onPlayerProgress(cb: (d: { url: string; positionMs: number }) => void): Promise<PluginListenerHandle> | null {
+export function onPlayerProgress(cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerProgress', cb);
 }

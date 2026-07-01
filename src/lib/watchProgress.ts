@@ -26,45 +26,28 @@ export function totalEpisodesWatched(item: WatchItem): number {
   return (item.seasons || []).reduce((sum, s) => sum + episodesWatched(s).length, 0);
 }
 
-// Formata minutos → "45min" ou "1h20".
-function fmtMin(min: number): string {
-  const m = Math.round(min);
-  if (m < 60) return `${m}min`;
-  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
-}
-
-// Progresso do "Continuar assistindo": tempo visto + fração pra barra. Usa o que já
-// está salvo (filme: watchedDuration/totalDuration; série: minutos dos eps assistidos
-// + parcial da temporada). Retorna null quando não há nada assistido.
-export function continueProgress(item: WatchItem): { pct: number; label: string } | null {
-  if (item.type === 'movie') {
-    const total = item.totalDuration || 0;
-    const watched = total > 0 ? Math.min(item.watchedDuration || 0, total) : (item.watchedDuration || 0);
-    if (!watched) return null;
-    const pct = total > 0 ? Math.min(1, watched / total) : 0;
-    return { pct, label: fmtMin(watched) + (total > 0 ? ` / ${fmtMin(total)}` : '') };
-  }
-  // Série/anime: progresso do EPISÓDIO atual (onde parou), não a soma da temporada.
-  const seasons = item.seasons || [];
+// Progresso do "Continuar assistindo" (só a fração pra barra — sem texto de tempo).
+// Usa a posição/duração REAIS do player (streamCache); filme sem streamCache cai
+// pro store. Retorna null (sem barra) quando não há posição confiável.
+export function continueProgress(item: WatchItem): { pct: number } | null {
   const latest = latestPosition(item.tmdbId);
-  if (latest && latest.positionMs > 0) {
-    const cur = seasons.find(s => s.number === latest.season);
-    const total = cur?.episodeDuration || 0;
-    const watched = latest.positionMs / 60000; // ms → min
-    const pct = total > 0 ? Math.min(1, watched / total) : 0;
-    return { pct, label: fmtMin(watched) + (total > 0 ? ` / ${fmtMin(total)}` : '') };
+  if (latest && latest.positionMs > 0 && latest.durationMs && latest.durationMs > 0) {
+    return { pct: Math.min(1, latest.positionMs / latest.durationMs) };
   }
-  // Sem posição salva (nunca tocou no app / expirou): fração de episódios.
-  let watchedEps = 0, totalEps = 0;
-  for (const s of seasons) { watchedEps += episodesWatched(s).length; totalEps += s.totalEpisodes || 0; }
-  if (!watchedEps) return null;
-  const pct = totalEps > 0 ? Math.min(1, watchedEps / totalEps) : 0;
-  return { pct, label: `${watchedEps}${totalEps ? `/${totalEps}` : ''} eps` };
+  // Filme sem posição no streamCache: usa watchedDuration/totalDuration (minutos).
+  if (item.type === 'movie') {
+    const total = item.totalDuration || 0, watched = item.watchedDuration || 0;
+    if (watched > 0 && total > 0) return { pct: Math.min(1, watched / total) };
+  }
+  return null;
 }
 
-// Legenda do card "Continuar assistindo" (séries): "Eps 5 | Temporada 4".
+// Legenda do card "Continuar assistindo" (séries): "EP 5/12 | Temporada 4".
 export function continueLabel(item: WatchItem): string | undefined {
   if (item.type !== 'series') return undefined;
   const ls = lastStopped(item);
-  return ls ? `Eps ${ls.episode} | Temporada ${ls.season}` : undefined;
+  if (!ls) return undefined;
+  const s = (item.seasons || []).find(x => x.number === ls.season);
+  const total = s?.totalEpisodes;
+  return `EP ${ls.episode}${total ? `/${total}` : ''} | Temporada ${ls.season}`;
 }
