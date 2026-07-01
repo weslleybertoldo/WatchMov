@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, Star, Loader2, Download } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped } from '@/lib/watchProgress';
+import { useDownloads, setDownloaded, movieKey, epKey } from '@/lib/downloads';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -42,6 +43,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const [stremioOpen, setStremioOpen] = useState(false);
   const [selSeason, setSelSeason] = useState(1);
   const [loading, setLoading] = useState(true);
+  const dls = useDownloads();
+  const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
+  const [selEps, setSelEps] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     let alive = true;
@@ -158,6 +162,28 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     else setPlayer(null);
   };
 
+  const movieWatched = !isSeries && !!liveItem?.completed;
+
+  // ── Download (WIP: marca estado; salvamento real do vídeo é etapa nativa) ──
+  const movieDownloaded = !isSeries && dls.has(movieKey(media.tmdbId));
+  const toggleMovieDownload = async () => {
+    await ensureLib();
+    setDownloaded([movieKey(media.tmdbId)], !movieDownloaded);
+  };
+  const startSelecting = () => { setSelEps(new Set()); setSelecting(true); };
+  const cancelSelecting = () => { setSelecting(false); setSelEps(new Set()); };
+  const toggleSelEp = (ep: number) => setSelEps(prev => {
+    const next = new Set(prev);
+    if (next.has(ep)) next.delete(ep); else next.add(ep);
+    return next;
+  });
+  const confirmDownload = async () => {
+    if (selEps.size === 0) { cancelSelecting(); return; }
+    await ensureLib();
+    setDownloaded([...selEps].map(ep => epKey(media.tmdbId, selSeason, ep)), true);
+    cancelSelecting();
+  };
+
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
   const inList = !!liveItem?.favorite;
   const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
@@ -206,7 +232,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         )}
 
         {/* Ações — principal = servidores embed (retoma de onde parou); Torrent = Stremio/debrid */}
-        <div className="flex gap-2 pt-1">
+        <div className="flex flex-wrap gap-2 pt-1">
           <Button className="flex-1" onClick={playMain}>
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
@@ -216,6 +242,22 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           <Button variant={inList ? 'default' : 'outline'} onClick={toggleList}>
             {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Lista
           </Button>
+          {!isSeries && (
+            <Button variant={movieWatched ? 'default' : 'outline'}
+              title={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'}
+              onClick={async () => { const it = await ensureLib(); if (it) store.updateItem(it.id, it.completed ? { completed: false } : { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() }); }}>
+              {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
+            </Button>
+          )}
+          {isSeries ? (
+            <Button variant={selecting ? 'default' : 'outline'} onClick={selecting ? cancelSelecting : startSelecting} title="Baixar episódios">
+              <Download className="w-4 h-4 mr-1" /> {selecting ? 'Cancelar' : 'Baixar eps'}
+            </Button>
+          ) : (
+            <Button variant={movieDownloaded ? 'default' : 'outline'} onClick={toggleMovieDownload} title={movieDownloaded ? 'Baixado' : 'Baixar filme'}>
+              {movieDownloaded ? <DownloadCloud className="w-4 h-4 mr-1" /> : <Download className="w-4 h-4 mr-1" />} {movieDownloaded ? 'Baixado' : 'Baixar'}
+            </Button>
+          )}
         </div>
 
         {details?.synopsis && <p className="text-sm text-muted-foreground leading-relaxed">{details.synopsis}</p>}
@@ -241,21 +283,39 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
               const liveSeason = liveItem?.seasons?.find(x => x.number === s.number);
               const watched = liveSeason ? episodesWatched(liveSeason) : [];
               return (
-                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                  {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
-                    const seen = watched.includes(ep);
-                    return (
-                      <button
-                        key={ep}
-                        onClick={() => playEpisode(s.number, ep)}
-                        className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
-                      >
-                        {ep}
-                        {seen && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
-                      </button>
-                    );
-                  })}
-                </div>
+                <>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                    {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
+                      const seen = watched.includes(ep);
+                      const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
+                      const picked = selEps.has(ep);
+                      return (
+                        <button
+                          key={ep}
+                          onClick={() => (selecting ? (downloaded ? undefined : toggleSelEp(ep)) : playEpisode(s.number, ep))}
+                          className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${selecting && downloaded ? 'border-green-400/40 bg-green-400/5 text-muted-foreground opacity-70' : selecting && picked ? 'border-primary bg-primary/20 text-primary' : seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
+                        >
+                          {ep}
+                          {seen && !selecting && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
+                          {selecting && !downloaded && (
+                            <span className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm border flex items-center justify-center ${picked ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
+                              {picked && <Check className="w-3 h-3 text-primary-foreground" />}
+                            </span>
+                          )}
+                          {downloaded && <DownloadCloud className="absolute bottom-0.5 right-0.5 w-4 h-4 text-green-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selecting && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button size="sm" className="flex-1" onClick={confirmDownload} disabled={selEps.size === 0}>
+                        <Download className="w-4 h-4 mr-1" /> Baixar{selEps.size > 0 ? ` (${selEps.size})` : ''}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={cancelSelecting}><XIcon className="w-4 h-4" /></Button>
+                    </div>
+                  )}
+                </>
               );
             })()}
           </div>

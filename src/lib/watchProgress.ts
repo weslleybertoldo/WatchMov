@@ -20,6 +20,11 @@ export function lastStopped(item: WatchItem): { season: number; episode: number 
   return { season: s.number, episode: Math.max(...episodesWatched(s)) };
 }
 
+// Total de episódios marcados como assistidos no item (todas as temporadas).
+export function totalEpisodesWatched(item: WatchItem): number {
+  return (item.seasons || []).reduce((sum, s) => sum + episodesWatched(s).length, 0);
+}
+
 // Legenda do card "Continuar assistindo" (séries): "Eps 5 | Temporada 4".
 export function continueLabel(item: WatchItem): string | undefined {
   if (item.type !== 'series') return undefined;

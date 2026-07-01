@@ -14,10 +14,14 @@ import SearchView, { clearSearchCache } from '@/components/streaming/SearchView'
 import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
-import { continueLabel } from '@/lib/watchProgress';
+import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
+import HistoryView from '@/components/streaming/HistoryView';
+import DownloadView from '@/components/streaming/DownloadView';
+import { continueLabel, totalEpisodesWatched } from '@/lib/watchProgress';
+import { useDownloads, hasAnyDownload, clearDownloadsFor, downloadedEpisodesOf, setDownloaded, epKey } from '@/lib/downloads';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, LogOut, Loader2, ArrowLeft } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft } from 'lucide-react';
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista' | 'procurar';
 
@@ -54,6 +58,10 @@ export default function Index() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const dls = useDownloads();
 
   // Preserva o scroll vertical da página ao abrir um título e voltar.
   const homeScrollRef = useRef(0);
@@ -69,13 +77,16 @@ export default function Index() {
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
+    if (historyOpen) { setHistoryOpen(false); return true; }
+    if (downloadOpen) { setDownloadOpen(false); return true; }
+    if (settingsOpen) { setSettingsOpen(false); return true; }
     if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
     if (listFilter) { setListFilter(null); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, searchOpen, continueFilter, listFilter, category, tab]);
+  }, [selected, historyOpen, downloadOpen, settingsOpen, searchOpen, continueFilter, listFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -103,7 +114,32 @@ export default function Index() {
   const listFiltered = listFilter === 'movie' ? listMovies : listFilter === 'anime' ? listAnimes : listFilter === 'series' ? listSeries : [];
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); };
+  // ── Assistidos (painel + histórico) ──
+  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado.
+  const watchedItems = store.data.items.filter(i => i.tmdbId &&
+    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0));
+  const watchedMovies = watchedItems.filter(i => i.type === 'movie');
+  const watchedAnimes = watchedItems.filter(isAnime);
+  const watchedSeries = watchedItems.filter(i => i.type === 'series' && !isAnime(i));
+  const sumEps = (arr: WatchItem[]) => arr.reduce((n, i) => n + totalEpisodesWatched(i), 0);
+  const watchedStats: WatchedStats = {
+    moviesCount: watchedMovies.length,
+    seriesCount: watchedSeries.length,
+    seriesEpisodes: sumEps(watchedSeries),
+    animesCount: watchedAnimes.length,
+    animeEpisodes: sumEps(watchedAnimes),
+  };
+  const histMovies = watchedMovies.map(itemToSummary);
+  const histSeries = watchedSeries.map(itemToSummary);
+  const histAnimes = watchedAnimes.map(itemToSummary);
+
+  // ── Downloads (WIP): itens com algo baixado, separados por tipo ──
+  const downloadedItems = store.data.items.filter(i => i.tmdbId && hasAnyDownload(dls, i.tmdbId as number, i.type === 'movie'));
+  const dlMovies = downloadedItems.filter(i => i.type === 'movie').map(itemToSummary);
+  const dlAnimes = downloadedItems.filter(isAnime).map(itemToSummary);
+  const dlSeries = downloadedItems.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
+
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -123,8 +159,8 @@ export default function Index() {
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={signOut} title="Sair">
-              <LogOut className="w-4 h-4" />
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setHistoryOpen(false); }} title="Painel">
+              <Settings className="w-4 h-4" />
             </Button>
           </div>
         </div>
@@ -134,6 +170,18 @@ export default function Index() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
           <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
+        ) : settingsOpen ? (
+          historyOpen ? (
+            <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
+          ) : downloadOpen ? (
+            <DownloadView movies={dlMovies} series={dlSeries} animes={dlAnimes} onOpen={openMedia}
+              onRemove={(m) => clearDownloadsFor(m.tmdbId, m.type !== 'tv')}
+              episodesOf={(id) => downloadedEpisodesOf(dls, id)}
+              onRemoveEpisodes={(id, eps) => setDownloaded(eps.map(e => epKey(id, e.season, e.ep)), false)}
+              onBack={() => setDownloadOpen(false)} />
+          ) : (
+            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+          )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
         ) : continueFilter ? (
