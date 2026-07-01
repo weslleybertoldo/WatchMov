@@ -45,8 +45,10 @@ public class DlnaCastPlugin extends Plugin {
     private static final Pattern CTRL = Pattern.compile("(?is)<controlURL>(.*?)</controlURL>");
 
     public static class Device { public final String name, controlUrl; Device(String n, String c) { name = n; controlUrl = c; } }
+    public static volatile int lastRawResponses = 0;   // diagnóstico: respostas SSDP recebidas
 
     public static List<Device> discoverSync(Context ctx, int timeoutMs) {
+        lastRawResponses = 0;
         Map<String, Device> found = new LinkedHashMap<>();
         WifiManager.MulticastLock lock = null;
         try {
@@ -67,6 +69,7 @@ public class DlnaCastPlugin extends Plugin {
                 try {
                     DatagramPacket resp = new DatagramPacket(buf, buf.length);
                     sock.receive(resp);
+                    lastRawResponses++;
                     String text = new String(resp.getData(), 0, resp.getLength());
                     Matcher m = LOCATION.matcher(text);
                     if (!m.find()) continue;

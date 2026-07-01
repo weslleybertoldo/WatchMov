@@ -342,7 +342,13 @@ public class PlayerActivity extends Activity {
         new Thread(() -> {
             final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 6000);
             runOnUiThread(() -> {
-                if (devs.isEmpty()) { android.widget.Toast.makeText(this, "Nenhuma TV encontrada (mesma rede Wi-Fi?)", android.widget.Toast.LENGTH_LONG).show(); return; }
+                if (devs.isEmpty()) {
+                    String msg = DlnaCastPlugin.lastRawResponses == 0
+                        ? "Nenhuma resposta na rede — ative o compartilhamento/DLNA na TV e use o mesmo Wi-Fi (roteador pode isolar dispositivos)."
+                        : "Recebi " + DlnaCastPlugin.lastRawResponses + " respostas, mas nenhuma TV com DLNA compatível.";
+                    android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show();
+                    return;
+                }
                 String[] names = new String[devs.size()];
                 for (int i = 0; i < devs.size(); i++) names[i] = devs.get(i).name;
                 new AlertDialog.Builder(this).setTitle("Enviar para a TV").setItems(names, (d, i) -> {
