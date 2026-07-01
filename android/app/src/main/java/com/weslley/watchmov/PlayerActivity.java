@@ -205,7 +205,7 @@ public class PlayerActivity extends Activity {
         castBtn.setPadding(16, 16, 16, 16);
         castBtn.setOnClickListener(v -> castToTv());
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
-        clp.bottomMargin = 96; clp.rightMargin = 150;
+        clp.bottomMargin = 40; clp.rightMargin = 280;
         root.addView(castBtn, clp);
 
         // A barra some/aparece junto com os controles do player.
