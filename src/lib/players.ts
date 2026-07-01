@@ -89,6 +89,30 @@ export const PROVIDERS: Provider[] = [
         : `https://myembed.biz/serie/${id}/${s(t)}/${e(t)}`;
     },
   },
+  {
+    id: 'playerflix',
+    name: 'Fonte 6 (PlayerFlix PT-BR)',
+    // Player BR dublado (resolve o TMDB id). Filme /filme/{tmdb}; série /serie/{tmdb}/{s}/{e}.
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://playerflixapi.com/filme/${t.tmdbId}`
+        : `https://playerflixapi.com/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
+    id: 'warezcdn',
+    name: 'Fonte 7 (WarezCDN PT-BR)',
+    // CDN BR dublado (o mesmo do SuperFlix, mas acesso direto). Usa IMDB id.
+    // Filme /filme/{imdb}; série /serie/{imdb}/{s}/{e}.
+    build: (t) => {
+      const id = t.imdbId ?? t.tmdbId;
+      if (!id) return null;
+      return t.type === 'movie'
+        ? `https://warezcdn.link/filme/${id}`
+        : `https://warezcdn.link/serie/${id}/${s(t)}/${e(t)}`;
+    },
+  },
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -98,4 +122,6 @@ export const PROVIDER_HOSTS = [
   'https://superflixapi.cyou',
   'https://megaembedapi.site',
   'https://myembed.biz',
+  'https://playerflixapi.com',
+  'https://warezcdn.link',
 ];
