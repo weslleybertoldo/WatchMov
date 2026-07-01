@@ -27,6 +27,7 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -223,10 +224,16 @@ public class PlayerActivity extends Activity {
 
         setContentView(root);
 
-        DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setUserAgent(ua != null ? ua
-                : "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+        // DataSource baseado em OkHttp (como o Web Video Cast): o OkHttp descomprime
+        // gzip transparente. Vários players BR (SuperFlix/EmbedPlay) servem o m3u8 como
+        // text/plain GZIP e o DefaultHttpDataSource do ExoPlayer NÃO descomprime o
+        // manifest → o parser recebe bytes gzip e falha "Input does not start with
+        // #EXTM3U" (ERROR_CODE_PARSING_MANIFEST_MALFORMED). OkHttp resolve isso.
+        final String defUa = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+        okhttp3.OkHttpClient okClient = new okhttp3.OkHttpClient.Builder()
+            .followRedirects(true).followSslRedirects(true).build();
+        OkHttpDataSource.Factory http = new OkHttpDataSource.Factory(okClient)
+            .setUserAgent(ua != null ? ua : defUa);
         Map<String, String> headers = new HashMap<>();
         if (referer != null && !referer.isEmpty()) {
             headers.put("Referer", referer);

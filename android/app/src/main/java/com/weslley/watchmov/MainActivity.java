@@ -58,9 +58,14 @@ public class MainActivity extends BridgeActivity {
             // Popup (window.open): fora da captura recusa (anti-anúncio). DURANTE a
             // captura, abre numa WebView oculta e observa o tráfego dela — vários
             // players (ex. SuperFlix) abrem o vídeo em popup (como o Web Video Cast).
+            // COMO O WVC (xw0.onCreateWindow): popup SEM gesto do usuário = anúncio →
+            // bloqueia (return false). Só abre o sniffer quando o popup veio de um
+            // toque real (isUserGesture) — assim o stream real é pego no frame/SW
+            // principal e a propaganda não polui a lista nem rouba o play.
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
                 if (!StreamSnifferPlugin.isWatching()) return false;
+                if (!isUserGesture) return false;   // anúncio auto-aberto → bloqueia
                 try {
                     if (sniffPopup != null) { try { sniffPopup.destroy(); } catch (Exception ignored) {} }
                     sniffPopup = new WebView(MainActivity.this);
