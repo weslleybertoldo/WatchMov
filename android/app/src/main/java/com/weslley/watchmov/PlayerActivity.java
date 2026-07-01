@@ -672,40 +672,84 @@ public class PlayerActivity extends Activity {
                 }
             });
         }
-        String title = getIntent().getStringExtra(EXTRA_TITLE);
+        final String title = getIntent().getStringExtra(EXTRA_TITLE);
         // O Chromecast busca a URL sozinho e o CDN costuma bloquear (IP/fingerprint)
         // ou servir HLS gzip que o receiver não parseia → fica "carregando". Serve
         // pela LAN: o Chromecast busca do celular (refaz fetch com headers, descomprime
         // gzip, reescreve o HLS). Fallback = URL direta se não achar o IP.
-        String ip = localIp();
-        String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
-        com.google.android.gms.cast.MediaMetadata md = new com.google.android.gms.cast.MediaMetadata(com.google.android.gms.cast.MediaMetadata.MEDIA_TYPE_MOVIE);
-        md.putString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE, title != null ? title : "WatchMov");
-        String castCt = castContentType(currentUrl);
-        com.google.android.gms.cast.MediaInfo.Builder mib = new com.google.android.gms.cast.MediaInfo.Builder(castUrl)
-            .setStreamType(com.google.android.gms.cast.MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(castCt)
-            .setMetadata(md);
-        // HLS: dica de formato dos segmentos pro Default Media Receiver demuxar (senão
-        // costuma dar tela preta com segmentos TS). TS + MPEG2_TS é o caso comum.
-        if (castCt.contains("mpegurl")) {
-            mib.setHlsSegmentFormat(com.google.android.gms.cast.HlsSegmentFormat.TS)
-               .setHlsVideoSegmentFormat(com.google.android.gms.cast.HlsVideoSegmentFormat.MPEG2_TS);
-        }
-        com.google.android.gms.cast.MediaInfo info = mib.build();
-        com.google.android.gms.cast.MediaLoadRequestData req = new com.google.android.gms.cast.MediaLoadRequestData.Builder()
-            .setMediaInfo(info).setAutoplay(true)
-            .setCurrentTime(player != null ? player.getCurrentPosition() : 0)
-            .build();
+        final String ip = localIp();
+        final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
+        final String castCt = castContentType(currentUrl);
+        final long startPos = player != null ? player.getCurrentPosition() : 0;
         android.widget.Toast.makeText(this, "Enviando vídeo pro Chromecast…", android.widget.Toast.LENGTH_SHORT).show();
-        rmc.load(req).setResultCallback(result -> {
-            if (result.getStatus().isSuccess()) {
-                android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
-                startCasting(CAST_CC, null);
-            } else {
-                android.widget.Toast.makeText(this, "Chromecast conectou mas recusou o vídeo (código " + result.getStatus().getStatusCode() + "). Formato pode não ser suportado.", android.widget.Toast.LENGTH_LONG).show();
+        // Detecta TS vs fMP4 (.m4s / #EXT-X-MAP) num thread — o Default Media Receiver
+        // dá tela preta se o hlsVideoSegmentFormat estiver errado. Depois carrega na UI.
+        new Thread(() -> {
+            final String vf = castCt.contains("mpegurl") ? detectHlsVideoFormat(currentUrl, mReferer)
+                                                          : com.google.android.gms.cast.HlsVideoSegmentFormat.MPEG2_TS;
+            runOnUiThread(() -> {
+                com.google.android.gms.cast.MediaMetadata md = new com.google.android.gms.cast.MediaMetadata(com.google.android.gms.cast.MediaMetadata.MEDIA_TYPE_MOVIE);
+                md.putString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE, title != null ? title : "WatchMov");
+                com.google.android.gms.cast.MediaInfo.Builder mib = new com.google.android.gms.cast.MediaInfo.Builder(castUrl)
+                    .setStreamType(com.google.android.gms.cast.MediaInfo.STREAM_TYPE_BUFFERED)
+                    .setContentType(castCt)
+                    .setMetadata(md);
+                if (castCt.contains("mpegurl")) {
+                    boolean fmp4 = com.google.android.gms.cast.HlsVideoSegmentFormat.FMP4.equals(vf);
+                    mib.setHlsVideoSegmentFormat(vf)
+                       .setHlsSegmentFormat(fmp4 ? com.google.android.gms.cast.HlsSegmentFormat.FMP4
+                                                 : com.google.android.gms.cast.HlsSegmentFormat.TS);
+                }
+                com.google.android.gms.cast.MediaLoadRequestData req = new com.google.android.gms.cast.MediaLoadRequestData.Builder()
+                    .setMediaInfo(mib.build()).setAutoplay(true).setCurrentTime(startPos).build();
+                rmc.load(req).setResultCallback(result -> {
+                    if (result.getStatus().isSuccess()) {
+                        android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
+                        startCasting(CAST_CC, null);
+                    } else {
+                        android.widget.Toast.makeText(this, "Chromecast conectou mas recusou o vídeo (código " + result.getStatus().getStatusCode() + "). Formato pode não ser suportado.", android.widget.Toast.LENGTH_LONG).show();
+                    }
+                });
+            });
+        }).start();
+    }
+
+    // TS (MPEG2_TS) por padrão; fMP4 se a playlist tiver #EXT-X-MAP ou segmentos .m4s.
+    // Retorna uma constante String @HlsVideoSegmentFormat (não é enum no Cast SDK).
+    private String detectHlsVideoFormat(String url, String referer) {
+        try {
+            okhttp3.OkHttpClient c = new okhttp3.OkHttpClient();
+            String body = fetchText(c, url, referer);
+            if (body == null) return com.google.android.gms.cast.HlsVideoSegmentFormat.MPEG2_TS;
+            if (body.contains("#EXT-X-STREAM-INF")) { // master → busca a 1ª variante
+                String variant = firstUri(body, url);
+                if (variant != null) { String b2 = fetchText(c, variant, referer); if (b2 != null) body = b2; }
             }
-        });
+            if (body.contains("#EXT-X-MAP") || body.toLowerCase().contains(".m4s"))
+                return com.google.android.gms.cast.HlsVideoSegmentFormat.FMP4;
+        } catch (Exception ignored) {}
+        return com.google.android.gms.cast.HlsVideoSegmentFormat.MPEG2_TS;
+    }
+
+    private String fetchText(okhttp3.OkHttpClient c, String url, String referer) {
+        try {
+            okhttp3.Request.Builder rb = new okhttp3.Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+            if (referer != null && !referer.isEmpty()) rb.header("Referer", referer);
+            try (okhttp3.Response rp = c.newCall(rb.build()).execute()) {
+                return rp.body() != null ? rp.body().string() : null;
+            }
+        } catch (Exception e) { return null; }
+    }
+
+    private String firstUri(String playlist, String baseUrl) {
+        for (String line : playlist.split("\n")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            try { return t.startsWith("http") ? t : new java.net.URL(new java.net.URL(baseUrl), t).toString(); }
+            catch (Exception e) { return null; }
+        }
+        return null;
     }
 
     private String castContentType(String url) {
