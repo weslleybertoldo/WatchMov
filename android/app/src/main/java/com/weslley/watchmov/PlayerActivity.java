@@ -366,6 +366,19 @@ public class PlayerActivity extends Activity {
         });
 
         playUrl(currentUrl, getIntent().getStringExtra(EXTRA_MIME), resolvedStart);
+
+        // Retoma o espelhamento se voltamos pro MESMO título e há cast ativo (o vídeo
+        // segue na TV): reabre o overlay/controles sem re-castar (pausa o local de novo).
+        if (activeCastMode != CAST_NONE && resumeKey != null && resumeKey.equals(activeCastKey)) {
+            if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
+                startCasting(CAST_DLNA, activeDlnaCtrl);
+            } else if (activeCastMode == CAST_CC) {
+                try {
+                    com.google.android.gms.cast.framework.CastSession cs = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession();
+                    if (cs != null && cs.isConnected()) startCasting(CAST_CC, null);
+                } catch (Exception ignored) {}
+            }
+        }
     }
 
     // Toggle do botão "assistido": marca (e pula p/ faltar 1 min, como pedido) ou
@@ -540,6 +553,11 @@ public class PlayerActivity extends Activity {
     // ---- Espelhamento: controle remoto da TV (o player local pausa) ----
     private static final int CAST_NONE = 0, CAST_CC = 1, CAST_DLNA = 2;
     private int castMode = CAST_NONE;
+    // Sessão de cast ATIVA no nível do app (sobrevive ao fechar o player): permite
+    // retomar o overlay/controles ao reabrir o MESMO título, sem re-castar.
+    private static int activeCastMode = CAST_NONE;
+    private static String activeDlnaCtrl;
+    private static String activeCastKey;
     private String dlnaCtrl;
     private boolean dlnaPaused = false;
     private long lastRemotePosMs = 0, lastRemoteDurMs = 0;
@@ -557,6 +575,7 @@ public class PlayerActivity extends Activity {
     // Conectou: pausa o player local e mostra o overlay de controle da TV.
     private void startCasting(int mode, String ctrl) {
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
+        activeCastMode = mode; activeDlnaCtrl = (mode == CAST_DLNA ? ctrl : null); activeCastKey = resumeKey; // p/ retomar ao voltar
         // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
         // o áudio do celular disputava foco com a TV → oscilava. Mudo garante silêncio.
         if (player != null) { player.pause(); player.setPlayWhenReady(false); player.setVolume(0f); }
@@ -584,6 +603,7 @@ public class PlayerActivity extends Activity {
             new Thread(() -> { try { DlnaCastPlugin.controlSync(c, "Stop"); } catch (Exception ignored) {} }).start();
         }
         castMode = CAST_NONE; dlnaCtrl = null;
+        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; // sessão encerrada
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
