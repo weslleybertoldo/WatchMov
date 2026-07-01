@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import Hls from 'hls.js';
 import { toast } from 'sonner';
@@ -8,7 +8,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getCachedStream, setCachedStream, setStreamPosition } from '@/lib/streamCache';
+import { getEntry, addStreams, setChosen, setStreamPosition } from '@/lib/streamCache';
 import { playNative } from '@/lib/nativePlayer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
@@ -55,8 +55,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [pickerOpen, setPickerOpen] = useState(false);                   // lista pra escolher
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
-  const ownRef = useRef<SniffResult | null>(null); ownRef.current = ownStream;
-  const prefRef = useRef(false); prefRef.current = preferIframe;
   const playedRef = useRef(false);   // evita reabrir o ExoPlayer em loop
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
@@ -150,48 +148,54 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : null;
   const src: string | null = nativeOwn ? (ownStream?.url ?? null) : directMode ? videoSrc : embedUrl;
 
-  // Ao abrir/trocar de título/fonte: cache → toca direto; senão captura passiva
-  // ACUMULANDO todos os vídeos detectados (segue ouvindo até o usuário escolher).
+  // Ao abrir: carrega a lista salva; se há um último link escolhido, reabre nele
+  // (ExoPlayer). O sniffer fica SEMPRE ativo no modo servidor, acumulando links
+  // novos na lista salva (mesmo no meio do filme) — nunca perde os já achados.
   useEffect(() => {
     if (!open) return;
-    setCapturedList([]); setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
+    setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
-    if (directMode || !embedUrl || !isNative()) return;
+    if (directMode || !embedUrl || !isNative()) { setCapturedList([]); return; }
 
-    const cached = getCachedStream(tmdbId, type, season, episode);
-    if (cached) { setOwnStream(cached); return; }
+    const entry = getEntry(tmdbId, type, season, episode);
+    const saved = entry?.streams ?? [];
+    setCapturedList(saved);
+    if (entry?.chosenUrl) {
+      setOwnStream(saved.find(x => x.url === entry.chosenUrl) || { url: entry.chosenUrl });
+    }
 
     let alive = true;
     let stop = () => {};
     watchStream(r => {
-      if (!alive || ownRef.current || prefRef.current) return;
+      if (!alive) return;
       setCapturedList(prev => prev.some(x => x.url === r.url) ? prev : [...prev, r]);
+      addStreams([r], tmdbId, type, season, episode);
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
   }, [open, embedUrl, directMode, tmdbId, type, season, episode]);
 
-  // Escolhe um stream detectado → fixa no cache e toca no ExoPlayer.
+  // Escolhe um link → vira o "último aberto" (reabre nele) e toca no ExoPlayer.
   const chooseStream = (r: SniffResult) => {
     setPickerOpen(false); setPreferIframe(false);
     playedRef.current = false;
-    setCachedStream(r, tmdbId, type, season, episode);
+    addStreams([r], tmdbId, type, season, episode);
+    setChosen(r.url, tmdbId, type, season, episode);
     setOwnStream(r);
   };
 
-  // Trocar vídeo: volta pro servidor MANTENDO os já detectados e abre a lista.
-  // O listener segue vivo (ownRef=null volta a acumular). Não limpa nem recaptura.
-  const changeSource = () => {
-    playedRef.current = false;
+  // Assistir pelo servidor (iframe): não muda o "último link" (ao reabrir volta nele).
+  const goServer = () => {
+    setPickerOpen(false);
     setOwnStream(null);
-    setPreferIframe(false);
-    setPickerOpen(capturedList.length > 0);
+    setPreferIframe(true);
+    playedRef.current = false;
   };
 
   // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
   useEffect(() => {
     if (!nativeOwn || !ownStream || playedRef.current) return;
     playedRef.current = true;
-    const startMs = getCachedStream(tmdbId, type, season, episode)?.positionMs ?? 0;
+    const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
     playNative({ url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs })
       .then(res => {
         if (res && res.positionMs > 0) {
@@ -304,6 +308,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         : 'relative z-20 shrink-0 flex items-center justify-between px-3 py-2 bg-black/95'}>
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
+          {/* Botão SEMPRE visível: lista de links capturados (escolher / servidor). */}
+          {!directMode && (
+            <Button variant="ghost" size="icon" className="relative h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
+              title="Links do vídeo" onClick={() => setPickerOpen(true)}>
+              <ListVideo className="w-5 h-5" />
+              {capturedList.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">{capturedList.length}</span>
+              )}
+            </Button>
+          )}
           <div className="relative" hidden={directMode}>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Trocar fonte" onClick={() => setSourceOpen(o => !o)}>
               <Layers className="w-5 h-5" />
@@ -392,8 +406,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-white/50 text-xs">Fechou o player? Use os botões abaixo.</p>
             <div className="flex flex-wrap gap-2 justify-center">
               <Button size="sm" onClick={continueNative}>Continuar</Button>
-              <Button size="sm" variant="outline" onClick={changeSource}>Trocar vídeo</Button>
-              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setPreferIframe(true)}>Servidor</Button>
+              <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>Trocar link</Button>
+              <Button size="sm" variant="ghost" className="text-white/70" onClick={goServer}>Servidor</Button>
             </div>
           </div>
         ) : !src ? (
@@ -452,15 +466,27 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         <div className="absolute inset-0 z-40 bg-black/80 flex items-center justify-center p-4" onClick={() => setPickerOpen(false)}>
           <div className="bg-card border border-border rounded-xl w-full max-w-md max-h-[70vh] overflow-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-3 border-b border-border sticky top-0 bg-card">
-              <h3 className="font-semibold text-foreground text-sm">Vídeos detectados ({capturedList.length})</h3>
+              <h3 className="font-semibold text-foreground text-sm">Links do vídeo ({capturedList.length})</h3>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPickerOpen(false)}><X className="w-4 h-4" /></Button>
             </div>
-            {capturedList.map((s, i) => (
-              <button key={s.url} onClick={() => chooseStream(s)} className="w-full text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
-                <p className="text-sm text-foreground">Vídeo {i + 1} <span className="text-[10px] text-muted-foreground">({s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4'})</span></p>
-                <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
-              </button>
-            ))}
+            <button onClick={goServer} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
+              <Server className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-foreground">Assistir pelo servidor</span>
+            </button>
+            {capturedList.length === 0 ? (
+              <p className="text-xs text-muted-foreground p-4 text-center">Nenhum link ainda. Dê play no servidor e aguarde — os links aparecem aqui.</p>
+            ) : capturedList.map((s, i) => {
+              const chosen = ownStream?.url === s.url;
+              return (
+                <button key={s.url} onClick={() => chooseStream(s)} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground">Link {i + 1} <span className="text-[10px] text-muted-foreground">({s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4'})</span></p>
+                    <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
+                  </div>
+                  {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

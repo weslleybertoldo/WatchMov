@@ -1,49 +1,56 @@
 import type { SniffResult } from '@/lib/streamSniffer';
 
-// Cache da URL capturada por título/episódio. As URLs têm token que expira, então
-// guardamos com timestamp e só reusamos por um tempo (TTL); se o player falhar, o
-// chamador invalida e recaptura.
+// Por título/episódio guarda a LISTA cumulativa de links capturados + o último
+// link aberto (chosenUrl) + a posição. Reabrir → abre o último link direto; a
+// lista só cresce (novos links entram abaixo) e nunca se perde (TTL 12h).
 const KEY = 'watchmov_streamcache';
-const TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const TTL_MS = 12 * 60 * 60 * 1000;
 
-interface Entry extends SniffResult { ts: number; positionMs?: number }
+export interface StreamEntry {
+  streams: SniffResult[];
+  chosenUrl?: string;
+  positionMs?: number;
+  ts: number;
+}
 
-function read(): Record<string, Entry> {
+function read(): Record<string, StreamEntry> {
   try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; }
 }
-function write(data: Record<string, Entry>) {
-  try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
+function write(d: Record<string, StreamEntry>) {
+  try { localStorage.setItem(KEY, JSON.stringify(d)); } catch { /* ignore */ }
 }
-
 function keyFor(tmdbId?: number, type?: string, season?: number, episode?: number): string {
   return `${tmdbId ?? 0}:${type ?? 'movie'}:${season ?? 0}:${episode ?? 0}`;
 }
 
-export interface CachedStream extends SniffResult { positionMs?: number }
-
-export function getCachedStream(tmdbId?: number, type?: string, season?: number, episode?: number): CachedStream | null {
+export function getEntry(tmdbId?: number, type?: string, season?: number, episode?: number): StreamEntry | null {
   const e = read()[keyFor(tmdbId, type, season, episode)];
-  if (!e) return null;
-  if (Date.now() - e.ts > TTL_MS) return null;
-  return { url: e.url, mime: e.mime, referer: e.referer, positionMs: e.positionMs };
+  if (!e || Date.now() - e.ts > TTL_MS) return null;
+  return e;
 }
 
-export function setCachedStream(r: SniffResult, tmdbId?: number, type?: string, season?: number, episode?: number) {
-  const data = read();
-  const prev = data[keyFor(tmdbId, type, season, episode)];
-  data[keyFor(tmdbId, type, season, episode)] = { ...r, ts: Date.now(), positionMs: prev?.positionMs };
-  write(data);
+// Adiciona links à lista (dedup por url; mantém os já salvos, novos entram no fim).
+export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, season?: number, episode?: number) {
+  if (!list.length) return;
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const prev = d[k];
+  const map = new Map<string, SniffResult>();
+  (prev?.streams || []).forEach(s => map.set(s.url, s));
+  list.forEach(s => { if (!map.has(s.url)) map.set(s.url, s); });
+  d[k] = { streams: [...map.values()], chosenUrl: prev?.chosenUrl, positionMs: prev?.positionMs, ts: Date.now() };
+  write(d);
 }
 
-// Atualiza só a posição (retomar de onde parou), mantendo a URL escolhida.
+// Marca o último link aberto (o que reabre automaticamente).
+export function setChosen(url: string, tmdbId?: number, type?: string, season?: number, episode?: number) {
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const prev = d[k] || { streams: [], ts: Date.now() };
+  d[k] = { ...prev, chosenUrl: url, ts: Date.now() };
+  write(d);
+}
+
 export function setStreamPosition(positionMs: number, tmdbId?: number, type?: string, season?: number, episode?: number) {
-  const data = read();
-  const e = data[keyFor(tmdbId, type, season, episode)];
-  if (e) { e.positionMs = positionMs; write(data); }
-}
-
-export function invalidateStream(tmdbId?: number, type?: string, season?: number, episode?: number) {
-  const data = read();
-  delete data[keyFor(tmdbId, type, season, episode)];
-  write(data);
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const e = d[k];
+  if (e) { e.positionMs = positionMs; write(d); }
 }
