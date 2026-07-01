@@ -34,6 +34,15 @@ public class NativePlayerPlugin extends Plugin {
         instance.notifyListeners("playerProgress", d);
     }
 
+    // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
+    public static void reportQuality(String url, int height) {
+        if (instance == null || url == null || height <= 0) return;
+        JSObject d = new JSObject();
+        d.put("url", url);
+        d.put("quality", height + "p");
+        instance.notifyListeners("playerQuality", d);
+    }
+
     @PluginMethod
     public void play(final PluginCall call) {
         final String url = call.getString("url");
@@ -71,6 +80,8 @@ public class NativePlayerPlugin extends Plugin {
         if (result != null && result.getData() != null) {
             pos = result.getData().getLongExtra(PlayerActivity.RESULT_POSITION, 0);
             res.put("url", result.getData().getStringExtra(PlayerActivity.RESULT_URL));
+            res.put("next", result.getData().getBooleanExtra(PlayerActivity.RESULT_NEXT, false));
+            res.put("server", result.getData().getBooleanExtra(PlayerActivity.RESULT_SERVER, false));
         }
         res.put("positionMs", pos);
         call.resolve(res);

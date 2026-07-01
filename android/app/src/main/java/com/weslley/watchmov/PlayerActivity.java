@@ -64,6 +64,7 @@ public class PlayerActivity extends Activity {
     public static final String RESULT_POSITION = "positionMs";
     public static final String RESULT_URL = "url";
     public static final String RESULT_NEXT = "next";
+    public static final String RESULT_SERVER = "server";
 
     private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
@@ -151,11 +152,12 @@ public class PlayerActivity extends Activity {
         bar.setPadding(28, 24, 28, 24);
         bar.setGravity(Gravity.CENTER_VERTICAL);
 
-        Button back = pill("‹ Voltar", v -> finishWithResult(false));
+        Button back = pill("‹ Voltar", v -> finishWithResult(false, false));
+        Button server = pill("▣ Servidor", v -> finishWithResult(false, true));
         Button links = pill("Links", v -> showLinks());
         qualityBtn = pill("Auto", v -> showQuality());
         Button fwd60 = pill("+60s", v -> { if (player != null) player.seekTo(player.getCurrentPosition() + 60000); });
-        Button next = pill("Próximo ⏭", v -> finishWithResult(true));
+        Button next = pill("Próximo ⏭", v -> finishWithResult(true, false));
         Button speed = pill("1x", null);
         speed.setOnClickListener(v -> {
             speedIdx = (speedIdx + 1) % speeds.length;
@@ -177,6 +179,7 @@ public class PlayerActivity extends Activity {
         bar.addView(back);
         View spacer = new View(this);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        bar.addView(server);
         bar.addView(fwd60);
         if (hasNext) bar.addView(next);
         if (urls != null && urls.length > 1) bar.addView(links);
@@ -233,7 +236,10 @@ public class PlayerActivity extends Activity {
 
         player.addListener(new androidx.media3.common.Player.Listener() {
             @Override public void onVideoSizeChanged(VideoSize size) {
-                if (size.height > 0) qualityBtn.setText(size.height + "p");
+                if (size.height > 0) {
+                    qualityBtn.setText(size.height + "p");
+                    NativePlayerPlugin.reportQuality(currentUrl, size.height);
+                }
             }
             @Override public void onPlayerError(PlaybackException error) {
                 status.setText("Erro ao tocar: " + error.getErrorCodeName());
@@ -331,18 +337,20 @@ public class PlayerActivity extends Activity {
             .show();
     }
 
-    private void finishWithResult(boolean next) {
+    private void finishWithResult(boolean next, boolean server) {
+        saveResume();
         Intent data = new Intent();
         if (player != null) data.putExtra(RESULT_POSITION, player.getCurrentPosition());
         data.putExtra(RESULT_URL, currentUrl);
         data.putExtra(RESULT_NEXT, next);
+        data.putExtra(RESULT_SERVER, server);
         setResult(RESULT_OK, data);
         resultSaved = true;
         finish();
     }
 
     @Override
-    public void onBackPressed() { finishWithResult(false); }
+    public void onBackPressed() { finishWithResult(false, false); }
 
     @Override
     protected void onPause() {

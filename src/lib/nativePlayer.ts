@@ -1,11 +1,12 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
 interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string }
-interface PlayResult { positionMs: number; url?: string; next?: boolean }
+interface PlayResult { positionMs: number; url?: string; next?: boolean; server?: boolean }
 
 interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
 }
 
 const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
@@ -15,6 +16,12 @@ const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
 export function onPlayerProgress(cb: (d: { url: string; positionMs: number }) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerProgress', cb);
+}
+
+// Resolução real que o ExoPlayer decodificou pra um link (rotula a lista).
+export function onPlayerQuality(cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle> | null {
+  if (!Capacitor.isNativePlatform()) return null;
+  return NativePlayer.addListener('playerQuality', cb);
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link

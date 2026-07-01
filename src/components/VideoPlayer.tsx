@@ -9,7 +9,11 @@ import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl } from '@/lib/streamCache';
-import { playNative, onPlayerProgress } from '@/lib/nativePlayer';
+import { playNative, onPlayerProgress, onPlayerQuality } from '@/lib/nativePlayer';
+
+// Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
+// no reprodutor se já tiver link capturado.
+let pendingNextInPlayer = false;
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -163,7 +167,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (entry?.lastMode === 'native' && entry.chosenUrl) {
       const ck = streamKey(entry.chosenUrl);
       setOwnStream((entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
+    } else if (pendingNextInPlayer && entry?.streams?.length) {
+      setOwnStream(entry.streams[0]);   // veio do "Próximo" e o ep já tem link → reprodutor
     }
+    pendingNextInPlayer = false;
   }, [open, directMode, tmdbId, type, season, episode]);
 
   // (B) Lista salva + captura passiva — roda também ao trocar de provedor (embedUrl),
@@ -220,12 +227,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`,
     }).then(res => {
       if (!res) return;
-      if (res.url) setChosen(res.url, tmdbId, type, season, episode);   // link que ficou tocando
       if (res.positionMs > 0) {
         setStreamPosition(res.positionMs, tmdbId, type, season, episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
       }
-      if (res.next) onNext?.();   // "Próximo ⏭" → avança o episódio
+      if (res.server) { goServer(); return; }                 // botão Servidor → modo servidor
+      if (res.next) { pendingNextInPlayer = true; onNext?.(); return; }  // Próximo ep
+      if (res.url) setChosen(res.url, tmdbId, type, season, episode);    // guarda o link atual
+      onClose();   // Voltar → fecha direto (volta pro detalhe), sem placeholder
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeOwn, ownStream]);
@@ -238,6 +247,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     let handle: { remove: () => void } | null = null;
     onPlayerProgress?.(({ positionMs }) => {
       if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode);
+    })?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, directMode, tmdbId, type, season, episode]);
+
+  // Aprende a resolução real do link (do ExoPlayer) e rotula na lista.
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerQuality?.(({ url, quality }) => {
+      if (!quality) return;
+      setCapturedList(prev => prev.map(s => streamKey(s.url) === streamKey(url) ? { ...s, quality } : s));
+      addStreams([{ url, quality }], tmdbId, type, season, episode);
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
   }, [open, directMode, tmdbId, type, season, episode]);
