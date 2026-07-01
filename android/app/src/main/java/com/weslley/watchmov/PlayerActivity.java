@@ -153,6 +153,7 @@ public class PlayerActivity extends Activity {
         bar.setGravity(Gravity.CENTER_VERTICAL);
 
         Button back = pill("‹ Voltar", v -> finishWithResult(false, false));
+        Button tv = pill("📺 TV", v -> castToTv());
         Button server = pill("▣ Servidor", v -> finishWithResult(false, true));
         Button links = pill("Links", v -> showLinks());
         qualityBtn = pill("Auto", v -> showQuality());
@@ -179,6 +180,7 @@ public class PlayerActivity extends Activity {
         bar.addView(back);
         View spacer = new View(this);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        bar.addView(tv);
         bar.addView(server);
         bar.addView(fwd60);
         if (hasNext) bar.addView(next);
@@ -319,6 +321,29 @@ public class PlayerActivity extends Activity {
         m = java.util.regex.Pattern.compile("[/_-](240|360|480|540|576|720|1080|1440|2160)[/_.-]").matcher(p);
         if (m.find()) return m.group(1) + "p";
         return "";
+    }
+
+    // Espelhar na TV: descobre DLNA → escolhe → manda a URL atual (a TV toca).
+    private void castToTv() {
+        android.widget.Toast.makeText(this, "Procurando TVs na rede…", android.widget.Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 4000);
+            runOnUiThread(() -> {
+                if (devs.isEmpty()) { android.widget.Toast.makeText(this, "Nenhuma TV encontrada (mesma rede Wi-Fi?)", android.widget.Toast.LENGTH_LONG).show(); return; }
+                String[] names = new String[devs.size()];
+                for (int i = 0; i < devs.size(); i++) names[i] = devs.get(i).name;
+                new AlertDialog.Builder(this).setTitle("Enviar para a TV").setItems(names, (d, i) -> {
+                    final DlnaCastPlugin.Device dev = devs.get(i);
+                    android.widget.Toast.makeText(this, "Enviando para " + dev.name + "…", android.widget.Toast.LENGTH_SHORT).show();
+                    new Thread(() -> {
+                        boolean ok = true;
+                        try { DlnaCastPlugin.castSync(dev.controlUrl, currentUrl, "WatchMov"); } catch (Exception e) { ok = false; }
+                        final boolean fok = ok;
+                        runOnUiThread(() -> android.widget.Toast.makeText(this, fok ? "Tocando na TV — o app vira controle" : "A TV recusou o vídeo (pode exigir Referer)", android.widget.Toast.LENGTH_LONG).show());
+                    }).start();
+                }).show();
+            });
+        }).start();
     }
 
     private void showLinks() {
