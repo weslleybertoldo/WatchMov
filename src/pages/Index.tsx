@@ -17,7 +17,7 @@ import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
 import HistoryView from '@/components/streaming/HistoryView';
 import DownloadView from '@/components/streaming/DownloadView';
-import { continueLabel, totalEpisodesWatched } from '@/lib/watchProgress';
+import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
 import { useDownloads, hasAnyDownload, clearDownloadsFor, downloadedEpisodesOf, setDownloaded, epKey } from '@/lib/downloads';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
@@ -106,7 +106,7 @@ export default function Index() {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
-  const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i) });
+  const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i), progress: continueProgress(i) ?? undefined });
   const continueAll = store.continueWatching.filter(i => i.tmdbId);
   const continueMovies = continueAll.filter(i => i.type === 'movie').map(toCont);
   const continueAnimes = continueAll.filter(isAnime).map(toCont);

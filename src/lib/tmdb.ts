@@ -71,6 +71,7 @@ export interface MediaSummary {
   year?: string;
   type: TmdbMediaType;
   subtitle?: string; // legenda extra no card (ex.: "Eps 5 | Temporada 4")
+  progress?: { pct: number; label: string }; // Continuar assistindo: barra + tempo visto
   genreIds?: number[]; // gêneros do título (pra dedup: fica só na categoria predominante)
 }
 
