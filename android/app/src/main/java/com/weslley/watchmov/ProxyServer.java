@@ -50,8 +50,21 @@ public class ProxyServer extends NanoHTTPD {
         return "http://" + ip + ":" + PORT + "/s?u=" + enc(url) + "&r=" + enc(referer);
     }
 
+    // CORS: o Chromecast (CAF) busca o HLS via XHR e EXIGE esses headers no
+    // manifesto E em todos os segmentos/keys, senão fica preso em "carregando".
+    private static Response cors(Response resp) {
+        resp.addHeader("Access-Control-Allow-Origin", "*");
+        resp.addHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+        resp.addHeader("Access-Control-Allow-Headers", "*");
+        resp.addHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range");
+        return resp;
+    }
+
     @Override
     public Response serve(IHTTPSession session) {
+        if (Method.OPTIONS.equals(session.getMethod())) {
+            return cors(newFixedLengthResponse(Response.Status.OK, "text/plain", ""));
+        }
         String u = session.getParms().get("u");
         String r = session.getParms().get("r");
         if (u == null || u.isEmpty()) return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "no url");
@@ -71,9 +84,7 @@ public class ProxyServer extends NanoHTTPD {
             if (isHls && up.body() != null) {
                 String body = up.body().string();
                 String rewritten = rewrite(body, u, r);
-                Response resp = newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewritten);
-                resp.addHeader("Access-Control-Allow-Origin", "*");
-                return resp;
+                return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewritten));
             }
 
             long len = up.body() != null ? up.body().contentLength() : -1;
@@ -82,8 +93,7 @@ public class ProxyServer extends NanoHTTPD {
             String cr = up.header("Content-Range");
             if (cr != null) resp.addHeader("Content-Range", cr);
             resp.addHeader("Accept-Ranges", "bytes");
-            resp.addHeader("Access-Control-Allow-Origin", "*");
-            return resp;
+            return cors(resp);
         } catch (Exception e) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "proxy_err");
         }

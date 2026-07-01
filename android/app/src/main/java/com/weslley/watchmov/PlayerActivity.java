@@ -448,6 +448,7 @@ public class PlayerActivity extends Activity {
     private com.google.android.gms.cast.framework.SessionManager castSessionManager;
     private com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession> castSessionListener;
     private boolean castConnected = false;
+    private boolean castMediaCbSet = false;
     private android.widget.ImageButton castBtn;
 
     // Cor do botão espelhar: verde quando há sessão Cast ativa, branco quando não.
@@ -640,6 +641,20 @@ public class PlayerActivity extends Activity {
     private void loadOnCast(com.google.android.gms.cast.framework.CastSession session) {
         com.google.android.gms.cast.framework.media.RemoteMediaClient rmc = session.getRemoteMediaClient();
         if (rmc == null) { android.widget.Toast.makeText(this, "Chromecast conectou, mas o player remoto não respondeu.", android.widget.Toast.LENGTH_LONG).show(); return; }
+        // Diagnóstico: se o receiver falhar ao tocar (fica "carregando" e vai a IDLE/erro),
+        // avisa que foi formato/rede em vez de travar mudo.
+        if (!castMediaCbSet) {
+            castMediaCbSet = true;
+            rmc.registerCallback(new com.google.android.gms.cast.framework.media.RemoteMediaClient.Callback() {
+                @Override public void onStatusUpdated() {
+                    com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+                    if (r != null && r.getPlayerState() == com.google.android.gms.cast.MediaStatus.PLAYER_STATE_IDLE
+                        && r.getIdleReason() == com.google.android.gms.cast.MediaStatus.IDLE_REASON_ERROR) {
+                        android.widget.Toast.makeText(PlayerActivity.this, "Chromecast: erro ao reproduzir o vídeo (formato/rede não suportado pelo receiver).", android.widget.Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+        }
         String title = getIntent().getStringExtra(EXTRA_TITLE);
         // O Chromecast busca a URL sozinho e o CDN costuma bloquear (IP/fingerprint)
         // ou servir HLS gzip que o receiver não parseia → fica "carregando". Serve
@@ -715,16 +730,30 @@ public class PlayerActivity extends Activity {
         }).start();
     }
 
+    // IP que a TV/Chromecast (no Wi-Fi) consegue alcançar. ANTES pegava o 1º IPv4
+    // não-loopback — que num aparelho com dados móveis podia ser a interface de
+    // celular (rmnet) → a TV não alcançava e dava "resource not found"/trava.
     private String localIp() {
+        // 1) IP do Wi-Fi direto (o correto p/ a TV na mesma rede).
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+            if (wm != null && wm.getConnectionInfo() != null) {
+                int ip = wm.getConnectionInfo().getIpAddress(); // little-endian
+                if (ip != 0) return String.format(java.util.Locale.US, "%d.%d.%d.%d", ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff);
+            }
+        } catch (Exception ignored) {}
+        // 2) Fallback: endereço site-local (192.168/10/172.16-31), pulando loopback/celular.
         try {
             for (java.util.Enumeration<java.net.NetworkInterface> en = java.net.NetworkInterface.getNetworkInterfaces(); en.hasMoreElements();) {
-                for (java.util.Enumeration<java.net.InetAddress> ia = en.nextElement().getInetAddresses(); ia.hasMoreElements();) {
+                java.net.NetworkInterface ni = en.nextElement();
+                if (ni.isLoopback() || !ni.isUp()) continue;
+                for (java.util.Enumeration<java.net.InetAddress> ia = ni.getInetAddresses(); ia.hasMoreElements();) {
                     java.net.InetAddress a = ia.nextElement();
-                    if (!a.isLoopbackAddress() && a instanceof java.net.Inet4Address) return a.getHostAddress();
+                    if (a instanceof java.net.Inet4Address && a.isSiteLocalAddress()) return a.getHostAddress();
                 }
             }
         } catch (Exception ignored) {}
-        return "127.0.0.1";
+        return null; // sem IP LAN confiável → chamador usa a URL direta
     }
 
     private void showLinks() {
