@@ -299,8 +299,12 @@ public class PlayerActivity extends Activity {
         }
         if (!headers.isEmpty()) http.setDefaultRequestProperties(headers);
 
+        // Buffer maior p/ o HLS via proxy (cada segmento é um round-trip extra):
+        // acumula mais antes de tocar e, sobretudo, ~15s após rebuffer → menos
+        // travadas/paradas pra carregar. prioritizeTime = mantém a janela por tempo.
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-            .setBufferDurationsMs(30000, 120000, 3000, 6000)
+            .setBufferDurationsMs(50000, 180000, 5000, 15000)
+            .setPrioritizeTimeOverSizeThresholds(true)
             .build();
 
         trackSelector = new DefaultTrackSelector(this);
@@ -672,15 +676,17 @@ public class PlayerActivity extends Activity {
                 final String c = dlnaCtrl;
                 new Thread(() -> {
                     long[] pd; try { pd = DlnaCastPlugin.getPositionSync(c); } catch (Exception e) { pd = null; }
-                    final long[] f = pd;
+                    String st; try { st = DlnaCastPlugin.getStateSync(c); } catch (Exception e) { st = null; }
+                    final long[] f = pd; final String fst = st;
                     runOnUiThread(() -> {
                         if (castMode != CAST_DLNA) return;
-                        if (f != null) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
+                        if (f != null && (f[0] > 0 || f[1] > 0)) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
+                        if (fst != null && !fst.isEmpty()) { dlnaPaused = !"PLAYING".equals(fst); updatePlayIcon(!dlnaPaused); }
                         if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
                         updateCastSeek();
                     });
                 }).start();
-                progressHandler.postDelayed(this, 2000);
+                progressHandler.postDelayed(this, 1500);
             }
         }
     };

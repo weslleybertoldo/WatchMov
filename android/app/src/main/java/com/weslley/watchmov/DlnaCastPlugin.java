@@ -183,6 +183,13 @@ public class DlnaCastPlugin extends Plugin {
         return new long[]{ parseTime(tag(body, "RelTime")), parseTime(tag(body, "TrackDuration")) };
     }
 
+    // Estado do transporte: "PLAYING" / "PAUSED_PLAYBACK" / "STOPPED" / "TRANSITIONING".
+    public static String getStateSync(String controlUrl) throws Exception {
+        String body = soapResult(controlUrl, "GetTransportInfo", envelope("GetTransportInfo", "<InstanceID>0</InstanceID>"));
+        String st = tag(body, "CurrentTransportState");
+        return st != null ? st.trim() : "";
+    }
+
     private static String soapResult(String controlUrl, String action, String body) throws Exception {
         Request req = new Request.Builder().url(controlUrl)
             .addHeader("SOAPAction", "\"" + AVT + "#" + action + "\"")

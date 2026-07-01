@@ -25,7 +25,7 @@ public class ProxyServer extends NanoHTTPD {
     private static ProxyServer instance;
     private final OkHttpClient http = new OkHttpClient.Builder()
         .followRedirects(true).followSslRedirects(true)
-        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build();
+        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build();
 
     private ProxyServer() { super(PORT); }
 
