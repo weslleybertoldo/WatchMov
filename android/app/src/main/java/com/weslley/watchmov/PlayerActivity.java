@@ -23,11 +23,18 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
+import androidx.media3.common.Tracks;
+import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
@@ -56,6 +63,8 @@ public class PlayerActivity extends Activity {
     public static final String RESULT_NEXT = "next";
 
     private ExoPlayer player;
+    private DefaultTrackSelector trackSelector;
+    private Button qualityBtn;
     private PlayerView view;
     private TextView status;
     private String currentUrl;
@@ -130,6 +139,7 @@ public class PlayerActivity extends Activity {
 
         Button back = pill("‹ Voltar", v -> finishWithResult(false));
         Button links = pill("Links", v -> showLinks());
+        qualityBtn = pill("Auto", v -> showQuality());
         Button fwd60 = pill("+60s", v -> { if (player != null) player.seekTo(player.getCurrentPosition() + 60000); });
         Button next = pill("Próximo ⏭", v -> finishWithResult(true));
         Button speed = pill("1x", null);
@@ -154,7 +164,7 @@ public class PlayerActivity extends Activity {
         bar.addView(fwd60);
         if (hasNext) bar.addView(next);
         if (urls != null && urls.length > 1) bar.addView(links);
-        bar.addView(speed); bar.addView(resize); bar.addView(rotate);
+        bar.addView(qualityBtn); bar.addView(speed); bar.addView(resize); bar.addView(rotate);
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
         // A barra some/aparece junto com os controles do player.
@@ -183,15 +193,20 @@ public class PlayerActivity extends Activity {
             .setBufferDurationsMs(30000, 120000, 3000, 6000)
             .build();
 
+        trackSelector = new DefaultTrackSelector(this);
         player = new ExoPlayer.Builder(this)
             .setMediaSourceFactory(new DefaultMediaSourceFactory(http))
             .setLoadControl(loadControl)
+            .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(10000)
             .setSeekForwardIncrementMs(10000)
             .build();
         view.setPlayer(player);
 
         player.addListener(new androidx.media3.common.Player.Listener() {
+            @Override public void onVideoSizeChanged(VideoSize size) {
+                if (size.height > 0) qualityBtn.setText(size.height + "p");
+            }
             @Override public void onPlayerError(PlaybackException error) {
                 status.setText("Erro ao tocar: " + error.getErrorCodeName());
                 status.setVisibility(View.VISIBLE);
@@ -219,6 +234,38 @@ public class PlayerActivity extends Activity {
         player.prepare();
         progressHandler.removeCallbacks(progressTick);
         progressHandler.postDelayed(progressTick, 5000);
+    }
+
+    // Qualidade real do vídeo: lê as resoluções das faixas HLS e deixa escolher
+    // (Auto = adaptativo). Trava a resolução via setMaxVideoSize.
+    private void showQuality() {
+        if (player == null) return;
+        List<Integer> heights = new ArrayList<>();
+        for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
+            if (g.getType() != androidx.media3.common.C.TRACK_TYPE_VIDEO) continue;
+            for (int i = 0; i < g.length; i++) {
+                int h = g.getTrackFormat(i).height;
+                if (h > 0 && !heights.contains(h)) heights.add(h);
+            }
+        }
+        Collections.sort(heights, Collections.reverseOrder());
+        if (heights.isEmpty()) return;
+        final String[] labels = new String[heights.size() + 1];
+        labels[0] = "Auto";
+        for (int i = 0; i < heights.size(); i++) labels[i + 1] = heights.get(i) + "p";
+        new AlertDialog.Builder(this)
+            .setTitle("Qualidade")
+            .setItems(labels, (d, i) -> {
+                if (i == 0) {
+                    trackSelector.setParameters(trackSelector.buildUponParameters().clearVideoSizeConstraints());
+                    qualityBtn.setText("Auto");
+                } else {
+                    int h = heights.get(i - 1);
+                    trackSelector.setParameters(trackSelector.buildUponParameters().setMaxVideoSize(Integer.MAX_VALUE, h).setMinVideoSize(0, h));
+                    qualityBtn.setText(h + "p");
+                }
+            })
+            .show();
     }
 
     private void showLinks() {

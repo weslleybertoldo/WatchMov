@@ -1,7 +1,7 @@
 {
   "name": "watch-movies",
   "private": true,
-  "version": "2.68",
+  "version": "2.69",
   "type": "module",
   "engines": {
     "node": ">=22"
