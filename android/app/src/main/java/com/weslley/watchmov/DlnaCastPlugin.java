@@ -120,15 +120,19 @@ public class DlnaCastPlugin extends Plugin {
         // aconteceu"). http-get:*:video/mp4 = streaming HTTP progressivo. OP=01 =
         // aceita seek por byte-range. Como o WVC (contentFeatures.dlna.org / <res>).
         String proto = "http-get:*:video/mp4:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
-        String didl = "&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; "
-            + "xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; "
-            + "xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot;&gt;"
-            + "&lt;item id=&quot;0&quot; parentID=&quot;-1&quot; restricted=&quot;1&quot;&gt;"
-            + "&lt;dc:title&gt;" + esc(title) + "&lt;/dc:title&gt;"
-            + "&lt;res protocolInfo=&quot;" + proto + "&quot;&gt;" + esc(url) + "&lt;/res&gt;"
-            + "&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;";
+        // DIDL como XML NORMAL (esc só na url/title = nível DIDL); depois esc() no DIDL
+        // INTEIRO pro CurrentURIMetaData → escape DUPLO. A URL do proxy tem `&` (?u=..&r=..);
+        // com escape simples a TV desescapa 1x e sobra `&` cru no DIDL interno → XML inválido
+        // → "Invalid Args" (402). O escape duplo entrega `&amp;` válido no DIDL interno.
+        String didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" "
+            + "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+            + "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\">"
+            + "<item id=\"0\" parentID=\"-1\" restricted=\"1\">"
+            + "<dc:title>" + esc(title) + "</dc:title>"
+            + "<res protocolInfo=\"" + proto + "\">" + esc(url) + "</res>"
+            + "<upnp:class>object.item.videoItem</upnp:class></item></DIDL-Lite>";
         soap(controlUrl, "SetAVTransportURI", envelope("SetAVTransportURI",
-            "<InstanceID>0</InstanceID><CurrentURI>" + esc(url) + "</CurrentURI><CurrentURIMetaData>" + didl + "</CurrentURIMetaData>"));
+            "<InstanceID>0</InstanceID><CurrentURI>" + esc(url) + "</CurrentURI><CurrentURIMetaData>" + esc(didl) + "</CurrentURIMetaData>"));
         soap(controlUrl, "Play", envelope("Play", "<InstanceID>0</InstanceID><Speed>1</Speed>"));
     }
 
