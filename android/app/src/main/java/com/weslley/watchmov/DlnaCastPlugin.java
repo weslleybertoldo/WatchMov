@@ -131,6 +131,10 @@ public class DlnaCastPlugin extends Plugin {
             + "<dc:title>" + esc(title) + "</dc:title>"
             + "<res protocolInfo=\"" + proto + "\">" + esc(url) + "</res>"
             + "<upnp:class>object.item.videoItem</upnp:class></item></DIDL-Lite>";
+        // Stop antes: se a TV já está tocando (cast anterior), o SetAVTransportURI é
+        // recusado com "Transition not available" (701). Stop reseta o transporte.
+        // Best-effort — se já estiver parada, o erro do Stop é ignorado.
+        try { soap(controlUrl, "Stop", envelope("Stop", "<InstanceID>0</InstanceID>")); } catch (Exception ignored) {}
         soap(controlUrl, "SetAVTransportURI", envelope("SetAVTransportURI",
             "<InstanceID>0</InstanceID><CurrentURI>" + esc(url) + "</CurrentURI><CurrentURIMetaData>" + esc(didl) + "</CurrentURIMetaData>"));
         soap(controlUrl, "Play", envelope("Play", "<InstanceID>0</InstanceID><Speed>1</Speed>"));

@@ -82,6 +82,7 @@ public class PlayerActivity extends Activity {
     private String mReferer;
     private boolean hasNext = false;
     private boolean watched = false;              // estado atual do "assistido"
+    private boolean userUnwatched = false;        // desmarcou manual → não auto-marcar de novo
     private android.widget.ImageButton watchedBtn;
     private boolean resultSaved = false;
     private String resumeKey;
@@ -95,7 +96,7 @@ public class PlayerActivity extends Activity {
                 NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition(), player.getDuration());
             }
             // "Assistido" automático: quando falta ≤1 min pro fim.
-            if (!watched && player != null) {
+            if (!watched && !userUnwatched && player != null) {
                 long dur = player.getDuration(), pos = player.getCurrentPosition();
                 if (dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
             }
@@ -334,6 +335,7 @@ public class PlayerActivity extends Activity {
                 if (dur > WATCHED_THRESHOLD_MS) player.seekTo(dur - WATCHED_THRESHOLD_MS);
             }
         } else {
+            userUnwatched = true; // desmarcou de propósito → não deixa o tick re-marcar
             setWatched(false);
         }
     }
