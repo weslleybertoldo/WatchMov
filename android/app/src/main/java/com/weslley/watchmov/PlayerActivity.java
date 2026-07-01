@@ -425,8 +425,110 @@ public class PlayerActivity extends Activity {
         return "";
     }
 
-    // Espelhar na TV: descobre DLNA → escolhe → manda a URL atual (a TV toca).
+    // Espelhar na TV: pergunta o método (Chromecast ou DLNA) e delega.
     private void castToTv() {
+        new AlertDialog.Builder(this)
+            .setTitle("Espelhar na TV")
+            .setItems(new String[]{ "Chromecast (Google Cast)", "Enviar para a TV (DLNA)" }, (d, i) -> {
+                if (i == 0) castViaChromecast(); else castViaDlna();
+            }).show();
+    }
+
+    // ---- Chromecast (Google Cast) ----
+    private com.google.android.gms.cast.framework.SessionManager castSessionManager;
+    private com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession> castSessionListener;
+
+    private void castViaChromecast() {
+        final com.google.android.gms.cast.framework.CastContext castContext;
+        try {
+            castContext = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this);
+        } catch (Exception e) {
+            android.widget.Toast.makeText(this, "Chromecast indisponível (atualize o Google Play Services).", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Já conectado numa sessão? carrega direto.
+        com.google.android.gms.cast.framework.CastSession cur = castContext.getSessionManager().getCurrentCastSession();
+        if (cur != null && cur.isConnected()) { registerCastListener(castContext); loadOnCast(cur); return; }
+
+        // Descobre os dispositivos Cast na rede (mDNS) e lista num AlertDialog (o tema
+        // desta Activity não é AppCompat, então evitamos o chooser nativo do Cast SDK).
+        final androidx.mediarouter.media.MediaRouter router = androidx.mediarouter.media.MediaRouter.getInstance(this);
+        final androidx.mediarouter.media.MediaRouteSelector selector = new androidx.mediarouter.media.MediaRouteSelector.Builder()
+            .addControlCategory(com.google.android.gms.cast.CastMediaControlIntent.categoryForCast(
+                com.google.android.gms.cast.CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID))
+            .build();
+        final androidx.mediarouter.media.MediaRouter.Callback cb = new androidx.mediarouter.media.MediaRouter.Callback() {};
+        router.addCallback(selector, cb, androidx.mediarouter.media.MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN);
+        android.widget.Toast.makeText(this, "Procurando Chromecast na rede…", android.widget.Toast.LENGTH_SHORT).show();
+
+        progressHandler.postDelayed(() -> {
+            final List<androidx.mediarouter.media.MediaRouter.RouteInfo> routes = new ArrayList<>();
+            for (androidx.mediarouter.media.MediaRouter.RouteInfo r : router.getRoutes()) {
+                if (r.matchesSelector(selector) && !r.isDefaultOrBluetooth()) routes.add(r);
+            }
+            router.removeCallback(cb);
+            if (routes.isEmpty()) {
+                android.widget.Toast.makeText(this, "Nenhum Chromecast encontrado — confira se está no mesmo Wi-Fi.", android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
+            String[] names = new String[routes.size()];
+            for (int i = 0; i < routes.size(); i++) names[i] = routes.get(i).getName();
+            new AlertDialog.Builder(this).setTitle("Chromecast").setItems(names, (d, i) -> {
+                registerCastListener(castContext);
+                android.widget.Toast.makeText(this, "Conectando a " + routes.get(i).getName() + "…", android.widget.Toast.LENGTH_SHORT).show();
+                routes.get(i).select();
+            }).show();
+        }, 4000);
+    }
+
+    private void registerCastListener(com.google.android.gms.cast.framework.CastContext castContext) {
+        castSessionManager = castContext.getSessionManager();
+        if (castSessionListener != null) return;
+        castSessionListener = new com.google.android.gms.cast.framework.SessionManagerListener<com.google.android.gms.cast.framework.CastSession>() {
+            @Override public void onSessionStarted(com.google.android.gms.cast.framework.CastSession s, String id) { loadOnCast(s); }
+            @Override public void onSessionResumed(com.google.android.gms.cast.framework.CastSession s, boolean w) { loadOnCast(s); }
+            @Override public void onSessionStartFailed(com.google.android.gms.cast.framework.CastSession s, int err) {
+                android.widget.Toast.makeText(PlayerActivity.this, "Falha ao conectar no Chromecast (" + err + ").", android.widget.Toast.LENGTH_LONG).show();
+            }
+            @Override public void onSessionStarting(com.google.android.gms.cast.framework.CastSession s) {}
+            @Override public void onSessionEnding(com.google.android.gms.cast.framework.CastSession s) {}
+            @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) {}
+            @Override public void onSessionResuming(com.google.android.gms.cast.framework.CastSession s, String id) {}
+            @Override public void onSessionResumeFailed(com.google.android.gms.cast.framework.CastSession s, int e) {}
+            @Override public void onSessionSuspended(com.google.android.gms.cast.framework.CastSession s, int r) {}
+        };
+        castSessionManager.addSessionManagerListener(castSessionListener, com.google.android.gms.cast.framework.CastSession.class);
+    }
+
+    private void loadOnCast(com.google.android.gms.cast.framework.CastSession session) {
+        com.google.android.gms.cast.framework.media.RemoteMediaClient rmc = session.getRemoteMediaClient();
+        if (rmc == null) { android.widget.Toast.makeText(this, "Chromecast conectou, mas o player remoto não respondeu.", android.widget.Toast.LENGTH_LONG).show(); return; }
+        String title = getIntent().getStringExtra(EXTRA_TITLE);
+        com.google.android.gms.cast.MediaMetadata md = new com.google.android.gms.cast.MediaMetadata(com.google.android.gms.cast.MediaMetadata.MEDIA_TYPE_MOVIE);
+        md.putString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE, title != null ? title : "WatchMov");
+        com.google.android.gms.cast.MediaInfo info = new com.google.android.gms.cast.MediaInfo.Builder(currentUrl)
+            .setStreamType(com.google.android.gms.cast.MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType(castContentType(currentUrl))
+            .setMetadata(md)
+            .build();
+        com.google.android.gms.cast.MediaLoadRequestData req = new com.google.android.gms.cast.MediaLoadRequestData.Builder()
+            .setMediaInfo(info).setAutoplay(true)
+            .setCurrentTime(player != null ? player.getCurrentPosition() : 0)
+            .build();
+        rmc.load(req);
+        android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
+    }
+
+    private String castContentType(String url) {
+        String p = url != null ? url.split("\\?")[0].toLowerCase() : "";
+        if (p.endsWith(".m3u8") || p.contains("master") || p.contains("/m3/") || p.endsWith(".txt")) return "application/x-mpegurl";
+        if (p.endsWith(".mpd")) return "application/dash+xml";
+        return "video/mp4";
+    }
+
+    // ---- DLNA / UPnP (fallback) ----
+    // Espelhar na TV: descobre DLNA → escolhe → manda a URL atual (a TV toca).
+    private void castViaDlna() {
         android.widget.Toast.makeText(this, "Procurando TVs na rede…", android.widget.Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 6000);
@@ -516,6 +618,9 @@ public class PlayerActivity extends Activity {
     protected void onDestroy() {
         progressHandler.removeCallbacks(progressTick);
         if (player != null) { player.release(); player = null; }
+        if (castSessionManager != null && castSessionListener != null) {
+            castSessionManager.removeSessionManagerListener(castSessionListener, com.google.android.gms.cast.framework.CastSession.class);
+        }
         super.onDestroy();
     }
 

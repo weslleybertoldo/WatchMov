@@ -39,6 +39,11 @@
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:exported="false" />
 
+        <!-- Google Cast (Chromecast): registra o OptionsProvider (Default Media Receiver) -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.weslley.watchmov.CastOptionsProvider" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
