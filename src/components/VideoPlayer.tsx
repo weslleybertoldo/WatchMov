@@ -221,7 +221,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     playedRef.current = true;
     const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
     playNative({
-      url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
+      url: ownStream.url, referer: ownStream.referer || embedUrl || undefined, mime: ownStream.mime, title, startMs,
       urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
       qualities: capturedList.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`,
