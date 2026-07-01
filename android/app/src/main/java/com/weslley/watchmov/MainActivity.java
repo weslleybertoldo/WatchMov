@@ -7,8 +7,11 @@ import android.view.View;
 import android.view.Window;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
+
+import java.util.Map;
 
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -93,6 +96,23 @@ public class MainActivity extends BridgeActivity {
                     return true;
                 }
                 return super.shouldOverrideUrlLoading(view, request);
+            }
+
+            // Sniffer passivo: observa o tráfego do iframe do servidor (que roda
+            // neste mesmo WebView) e, ao ver a URL do stream, avisa o JS via plugin.
+            // Só emite quando o JS "armou" a captura (StreamSnifferPlugin.watching).
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
+                    String u = request.getUrl().toString();
+                    if (StreamSnifferPlugin.looksLikeVideo(u)) {
+                        String ref = null;
+                        Map<String, String> h = request.getRequestHeaders();
+                        if (h != null) ref = h.get("Referer");
+                        StreamSnifferPlugin.onVideoUrl(u, ref);
+                    }
+                }
+                return super.shouldInterceptRequest(view, request);
             }
         });
     }

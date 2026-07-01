@@ -7,7 +7,8 @@ import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
-import { sniffStream, type SniffResult } from '@/lib/streamSniffer';
+import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
+import { getCachedStream, setCachedStream, invalidateStream } from '@/lib/streamCache';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -45,10 +46,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Sniffer: tenta capturar a URL do stream do servidor pra tocar no player próprio.
-  // 'trying' = tentando; 'ok' = achou; 'fail' = não achou (cai no iframe do servidor).
-  const [sniff, setSniff] = useState<{ status: 'idle' | 'trying' | 'ok' | 'fail'; res?: SniffResult }>({ status: 'idle' });
-  const [forceIframe, setForceIframe] = useState(false);   // fallback manual pro servidor (botão)
+  // Captura passiva (estilo Web Video Cast): o iframe do servidor toca normal e o
+  // nativo observa o tráfego; ao achar o stream, aparece o banner. Cache → reabre
+  // direto no player. ownStream = URL escolhida pro player próprio.
+  const [ownStream, setOwnStream] = useState<SniffResult | null>(null);
+  const [captured, setCaptured] = useState<SniffResult | null>(null);  // aguardando decisão (banner)
+  const [preferIframe, setPreferIframe] = useState(false);             // usuário optou por ficar no servidor
+  const [retry, setRetry] = useState(0);                               // força recaptura (ex. link expirou)
+  const ownRef = useRef<SniffResult | null>(null); ownRef.current = ownStream;
+  const prefRef = useRef(false); prefRef.current = preferIframe;
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
   const [subsOpen, setSubsOpen] = useState(false);
@@ -135,38 +141,39 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     embedUrl += `&resumeAt=${Math.floor(resumeAt)}`;
   }
 
-  // Toca no player próprio (<video>) quando: Stremio/torrent (directMode) OU o
-  // sniffer capturou o stream e o usuário não forçou o servidor.
-  const snifferUrl = sniff.status === 'ok' && !forceIframe ? sniff.res?.url ?? null : null;
-  const ownPlayer = directMode || !!snifferUrl;
-  const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : snifferUrl;
+  // Toca no player próprio quando: Stremio/torrent (directMode) OU capturamos o
+  // stream e o usuário não optou por ficar no servidor.
+  const ownPlayer = directMode || (!!ownStream && !preferIframe);
+  const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : (ownPlayer ? ownStream?.url ?? null : null);
   const src: string | null = ownPlayer ? videoSrc : embedUrl;
 
-  // Reseta a captura ao abrir/trocar de servidor ou título (não dispara sozinho:
-  // é opt-in pelo botão "Meu player" → abre o WebView visível de captura).
+  // Ao abrir/trocar de título/fonte: tenta o cache; senão arma a captura passiva.
   useEffect(() => {
-    setForceIframe(false);
-    setSniff({ status: 'idle' });
-  }, [open, embedUrl, directMode]);
+    if (!open) return;
+    setCaptured(null); setPreferIframe(false); setOwnStream(null);
+    if (directMode || !embedUrl || !isNative()) return;
 
-  // Abre o WebView visível de captura; se pegar a URL, toca no player próprio.
-  const captureFromServer = async () => {
-    if (sniff.status === 'ok' && sniff.res?.url) { setForceIframe(false); return; }  // já capturou → só volta
-    if (!embedUrl || !Capacitor.isNativePlatform()) {
-      toast.info('Disponível só no app', { description: 'A captura do vídeo roda no APK Android.' });
-      return;
-    }
-    setSniff({ status: 'trying' });
-    const r = await sniffStream(embedUrl);
-    if (r?.url) { setForceIframe(false); setSniff({ status: 'ok', res: r }); }
-    else { setSniff({ status: 'fail' }); }   // cancelou/não capturou → segue no servidor
+    const cached = getCachedStream(tmdbId, type, season, episode);
+    if (cached) { setOwnStream(cached); return; }   // reabre direto no player próprio
+
+    let alive = true;
+    let stop = () => {};
+    watchStream(r => { if (alive && !ownRef.current && !prefRef.current) setCaptured(prev => prev ?? r); })
+      .then(fn => { if (alive) stop = fn; else fn(); });
+    return () => { alive = false; stop(); };
+  }, [open, embedUrl, directMode, tmdbId, type, season, episode, retry]);
+
+  // Banner "Reproduzir": adota a URL capturada e cacheia pra próxima vez.
+  const playInOwn = (r: SniffResult) => {
+    setOwnStream(r); setCaptured(null); setPreferIframe(false);
+    setCachedStream(r, tmdbId, type, season, episode);
   };
 
   // Anexa a fonte ao <video> (hls.js pra .m3u8; src direto pro resto).
   useEffect(() => {
     const v = videoRef.current;
     if (!open || !ownPlayer || !videoSrc || !v) return;
-    const isHls = /\.m3u8(\?|$)/i.test(videoSrc) || sniff.res?.mime?.includes('mpegurl');
+    const isHls = /\.m3u8(\?|$)/i.test(videoSrc) || ownStream?.mime?.includes('mpegurl');
     let hls: Hls | null = null;
     if (isHls && !v.canPlayType('application/vnd.apple.mpegurl') && Hls.isSupported()) {
       hls = new Hls({ enableWorker: true });
@@ -176,7 +183,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       v.src = videoSrc;
     }
     return () => { if (hls) hls.destroy(); };
-  }, [open, ownPlayer, videoSrc, sniff.res?.mime]);
+  }, [open, ownPlayer, videoSrc, ownStream?.mime]);
 
   useEffect(() => {
     if (!open) return;
@@ -278,17 +285,19 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               </div>
             )}
           </div>
-          {!directMode && !ownPlayer && (
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
-              title="Assistir no meu player (captura do servidor)" onClick={captureFromServer} disabled={sniff.status === 'trying'}>
-              {sniff.status === 'trying' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-            </Button>
-          )}
-          {!directMode && ownPlayer && (
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-primary hover:bg-white/10"
-              title="Voltar pro servidor" onClick={() => setForceIframe(true)}>
-              <Server className="w-5 h-5" />
-            </Button>
+          {/* Alterna player próprio ↔ servidor (só depois de ter capturado uma URL). */}
+          {!directMode && ownStream && (
+            ownPlayer ? (
+              <Button variant="ghost" size="icon" className="h-9 w-9 text-primary hover:bg-white/10"
+                title="Ficar no servidor" onClick={() => setPreferIframe(true)}>
+                <Server className="w-5 h-5" />
+              </Button>
+            ) : (
+              <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
+                title="Voltar pro meu player" onClick={() => setPreferIframe(false)}>
+                <Sparkles className="w-5 h-5" />
+              </Button>
+            )
           )}
           {directMode && (
             <div className="relative">
@@ -355,12 +364,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-amber-400">Formato não suportado no navegador: {tor.name}</p>
             <p className="text-white/50 text-xs">O navegador só decodifica MP4 (H.264) e WebM. Este arquivo (provável .mkv/.avi) não toca aqui — escolha uma opção MP4 ou abra no Stremio.</p>
           </div>
-        ) : !directMode && sniff.status === 'trying' ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <p>Preparando o vídeo…</p>
-            <p className="text-white/50 text-xs">Se não conseguir, abre direto no servidor.</p>
-          </div>
         ) : !src ? (
           <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
         ) : ownPlayer ? (
@@ -382,6 +385,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               if (secs > 0 && Math.abs(secs - lastSavedRef.current) >= 30) { lastSavedRef.current = secs; onProgress?.(secs); }
             }}
             onEnded={() => { if (!completedRef.current) { completedRef.current = true; onCompleted?.(); } }}
+            onError={() => {
+              // Stream capturado falhou (token expirado / 403) → invalida e recaptura.
+              if (ownStream && !directUrl && !torrent) {
+                invalidateStream(tmdbId, type, season, episode);
+                toast.info('O link do vídeo expirou', { description: 'Voltando ao servidor pra recapturar.' });
+                setOwnStream(null); setCaptured(null); setPreferIframe(false);
+                setRetry(n => n + 1);
+              }
+            }}
           >
             {subVtt && <track kind="subtitles" src={subVtt} srcLang="pt" label="Português" default />}
           </video>
@@ -397,6 +409,19 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           />
         )}
       </div>
+
+      {/* Banner: vídeo capturado em background enquanto assiste no servidor. */}
+      {!directMode && captured && !ownPlayer && (
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-6 z-30 w-[92%] max-w-md bg-card border border-primary/40 rounded-xl shadow-2xl p-3 flex items-center gap-3 animate-fade-in">
+          <Sparkles className="w-5 h-5 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">Vídeo pronto no seu player</p>
+            <p className="text-xs text-muted-foreground">Controles, baixar e espelhar.</p>
+          </div>
+          <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setCaptured(null)}>Servidor</Button>
+          <Button size="sm" className="shrink-0" onClick={() => playInOwn(captured)}>Reproduzir</Button>
+        </div>
+      )}
 
       {castOpen && (
         <div className="absolute inset-0 z-10 bg-black/80 flex items-end sm:items-center justify-center p-4" onClick={() => setCastOpen(false)}>

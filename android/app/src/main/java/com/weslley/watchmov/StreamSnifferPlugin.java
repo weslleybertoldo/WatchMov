@@ -1,52 +1,59 @@
 package com.weslley.watchmov;
 
-import android.app.Activity;
-import android.content.Intent;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
-import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * Abre o WebView VISÍVEL de captura (SnifferActivity). O usuário vê a página do
- * servidor e interage (play/captcha); ao detectar o stream, a Activity devolve a
- * URL e o app troca pro player próprio. Cancelar = o app segue no iframe.
+ * Sniffer PASSIVO (estilo Web Video Cast): o iframe do servidor toca no WebView
+ * principal do app; o WebViewClient do MainActivity observa o tráfego e, quando o
+ * JS está "armado" (startWatching), reporta a URL do stream via evento streamFound.
+ * O JS decide (banner "Reproduzir no meu player / Ficar no servidor") e cacheia.
  */
 @CapacitorPlugin(name = "StreamSniffer")
 public class StreamSnifferPlugin extends Plugin {
 
-    @PluginMethod
-    public void sniff(final PluginCall call) {
-        final String url = call.getString("url");
-        if (url == null || url.isEmpty()) { call.reject("no_url"); return; }
-        Intent intent = new Intent(getContext(), SnifferActivity.class);
-        intent.putExtra(SnifferActivity.EXTRA_URL, url);
-        startActivityForResult(call, intent, "sniffResult");
+    private static StreamSnifferPlugin instance;
+    private static volatile boolean watching = false;
+    private static volatile String lastUrl = null;
+
+    @Override
+    public void load() { instance = this; }
+
+    public static boolean isWatching() { return watching; }
+
+    // Detecção por extensão (mesma lista do WVC), ignorando segmentos HLS (.ts).
+    public static boolean looksLikeVideo(String url) {
+        if (url == null) return false;
+        String u = url.toLowerCase();
+        int q = u.indexOf('?');
+        String path = q >= 0 ? u.substring(0, q) : u;
+        if (path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".mp4")
+            || path.endsWith(".mkv") || path.endsWith(".webm") || path.endsWith(".m4v")
+            || path.endsWith(".mov") || path.endsWith(".avi") || path.endsWith(".flv")) return true;
+        return u.contains("master.m3u8") || u.contains(".m3u8") || u.contains(".mpd") || u.contains("/manifest");
     }
 
-    @ActivityCallback
-    private void sniffResult(PluginCall call, androidx.activity.result.ActivityResult result) {
-        if (call == null) return;
-        JSObject res = new JSObject();
-        if (result != null && result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
-            Intent data = result.getData();
-            String url = data.getStringExtra(SnifferActivity.RESULT_URL);
-            if (url != null) {
-                res.put("url", url);
-                res.put("mime", data.getStringExtra(SnifferActivity.RESULT_MIME));
-                String ref = data.getStringExtra(SnifferActivity.RESULT_REFERER);
-                if (ref != null) res.put("referer", ref);
-            }
-        }
-        // Sem url → cancelado/sem captura; o JS trata como "usar servidor".
-        call.resolve(res);
+    public static void onVideoUrl(String url, String referer) {
+        if (instance == null || !watching || url == null) return;
+        if (url.equals(lastUrl)) return;   // dedup
+        lastUrl = url;
+        JSObject d = new JSObject();
+        d.put("url", url);
+        if (referer != null) d.put("referer", referer);
+        String lu = url.toLowerCase();
+        d.put("mime", lu.contains(".mpd") ? "application/dash+xml"
+            : (lu.contains(".m3u8") || lu.contains("/manifest")) ? "application/vnd.apple.mpegurl"
+            : "video/mp4");
+        instance.notifyListeners("streamFound", d);
     }
 
+    // JS arma/desarma a captura (evita capturar o próprio hls.js do player).
     @PluginMethod
-    public void cancel(final PluginCall call) {
-        call.resolve();
-    }
+    public void startWatching(PluginCall call) { watching = true; lastUrl = null; call.resolve(); }
+
+    @PluginMethod
+    public void stopWatching(PluginCall call) { watching = false; call.resolve(); }
 }

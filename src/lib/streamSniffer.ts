@@ -1,26 +1,25 @@
-import { registerPlugin, Capacitor } from '@capacitor/core';
+import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
-// url presente = capturou; senão vem só o diagnóstico (seenCount/sample).
-export interface SniffResult { url?: string; mime?: string; referer?: string; seenCount?: number; sample?: string[] }
+export interface SniffResult { url: string; mime?: string; referer?: string }
 
 interface StreamSnifferPlugin {
-  sniff(opts: { url: string; timeoutMs?: number }): Promise<SniffResult>;
-  cancel(): Promise<void>;
+  startWatching(): Promise<void>;
+  stopWatching(): Promise<void>;
+  addListener(event: 'streamFound', cb: (r: SniffResult) => void): Promise<PluginListenerHandle>;
 }
 
 const StreamSniffer = registerPlugin<StreamSnifferPlugin>('StreamSniffer');
 
-// Captura a URL real do stream por trás do embed (só no APK Android; na web/local
-// retorna null → o app usa o iframe do servidor). Sem url, devolve o diagnóstico.
-export async function sniffStream(url: string, timeoutMs = 20000): Promise<SniffResult | null> {
-  if (!Capacitor.isNativePlatform()) return null;
-  try {
-    return await StreamSniffer.sniff({ url, timeoutMs });
-  } catch {
-    return null;
-  }
-}
+export const isNative = () => Capacitor.isNativePlatform();
 
-export function cancelSniff(): void {
-  if (Capacitor.isNativePlatform()) StreamSniffer.cancel().catch(() => {});
+// Arma a captura passiva (o iframe do servidor toca no WebView do app e o nativo
+// observa o tráfego). Retorna o handle do listener + função de parar.
+export async function watchStream(onFound: (r: SniffResult) => void): Promise<() => void> {
+  if (!isNative()) return () => {};
+  const handle = await StreamSniffer.addListener('streamFound', onFound);
+  await StreamSniffer.startWatching();
+  return () => {
+    StreamSniffer.stopWatching().catch(() => {});
+    handle.remove();
+  };
 }
