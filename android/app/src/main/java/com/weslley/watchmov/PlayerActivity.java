@@ -677,11 +677,18 @@ public class PlayerActivity extends Activity {
         String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
         com.google.android.gms.cast.MediaMetadata md = new com.google.android.gms.cast.MediaMetadata(com.google.android.gms.cast.MediaMetadata.MEDIA_TYPE_MOVIE);
         md.putString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE, title != null ? title : "WatchMov");
-        com.google.android.gms.cast.MediaInfo info = new com.google.android.gms.cast.MediaInfo.Builder(castUrl)
+        String castCt = castContentType(currentUrl);
+        com.google.android.gms.cast.MediaInfo.Builder mib = new com.google.android.gms.cast.MediaInfo.Builder(castUrl)
             .setStreamType(com.google.android.gms.cast.MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(castContentType(currentUrl))
-            .setMetadata(md)
-            .build();
+            .setContentType(castCt)
+            .setMetadata(md);
+        // HLS: dica de formato dos segmentos pro Default Media Receiver demuxar (senão
+        // costuma dar tela preta com segmentos TS). TS + MPEG2_TS é o caso comum.
+        if (castCt.contains("mpegurl")) {
+            mib.setHlsSegmentFormat(com.google.android.gms.cast.HlsSegmentFormat.TS)
+               .setHlsVideoSegmentFormat(com.google.android.gms.cast.HlsVideoSegmentFormat.MPEG2_TS);
+        }
+        com.google.android.gms.cast.MediaInfo info = mib.build();
         com.google.android.gms.cast.MediaLoadRequestData req = new com.google.android.gms.cast.MediaLoadRequestData.Builder()
             .setMediaInfo(info).setAutoplay(true)
             .setCurrentTime(player != null ? player.getCurrentPosition() : 0)

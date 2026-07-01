@@ -54,9 +54,14 @@ public class ProxyServer extends NanoHTTPD {
     // manifesto E em todos os segmentos/keys, senão fica preso em "carregando".
     private static Response cors(Response resp) {
         resp.addHeader("Access-Control-Allow-Origin", "*");
-        resp.addHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+        resp.addHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
         resp.addHeader("Access-Control-Allow-Headers", "*");
         resp.addHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range");
+        // Headers DLNA (como o WVC os3.java): muitas TVs sondam com HEAD +
+        // getcontentfeatures.dlna.org e recusam ("resource not found") sem estes.
+        resp.addHeader("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000");
+        resp.addHeader("TransferMode.DLNA.ORG", "Streaming");
+        resp.addHeader("RealTimeInfo.DLNA.ORG", "DLNA.ORG_TLAG=*");
         return resp;
     }
 
