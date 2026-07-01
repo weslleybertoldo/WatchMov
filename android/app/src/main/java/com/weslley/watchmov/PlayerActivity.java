@@ -209,9 +209,10 @@ public class PlayerActivity extends Activity {
             String tag = m.contains("mpegurl") ? "HLS" : m.contains("dash") ? "DASH" : "MP4";
             labels[i] = "Link " + (i + 1) + " (" + tag + ")" + (urls[i].equals(currentUrl) ? "  ✓" : "");
         }
+        final long pos = player != null ? player.getCurrentPosition() : 0;   // continua no mesmo tempo
         new AlertDialog.Builder(this)
             .setTitle("Trocar link")
-            .setItems(labels, (d, i) -> playUrl(urls[i], mimes != null && i < mimes.length ? mimes[i] : null, 0))
+            .setItems(labels, (d, i) -> playUrl(urls[i], mimes != null && i < mimes.length ? mimes[i] : null, pos))
             .show();
     }
 
