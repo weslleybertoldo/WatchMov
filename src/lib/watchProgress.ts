@@ -26,18 +26,25 @@ export function totalEpisodesWatched(item: WatchItem): number {
   return (item.seasons || []).reduce((sum, s) => sum + episodesWatched(s).length, 0);
 }
 
-// Progresso do "Continuar assistindo" (só a fração pra barra — sem texto de tempo).
-// Usa a posição/duração REAIS do player (streamCache); filme sem streamCache cai
-// pro store. Retorna null (sem barra) quando não há posição confiável.
-export function continueProgress(item: WatchItem): { pct: number } | null {
+// Tempo → relógio: "9:54" ou "1:46:05".
+function fmtClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// Progresso do "Continuar assistindo": barra + tempo (posição / duração) do episódio
+// ou filme atual. Usa posição/duração REAIS do player (streamCache); filme sem
+// streamCache cai pro store. Retorna null (sem barra) quando não há posição confiável.
+export function continueProgress(item: WatchItem): { pct: number; label: string } | null {
   const latest = latestPosition(item.tmdbId);
   if (latest && latest.positionMs > 0 && latest.durationMs && latest.durationMs > 0) {
-    return { pct: Math.min(1, latest.positionMs / latest.durationMs) };
+    return { pct: Math.min(1, latest.positionMs / latest.durationMs), label: `${fmtClock(latest.positionMs)} / ${fmtClock(latest.durationMs)}` };
   }
   // Filme sem posição no streamCache: usa watchedDuration/totalDuration (minutos).
   if (item.type === 'movie') {
-    const total = item.totalDuration || 0, watched = item.watchedDuration || 0;
-    if (watched > 0 && total > 0) return { pct: Math.min(1, watched / total) };
+    const total = (item.totalDuration || 0) * 60000, watched = (item.watchedDuration || 0) * 60000;
+    if (watched > 0 && total > 0) return { pct: Math.min(1, watched / total), label: `${fmtClock(watched)} / ${fmtClock(total)}` };
   }
   return null;
 }

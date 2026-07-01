@@ -42,8 +42,11 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
         )}
       </div>
       {media.progress && (
-        <div className="mt-1 h-1 rounded-full bg-muted overflow-hidden">
-          <div className="h-full bg-primary" style={{ width: `${Math.round(media.progress.pct * 100)}%` }} />
+        <div className="mt-1">
+          <div className="h-1 rounded-full bg-muted overflow-hidden">
+            <div className="h-full bg-primary" style={{ width: `${Math.round(media.progress.pct * 100)}%` }} />
+          </div>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">{media.progress.label}</p>
         </div>
       )}
     </button>

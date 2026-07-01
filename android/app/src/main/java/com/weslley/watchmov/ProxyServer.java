@@ -65,6 +65,11 @@ public class ProxyServer extends NanoHTTPD {
         if (Method.OPTIONS.equals(session.getMethod())) {
             return cors(newFixedLengthResponse(Response.Status.OK, "text/plain", ""));
         }
+        // Teste de alcance: http://<ip>:8099/ping → "ok" (confirma que a TV/rede
+        // consegue falar com o celular; se não abrir de outro aparelho = AP isolation).
+        if (session.getUri() != null && session.getUri().endsWith("/ping")) {
+            return cors(newFixedLengthResponse(Response.Status.OK, "text/plain", "ok"));
+        }
         String u = session.getParms().get("u");
         String r = session.getParms().get("r");
         if (u == null || u.isEmpty()) return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "no url");

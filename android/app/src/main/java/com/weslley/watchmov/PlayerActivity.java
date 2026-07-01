@@ -490,7 +490,9 @@ public class PlayerActivity extends Activity {
     private void startCasting(int mode, String ctrl) {
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
         if (player != null) player.setPlayWhenReady(false);
-        if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
+        String ip = localIp();
+        String diag = ip != null ? "\nSe não tocar, teste http://" + ip + ":" + ProxyServer.PORT + "/ping de outro aparelho no Wi-Fi" : "";
+        if (castStatusTv != null) castStatusTv.setText((mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)") + diag);
         if (castOverlay != null) castOverlay.setVisibility(View.VISIBLE);
         if (view != null) view.hideController();
         updatePlayIcon(true);
