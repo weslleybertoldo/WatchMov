@@ -105,9 +105,9 @@ public class StreamSnifferPlugin extends Plugin {
         if (!emitted.add(noQuery(url))) return;
         final String fMime = mime != null ? mime : mimeFor(url);
         final boolean isHls = fMime.toLowerCase().contains("mpegurl") || url.toLowerCase().contains(".m3u8");
-        // HLS: baixa o master e lê a maior RESOLUTION pra rotular a qualidade.
+        // Tenta descobrir a resolução SEM tocar (rotula o link já na captura).
         pool.submit(() -> {
-            String quality = isHls ? hlsQuality(url, referer) : "";
+            String quality = probeQuality(url, referer, isHls);
             JSObject d = new JSObject();
             d.put("url", url);
             if (referer != null) d.put("referer", referer);
@@ -115,6 +115,26 @@ public class StreamSnifferPlugin extends Plugin {
             if (!quality.isEmpty()) d.put("quality", quality);
             instance.notifyListeners("streamFound", d);
         });
+    }
+
+    // Resolução sem tocar: 1) master m3u8 (RESOLUTION); 2) metadados do vídeo.
+    private static String probeQuality(String url, String referer, boolean isHls) {
+        if (isHls) {
+            String q = hlsQuality(url, referer);
+            if (!q.isEmpty()) return q;
+        }
+        android.media.MediaMetadataRetriever mmr = new android.media.MediaMetadataRetriever();
+        try {
+            java.util.HashMap<String, String> h = new java.util.HashMap<>();
+            if (referer != null) h.put("Referer", referer);
+            h.put("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+            mmr.setDataSource(url, h);
+            String hh = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+            if (hh != null && !hh.trim().isEmpty()) return hh.trim() + "p";
+        } catch (Exception ignored) {} finally {
+            try { mmr.release(); } catch (Exception ignored) {}
+        }
+        return "";
     }
 
     private static final Pattern RES = Pattern.compile("RESOLUTION=\\d{2,4}x(\\d{2,4})");
