@@ -57,7 +57,9 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_MIME = "mime";
     public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_START_MS = "startMs";
+    public static final String EXTRA_KEY = "resumeKey";
     public static final String EXTRA_HAS_NEXT = "hasNext";
+    private static final String RESUME_PREFS = "watchmov_resume";
     public static final String RESULT_POSITION = "positionMs";
     public static final String RESULT_URL = "url";
     public static final String RESULT_NEXT = "next";
@@ -72,10 +74,13 @@ public class PlayerActivity extends Activity {
     private String[] mimes;
     private boolean hasNext = false;
     private boolean resultSaved = false;
+    private String resumeKey;
+    private android.content.SharedPreferences resumePrefs;
     private final android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable progressTick = new Runnable() {
         @Override public void run() {
             // Salva a posição a cada 5s (robusto — não depende só do fechar).
+            saveResume();
             if (player != null && player.getCurrentPosition() > 0) {
                 NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());
             }
@@ -116,6 +121,10 @@ public class PlayerActivity extends Activity {
         final String ua = getIntent().getStringExtra(EXTRA_UA);
         final long startMs = getIntent().getLongExtra(EXTRA_START_MS, 0);
         hasNext = getIntent().getBooleanExtra(EXTRA_HAS_NEXT, false);
+        resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
+        resumeKey = getIntent().getStringExtra(EXTRA_KEY);
+        long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
+        final long resolvedStart = savedPos > 3000 ? savedPos : startMs;
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -217,7 +226,13 @@ public class PlayerActivity extends Activity {
             }
         });
 
-        playUrl(currentUrl, getIntent().getStringExtra(EXTRA_MIME), startMs);
+        playUrl(currentUrl, getIntent().getStringExtra(EXTRA_MIME), resolvedStart);
+    }
+
+    private void saveResume() {
+        if (resumeKey == null || resumePrefs == null || player == null) return;
+        long pos = player.getCurrentPosition();
+        if (pos > 3000) resumePrefs.edit().putLong(resumeKey, pos).apply();
     }
 
     private void playUrl(String url, String mime, long startMs) {
@@ -298,6 +313,7 @@ public class PlayerActivity extends Activity {
 
     @Override
     protected void onPause() {
+        saveResume();
         // Back moderno/gesto/home nem sempre chama onBackPressed → salva aqui também.
         if (!resultSaved && player != null) {
             NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());

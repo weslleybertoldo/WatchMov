@@ -45,6 +45,8 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_MIME, call.getString("mime"));
         intent.putExtra(PlayerActivity.EXTRA_TITLE, call.getString("title"));
         intent.putExtra(PlayerActivity.EXTRA_START_MS, call.getLong("startMs", 0L));
+        intent.putExtra(PlayerActivity.EXTRA_KEY, call.getString("key"));
+        intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));
         intent.putExtra(PlayerActivity.EXTRA_URLS, toArray(call.getArray("urls", null)));
         intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         startActivityForResult(call, intent, "playerResult");

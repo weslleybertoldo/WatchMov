@@ -216,6 +216,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     playNative({
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
       urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''), hasNext: !!onNext,
+      key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`,
     }).then(res => {
       if (!res) return;
       if (res.url) setChosen(res.url, tmdbId, type, season, episode);   // link que ficou tocando
