@@ -34,6 +34,19 @@ export function getEntry(tmdbId?: number, type?: string, season?: number, episod
 // caminho é o mesmo) → o mesmo vídeo não duplica.
 export function streamKey(url: string): string { return url.split('?')[0]; }
 
+// Tenta extrair a resolução da URL (ex "720p", "1280x720", "/1080/"). Heurística —
+// a resolução exata do HLS adaptativo vem do player (track selection).
+export function qualityFromUrl(url: string): string {
+  const p = url.split('?')[0].toLowerCase();
+  let m = p.match(/(\d{3,4})p(?:[^0-9]|$)/);
+  if (m) return m[1] + 'p';
+  m = p.match(/\d{3,4}x(\d{3,4})/);
+  if (m) return m[1] + 'p';
+  m = p.match(/[/_-](240|360|480|540|576|720|1080|1440|2160)[/_.-]/);
+  if (m) return m[1] + 'p';
+  return '';
+}
+
 // Adiciona links (dedup por streamKey; se já existe, atualiza o token/URL fresca;
 // só entra novo se for um vídeo diferente).
 export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, season?: number, episode?: number) {

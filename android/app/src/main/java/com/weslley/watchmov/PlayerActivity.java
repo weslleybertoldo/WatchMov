@@ -283,13 +283,27 @@ public class PlayerActivity extends Activity {
             .show();
     }
 
+    // Resolução pela URL (heurística) — só pra rotular os links na lista.
+    private static String qualityFromUrl(String url) {
+        if (url == null) return "";
+        String p = url.split("\\?")[0].toLowerCase();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{3,4})p(?:[^0-9]|$)").matcher(p);
+        if (m.find()) return m.group(1) + "p";
+        m = java.util.regex.Pattern.compile("\\d{3,4}x(\\d{3,4})").matcher(p);
+        if (m.find()) return m.group(1) + "p";
+        m = java.util.regex.Pattern.compile("[/_-](240|360|480|540|576|720|1080|1440|2160)[/_.-]").matcher(p);
+        if (m.find()) return m.group(1) + "p";
+        return "";
+    }
+
     private void showLinks() {
         if (urls == null || urls.length == 0) return;
         String[] labels = new String[urls.length];
         for (int i = 0; i < urls.length; i++) {
             String m = (mimes != null && i < mimes.length && mimes[i] != null) ? mimes[i] : "";
             String tag = m.contains("mpegurl") ? "HLS" : m.contains("dash") ? "DASH" : "MP4";
-            labels[i] = "Link " + (i + 1) + " (" + tag + ")" + (urls[i].equals(currentUrl) ? "  ✓" : "");
+            String q = qualityFromUrl(urls[i]);
+            labels[i] = "Link " + (i + 1) + " (" + tag + ")" + (q.isEmpty() ? "" : " " + q) + (urls[i].equals(currentUrl) ? "  ✓" : "");
         }
         final long pos = player != null ? player.getCurrentPosition() : 0;   // continua no mesmo tempo
         new AlertDialog.Builder(this)
