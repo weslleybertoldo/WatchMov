@@ -180,8 +180,20 @@ public class PlayerActivity extends Activity {
         bar.addView(qualityBtn); bar.addView(speed); bar.addView(resize); bar.addView(rotate);
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
+        // Título + temporada/ep, logo acima da barra de progresso.
+        final TextView titleBar = new TextView(this);
+        titleBar.setTextColor(Color.WHITE);
+        titleBar.setTextSize(14);
+        titleBar.setShadowLayer(6f, 0f, 0f, Color.BLACK);
+        titleBar.setText(getIntent().getStringExtra(EXTRA_TITLE));
+        titleBar.setPadding(32, 12, 32, 120);
+        root.addView(titleBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START));
+
         // A barra some/aparece junto com os controles do player.
-        view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> bar.setVisibility(visibility));
+        view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
+            bar.setVisibility(visibility);
+            titleBar.setVisibility(visibility);
+        });
 
         status = new TextView(this);
         status.setTextColor(Color.WHITE);
