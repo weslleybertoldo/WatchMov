@@ -9,7 +9,7 @@ import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey } from '@/lib/streamCache';
-import { playNative } from '@/lib/nativePlayer';
+import { playNative, onPlayerProgress } from '@/lib/nativePlayer';
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -215,7 +215,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
     playNative({
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
-      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
+      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''), hasNext: !!onNext,
     }).then(res => {
       if (!res) return;
       if (res.url) setChosen(res.url, tmdbId, type, season, episode);   // link que ficou tocando
@@ -223,11 +223,22 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         setStreamPosition(res.positionMs, tmdbId, type, season, episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
       }
+      if (res.next) onNext?.();   // "Próximo ⏭" → avança o episódio
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeOwn, ownStream]);
 
   const continueNative = () => { playedRef.current = false; setOwnStream(s => (s ? { ...s } : s)); };
+
+  // Salva a posição que o ExoPlayer reporta a cada ~5s (retomar de onde parou).
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerProgress?.(({ positionMs }) => {
+      if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode);
+    })?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, directMode, tmdbId, type, season, episode]);
 
   // <video> (Stremio/torrent): anexa a fonte (hls.js pra .m3u8; src direto pro resto).
   useEffect(() => {

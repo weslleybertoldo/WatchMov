@@ -20,6 +20,20 @@ import java.util.List;
 @CapacitorPlugin(name = "NativePlayer")
 public class NativePlayerPlugin extends Plugin {
 
+    private static NativePlayerPlugin instance;
+
+    @Override
+    public void load() { instance = this; }
+
+    // Chamado pela PlayerActivity a cada ~5s → JS salva a posição (robusto).
+    public static void reportProgress(String url, long positionMs) {
+        if (instance == null || url == null) return;
+        JSObject d = new JSObject();
+        d.put("url", url);
+        d.put("positionMs", positionMs);
+        instance.notifyListeners("playerProgress", d);
+    }
+
     @PluginMethod
     public void play(final PluginCall call) {
         final String url = call.getString("url");

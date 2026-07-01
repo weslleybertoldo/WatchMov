@@ -50,8 +50,10 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_MIME = "mime";
     public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_START_MS = "startMs";
+    public static final String EXTRA_HAS_NEXT = "hasNext";
     public static final String RESULT_POSITION = "positionMs";
     public static final String RESULT_URL = "url";
+    public static final String RESULT_NEXT = "next";
 
     private ExoPlayer player;
     private PlayerView view;
@@ -59,7 +61,18 @@ public class PlayerActivity extends Activity {
     private String currentUrl;
     private String[] urls;
     private String[] mimes;
+    private boolean hasNext = false;
     private boolean resultSaved = false;
+    private final android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable progressTick = new Runnable() {
+        @Override public void run() {
+            // Salva a posição a cada 5s (robusto — não depende só do fechar).
+            if (player != null && player.getCurrentPosition() > 0) {
+                NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());
+            }
+            progressHandler.postDelayed(this, 5000);
+        }
+    };
 
     private final float[] speeds = {1f, 1.25f, 1.5f, 2f, 0.5f};
     private int speedIdx = 0;
@@ -93,6 +106,7 @@ public class PlayerActivity extends Activity {
         final String referer = getIntent().getStringExtra(EXTRA_REFERER);
         final String ua = getIntent().getStringExtra(EXTRA_UA);
         final long startMs = getIntent().getLongExtra(EXTRA_START_MS, 0);
+        hasNext = getIntent().getBooleanExtra(EXTRA_HAS_NEXT, false);
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -114,8 +128,10 @@ public class PlayerActivity extends Activity {
         bar.setPadding(28, 24, 28, 24);
         bar.setGravity(Gravity.CENTER_VERTICAL);
 
-        Button back = pill("‹ Voltar", v -> finishWithResult());
+        Button back = pill("‹ Voltar", v -> finishWithResult(false));
         Button links = pill("Links", v -> showLinks());
+        Button fwd60 = pill("+60s", v -> { if (player != null) player.seekTo(player.getCurrentPosition() + 60000); });
+        Button next = pill("Próximo ⏭", v -> finishWithResult(true));
         Button speed = pill("1x", null);
         speed.setOnClickListener(v -> {
             speedIdx = (speedIdx + 1) % speeds.length;
@@ -135,6 +151,8 @@ public class PlayerActivity extends Activity {
         bar.addView(back);
         View spacer = new View(this);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        bar.addView(fwd60);
+        if (hasNext) bar.addView(next);
         if (urls != null && urls.length > 1) bar.addView(links);
         bar.addView(speed); bar.addView(resize); bar.addView(rotate);
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
@@ -199,6 +217,8 @@ public class PlayerActivity extends Activity {
         if (startMs > 0) player.seekTo(startMs);
         player.setPlayWhenReady(true);
         player.prepare();
+        progressHandler.removeCallbacks(progressTick);
+        progressHandler.postDelayed(progressTick, 5000);
     }
 
     private void showLinks() {
@@ -216,35 +236,35 @@ public class PlayerActivity extends Activity {
             .show();
     }
 
-    private void finishWithResult() {
-        if (!resultSaved && player != null) {
-            resultSaved = true;
-            Intent data = new Intent();
-            data.putExtra(RESULT_POSITION, player.getCurrentPosition());
-            data.putExtra(RESULT_URL, currentUrl);
-            setResult(RESULT_OK, data);
-        }
+    private void finishWithResult(boolean next) {
+        Intent data = new Intent();
+        if (player != null) data.putExtra(RESULT_POSITION, player.getCurrentPosition());
+        data.putExtra(RESULT_URL, currentUrl);
+        data.putExtra(RESULT_NEXT, next);
+        setResult(RESULT_OK, data);
+        resultSaved = true;
         finish();
     }
 
     @Override
-    public void onBackPressed() { finishWithResult(); }
+    public void onBackPressed() { finishWithResult(false); }
 
     @Override
     protected void onPause() {
         // Back moderno/gesto/home nem sempre chama onBackPressed → salva aqui também.
         if (!resultSaved && player != null) {
+            NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition());
             Intent data = new Intent();
             data.putExtra(RESULT_POSITION, player.getCurrentPosition());
             data.putExtra(RESULT_URL, currentUrl);
             setResult(RESULT_OK, data);
-            resultSaved = true;
         }
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        progressHandler.removeCallbacks(progressTick);
         if (player != null) { player.release(); player = null; }
         super.onDestroy();
     }
@@ -254,11 +274,11 @@ public class PlayerActivity extends Activity {
         b.setText(text);
         b.setAllCaps(false);
         b.setTextColor(Color.WHITE);
-        b.setTextSize(15);
+        b.setTextSize(18);
         b.setBackgroundColor(Color.parseColor("#99000000"));
-        b.setPadding(36, 18, 36, 18);
+        b.setPadding(48, 26, 48, 26);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.leftMargin = 12;
+        lp.leftMargin = 14;
         b.setLayoutParams(lp);
         if (onClick != null) b.setOnClickListener(onClick);
         return b;
