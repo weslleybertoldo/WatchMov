@@ -60,30 +60,8 @@ export const PROVIDERS: Provider[] = [
     },
   },
   {
-    id: 'vidapi',
-    name: 'Fonte 4 (VidAPI — legendado PT)',
-    // VidAPI/vaplayer.ru: NÃO dubla (não tem param de áudio). Áudio original +
-    // legenda PT-BR auto-carregada do OpenSubtitles. ds_lang/sub_lang=pob =
-    // Português (Brasil) no padrão OpenSubtitles (3 letras). Filme exige IMDB id;
-    // série usa TMDB id. Serve de fallback quando as fontes dubladas falham.
-    build: (t) => {
-      // ds_lang=pob = auto-busca legenda em Português-BR no OpenSubtitles
-      // (código 3 letras do OpenSubtitles; pob = pt-BR, por = pt-PT).
-      const q = 'ds_lang=pob&sub_default=true';
-      // Filme aceita IMDB ou TMDB id; prefere IMDB (catálogo casa melhor).
-      if (t.type === 'movie') {
-        const id = t.imdbId ?? t.tmdbId;
-        if (!id) return null;
-        return `https://vaplayer.ru/embed/movie/${id}?${q}`;
-      }
-      const id = t.imdbId ?? t.tmdbId;
-      if (!id) return null;
-      return `https://vaplayer.ru/embed/tv/${id}/${s(t)}/${e(t)}?${q}`;
-    },
-  },
-  {
     id: 'superflix',
-    name: 'Fonte 5 (SuperFlix PT-BR DUB+LEG)',
+    name: 'Fonte 4 (SuperFlix PT-BR DUB+LEG)',
     // Player BR clássico com dublado e legendado + seletor de servidores
     // (warezcdn/superflix). Só toca dentro de iframe (acesso direto cai numa
     // página "Acesso Restrito"). Aceita IMDB ou TMDB id. superflixapi.cyou é o
@@ -98,7 +76,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'megaembed',
-    name: 'Fonte 6 (MegaEmbed PT-BR)',
+    name: 'Fonte 5 (MegaEmbed PT-BR)',
     // Player BR. Filme: /embed/{id} — prefere IMDB (catálogo casa melhor; alguns
     // TMDB numéricos de filme não resolvem). Série: /embed/{id}?sea=&epi=.
     build: (t) => {
@@ -114,7 +92,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'myembed',
-    name: 'Fonte 7 (MyEmbed PT-BR)',
+    name: 'Fonte 6 (MyEmbed PT-BR)',
     // EmbedMovies/MyEmbed: player BR de alta qualidade. Só toca em iframe.
     // Aceita IMDB ou TMDB id. Filme /filme/{id}; série /serie/{id}/{s}/{e}.
     build: (t) => {
@@ -132,7 +110,6 @@ export const PROVIDER_HOSTS = [
   'https://betterflix.click',
   'https://fembed.sx',
   'https://embedplayapi.top',
-  'https://vaplayer.ru',
   'https://superflixapi.cyou',
   'https://megaembedapi.site',
   'https://myembed.biz',
