@@ -362,10 +362,11 @@ public class PlayerActivity extends Activity {
                     final DlnaCastPlugin.Device dev = devs.get(i);
                     android.widget.Toast.makeText(this, "Enviando para " + dev.name + "…", android.widget.Toast.LENGTH_SHORT).show();
                     new Thread(() -> {
-                        boolean ok = true;
-                        try { DlnaCastPlugin.castSync(dev.controlUrl, currentUrl, "WatchMov"); } catch (Exception e) { ok = false; }
-                        final boolean fok = ok;
-                        runOnUiThread(() -> android.widget.Toast.makeText(this, fok ? "Tocando na TV — o app vira controle" : "A TV recusou o vídeo (pode exigir Referer)", android.widget.Toast.LENGTH_LONG).show());
+                        String err = null;
+                        try { DlnaCastPlugin.castSync(dev.controlUrl, currentUrl, "WatchMov"); }
+                        catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                        final String ferr = err;
+                        runOnUiThread(() -> android.widget.Toast.makeText(this, ferr == null ? "Tocando na TV — o app vira controle" : ferr, android.widget.Toast.LENGTH_LONG).show());
                     }).start();
                 }).show();
             });
