@@ -56,12 +56,17 @@ public class DlnaCastPlugin extends Plugin {
             if (wifi != null) { lock = wifi.createMulticastLock("wm-dlna"); lock.setReferenceCounted(true); lock.acquire(); }
             DatagramSocket sock = new DatagramSocket();
             sock.setSoTimeout(800);
-            InetSocketAddress group = new InetSocketAddress(InetAddress.getByName("239.255.255.250"), 1900);
-            // Nem toda TV responde ao ST específico — busca vários tipos, repetido.
+            sock.setBroadcast(true);
+            InetAddress multicast = InetAddress.getByName("239.255.255.250");
+            InetAddress broadcast = InetAddress.getByName("255.255.255.255");   // rede c/ IGMP snooping / multicast off
+            // Nem toda TV responde ao ST específico — busca vários tipos, repetido,
+            // por multicast E broadcast (roteadores que bloqueiam multicast).
             String[] targets = { "ssdp:all", "urn:schemas-upnp-org:device:MediaRenderer:1", AVT, "upnp:rootdevice" };
             for (int r = 0; r < 2; r++) for (String st : targets) {
-                String ms = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: " + st + "\r\n\r\n";
-                try { byte[] b = ms.getBytes(); sock.send(new DatagramPacket(b, b.length, group)); } catch (Exception ignored) {}
+                for (InetAddress dst : new InetAddress[]{ multicast, broadcast }) {
+                    String ms = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: " + st + "\r\n\r\n";
+                    try { byte[] b = ms.getBytes(); sock.send(new DatagramPacket(b, b.length, dst, 1900)); } catch (Exception ignored) {}
+                }
             }
             long end = System.currentTimeMillis() + timeoutMs;
             byte[] buf = new byte[2048];
