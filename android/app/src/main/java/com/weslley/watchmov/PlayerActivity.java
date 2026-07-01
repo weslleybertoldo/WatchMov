@@ -236,10 +236,12 @@ public class PlayerActivity extends Activity {
         castTimeTv.setPadding(0, 12, 0, 24);
         LinearLayout castRow = new LinearLayout(this);
         castRow.setOrientation(LinearLayout.HORIZONTAL); castRow.setGravity(Gravity.CENTER);
+        Button rew60 = pill("−60s", v -> remoteSeekBy(-60000));
         Button rew10 = pill("⏪ 10s", v -> remoteSeekBy(-10000));
         castPlayBtn = pill("⏸", v -> remotePlayPause());
         Button ff10 = pill("10s ⏩", v -> remoteSeekBy(10000));
-        castRow.addView(rew10); castRow.addView(castPlayBtn); castRow.addView(ff10);
+        Button ff60 = pill("+60s", v -> remoteSeekBy(60000));
+        castRow.addView(rew60); castRow.addView(rew10); castRow.addView(castPlayBtn); castRow.addView(ff10); castRow.addView(ff60);
         Button stopCast = pill("Parar espelhamento", v -> {
             if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
             else stopCasting(true);
@@ -794,6 +796,7 @@ public class PlayerActivity extends Activity {
                 for (int i = 0; i < devs.size(); i++) names[i] = devs.get(i).name;
                 new AlertDialog.Builder(this).setTitle("Enviar para a TV").setItems(names, (d, i) -> {
                     final DlnaCastPlugin.Device dev = devs.get(i);
+                    final long castFromMs = player != null ? player.getCurrentPosition() : 0; // continua de onde estava
                     android.widget.Toast.makeText(this, "Enviando para " + dev.name + "…", android.widget.Toast.LENGTH_SHORT).show();
                     new Thread(() -> {
                         String err = null;
@@ -802,7 +805,11 @@ public class PlayerActivity extends Activity {
                         // descomprime gzip e reescreve o HLS). Fallback = URL direta.
                         String ip = localIp();
                         String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
-                        try { DlnaCastPlugin.castSync(dev.controlUrl, castUrl, "WatchMov"); }
+                        try {
+                            DlnaCastPlugin.castSync(dev.controlUrl, castUrl, "WatchMov");
+                            // Continua na posição atual do reprodutor (ex.: 30min → abre em 30min).
+                            if (castFromMs > 3000) { try { DlnaCastPlugin.seekSync(dev.controlUrl, castFromMs); } catch (Exception ignored) {} }
+                        }
                         catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                         final String ferr = err;
                         runOnUiThread(() -> {
