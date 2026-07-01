@@ -40,6 +40,19 @@ function itemToSummary(i: WatchItem): MediaSummary {
 const isAnime = (i: WatchItem): boolean =>
   i.type === 'series' && /anima[çc][ãa]o|anime/i.test(i.genre || '');
 
+const MOVIE_ROW_IDS = MOVIE_GENRES.map(g => g.id);
+const TV_ROW_IDS = TV_GENRES.map(g => g.id);
+
+// Loader de linha de gênero SEM repetição: cada título aparece só na sua categoria
+// predominante (1º gênero dele que tem linha) — evita Superman em Ação+Aventura+Ficção.
+const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => async () => {
+  const items = await discoverByGenre(type, genreId);
+  return items.filter(m => {
+    const primary = (m.genreIds || []).find(g => rowIds.includes(g));
+    return primary === undefined || primary === genreId;
+  });
+};
+
 const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'inicio', label: 'Início', icon: Home },
   { key: 'filmes', label: 'Filmes', icon: Film },
@@ -218,7 +231,7 @@ export default function Index() {
               onSeeAll={() => setCategory({ title: 'Lançamentos recentes', loadPage: () => recent('movie'), cacheKey: 'cat-recent-movie' })} />
             {MOVIE_GENRES.slice(0, 6).map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
-                loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
+                loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
                 onSeeAll={() => openGenre('movie', g.id, g.name)} />
             ))}
             <footer className="pt-4 border-t border-border/50">
@@ -229,7 +242,7 @@ export default function Index() {
           <div className="space-y-6">
             {MOVIE_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
-                loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
+                loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
                 onSeeAll={() => openGenre('movie', g.id, g.name)} />
             ))}
           </div>
@@ -237,7 +250,7 @@ export default function Index() {
           <div className="space-y-6">
             {TV_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
-                loader={() => discoverByGenre('tv', g.id)} onOpen={openMedia}
+                loader={genreRowLoader('tv', g.id, TV_ROW_IDS)} onOpen={openMedia}
                 onSeeAll={() => openGenre('tv', g.id, g.name)} />
             ))}
           </div>

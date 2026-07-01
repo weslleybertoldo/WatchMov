@@ -71,6 +71,7 @@ export interface MediaSummary {
   year?: string;
   type: TmdbMediaType;
   subtitle?: string; // legenda extra no card (ex.: "Eps 5 | Temporada 4")
+  genreIds?: number[]; // gêneros do título (pra dedup: fica só na categoria predominante)
 }
 
 // Gêneros curados para as linhas (id TMDB + rótulo PT-BR)
@@ -108,6 +109,7 @@ interface RawListItem {
   backdrop_path?: string | null;
   vote_average?: number;
   vote_count?: number;
+  genre_ids?: number[];
 }
 
 function toSummary(r: RawListItem, type: TmdbMediaType): MediaSummary {
@@ -121,6 +123,7 @@ function toSummary(r: RawListItem, type: TmdbMediaType): MediaSummary {
     votes: r.vote_count || undefined,
     year: date ? date.slice(0, 4) : undefined,
     type,
+    genreIds: r.genre_ids,
   };
 }
 
