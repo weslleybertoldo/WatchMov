@@ -134,7 +134,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const saved = localStorage.getItem(srcKey);
       if (saved && available.some(p => p.id === saved)) return saved;
     } catch { /* ignore */ }
-    return available[0]?.id ?? 'betterflix';
+    return available[0]?.id ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
 
