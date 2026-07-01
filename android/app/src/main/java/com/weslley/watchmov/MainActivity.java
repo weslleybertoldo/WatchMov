@@ -25,6 +25,7 @@ public class MainActivity extends BridgeActivity {
 
     private View customView;                              // view de fullscreen HTML5 do player
     private WebChromeClient.CustomViewCallback customViewCallback;
+    private WebView sniffPopup;                           // popup oculta sniffada durante a captura
 
     // Hosts cuja navegação top-frame é permitida (app + login OAuth). Qualquer outra
     // navegação de documento inteiro = popunder/redirect de anúncio → bloqueada.
@@ -53,10 +54,38 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setSupportMultipleWindows(true);
 
         webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
-            // Popup clássico (window.open) → recusa.
+            // Popup (window.open): fora da captura recusa (anti-anúncio). DURANTE a
+            // captura, abre numa WebView oculta e observa o tráfego dela — vários
+            // players (ex. SuperFlix) abrem o vídeo em popup (como o Web Video Cast).
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
-                return false;
+                if (!StreamSnifferPlugin.isWatching()) return false;
+                try {
+                    if (sniffPopup != null) { try { sniffPopup.destroy(); } catch (Exception ignored) {} }
+                    sniffPopup = new WebView(MainActivity.this);
+                    android.webkit.WebSettings ps = sniffPopup.getSettings();
+                    ps.setJavaScriptEnabled(true);
+                    ps.setDomStorageEnabled(true);
+                    ps.setMediaPlaybackRequiresUserGesture(false);
+                    ps.setSupportMultipleWindows(true);
+                    ps.setJavaScriptCanOpenWindowsAutomatically(true);
+                    sniffPopup.setWebViewClient(new android.webkit.WebViewClient() {
+                        @Override
+                        public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
+                            if (StreamSnifferPlugin.isWatching() && req.getUrl() != null) {
+                                StreamSnifferPlugin.inspect(req.getUrl().toString(), req.getRequestHeaders());
+                            }
+                            return null;
+                        }
+                    });
+                    FrameLayout decor = (FrameLayout) getWindow().getDecorView();
+                    sniffPopup.setLayoutParams(new FrameLayout.LayoutParams(1, 1));
+                    decor.addView(sniffPopup);
+                    WebView.WebViewTransport t = (WebView.WebViewTransport) resultMsg.obj;
+                    t.setWebView(sniffPopup);
+                    resultMsg.sendToTarget();
+                    return true;
+                } catch (Exception e) { return false; }
             }
 
             // Botão de tela cheia DO PRÓPRIO player (HTML5 Fullscreen API). Sem isso
