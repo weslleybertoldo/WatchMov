@@ -12,10 +12,13 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
+import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
+import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
@@ -46,6 +49,7 @@ public class PlayerActivity extends Activity {
 
     private ExoPlayer player;
     private PlayerView view;
+    private TextView status;
     private final float[] speeds = {1f, 1.25f, 1.5f, 2f, 0.5f};
     private int speedIdx = 0;
     private final int[] resizeModes = {
@@ -74,6 +78,7 @@ public class PlayerActivity extends Activity {
 
         view = new PlayerView(this);
         view.setKeepScreenOn(true);
+        view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS);
         view.setShowFastForwardButton(true);
         view.setShowRewindButton(true);
         view.setShowSubtitleButton(true);
@@ -111,6 +116,13 @@ public class PlayerActivity extends Activity {
         bar.addView(speed); bar.addView(resize); bar.addView(rotate);
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
+        status = new TextView(this);
+        status.setTextColor(Color.WHITE);
+        status.setTextSize(14);
+        status.setPadding(40, 40, 40, 40);
+        status.setText("Carregando vídeo…");
+        root.addView(status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+
         setContentView(root);
 
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
@@ -142,6 +154,20 @@ public class PlayerActivity extends Activity {
             else if (mime.contains("dash")) item.setMimeType(MimeTypes.APPLICATION_MPD);
             else item.setMimeType(MimeTypes.VIDEO_MP4);
         }
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                status.setText("Erro ao tocar: " + error.getErrorCodeName()
+                    + (error.getCause() != null ? "\n" + error.getCause().getMessage() : ""));
+                status.setVisibility(View.VISIBLE);
+            }
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (state == Player.STATE_READY || state == Player.STATE_ENDED) status.setVisibility(View.GONE);
+                else if (state == Player.STATE_BUFFERING) { status.setText("Carregando vídeo…"); status.setVisibility(View.VISIBLE); }
+            }
+        });
+
         player.setMediaItem(item.build());
         if (startMs > 0) player.seekTo(startMs);
         player.setPlayWhenReady(true);
