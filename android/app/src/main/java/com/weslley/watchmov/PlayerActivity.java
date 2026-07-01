@@ -153,7 +153,6 @@ public class PlayerActivity extends Activity {
         bar.setGravity(Gravity.CENTER_VERTICAL);
 
         Button back = pill("‹ Voltar", v -> finishWithResult(false, false));
-        Button tv = pill("📺 TV", v -> castToTv());
         Button server = pill("▣ Servidor", v -> finishWithResult(false, true));
         Button links = pill("Links", v -> showLinks());
         qualityBtn = pill("Auto", v -> showQuality());
@@ -180,7 +179,6 @@ public class PlayerActivity extends Activity {
         bar.addView(back);
         View spacer = new View(this);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
-        bar.addView(tv);
         bar.addView(server);
         bar.addView(fwd60);
         if (hasNext) bar.addView(next);
@@ -197,10 +195,22 @@ public class PlayerActivity extends Activity {
         titleBar.setPadding(32, 12, 32, 120);
         root.addView(titleBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START));
 
+        // Ícone de espelhar (cast) no canto inferior direito, ao lado da legenda.
+        final android.widget.ImageButton castBtn = new android.widget.ImageButton(this);
+        castBtn.setImageResource(R.drawable.ic_cast);
+        castBtn.setBackgroundColor(Color.TRANSPARENT);
+        castBtn.setColorFilter(Color.WHITE);
+        castBtn.setPadding(16, 16, 16, 16);
+        castBtn.setOnClickListener(v -> castToTv());
+        FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        clp.bottomMargin = 96; clp.rightMargin = 150;
+        root.addView(castBtn, clp);
+
         // A barra some/aparece junto com os controles do player.
         view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             bar.setVisibility(visibility);
             titleBar.setVisibility(visibility);
+            castBtn.setVisibility(visibility);
         });
 
         status = new TextView(this);
@@ -327,7 +337,7 @@ public class PlayerActivity extends Activity {
     private void castToTv() {
         android.widget.Toast.makeText(this, "Procurando TVs na rede…", android.widget.Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 4000);
+            final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 6000);
             runOnUiThread(() -> {
                 if (devs.isEmpty()) { android.widget.Toast.makeText(this, "Nenhuma TV encontrada (mesma rede Wi-Fi?)", android.widget.Toast.LENGTH_LONG).show(); return; }
                 String[] names = new String[devs.size()];

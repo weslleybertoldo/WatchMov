@@ -52,11 +52,15 @@ public class DlnaCastPlugin extends Plugin {
         try {
             WifiManager wifi = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wifi != null) { lock = wifi.createMulticastLock("wm-dlna"); lock.setReferenceCounted(true); lock.acquire(); }
-            String msearch = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: " + AVT + "\r\n\r\n";
             DatagramSocket sock = new DatagramSocket();
-            sock.setSoTimeout(timeoutMs);
-            byte[] data = msearch.getBytes();
-            sock.send(new DatagramPacket(data, data.length, new InetSocketAddress(InetAddress.getByName("239.255.255.250"), 1900)));
+            sock.setSoTimeout(800);
+            InetSocketAddress group = new InetSocketAddress(InetAddress.getByName("239.255.255.250"), 1900);
+            // Nem toda TV responde ao ST específico — busca vários tipos, repetido.
+            String[] targets = { "ssdp:all", "urn:schemas-upnp-org:device:MediaRenderer:1", AVT, "upnp:rootdevice" };
+            for (int r = 0; r < 2; r++) for (String st : targets) {
+                String ms = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: " + st + "\r\n\r\n";
+                try { byte[] b = ms.getBytes(); sock.send(new DatagramPacket(b, b.length, group)); } catch (Exception ignored) {}
+            }
             long end = System.currentTimeMillis() + timeoutMs;
             byte[] buf = new byte[2048];
             while (System.currentTimeMillis() < end) {
