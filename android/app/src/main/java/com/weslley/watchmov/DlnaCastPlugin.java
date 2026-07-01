@@ -114,11 +114,17 @@ public class DlnaCastPlugin extends Plugin {
     }
 
     public static void castSync(String controlUrl, String url, String title) throws Exception {
+        // protocolInfo + DLNA.ORG_FLAGS: a maioria das TVs (LG/Samsung) EXIGE o <res>
+        // com protocolInfo no DIDL, senão ignora o SetAVTransportURI (parece "nada
+        // aconteceu"). http-get:*:video/mp4 = streaming HTTP progressivo. OP=01 =
+        // aceita seek por byte-range. Como o WVC (contentFeatures.dlna.org / <res>).
+        String proto = "http-get:*:video/mp4:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
         String didl = "&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; "
             + "xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; "
             + "xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot;&gt;"
             + "&lt;item id=&quot;0&quot; parentID=&quot;-1&quot; restricted=&quot;1&quot;&gt;"
             + "&lt;dc:title&gt;" + esc(title) + "&lt;/dc:title&gt;"
+            + "&lt;res protocolInfo=&quot;" + proto + "&quot;&gt;" + esc(url) + "&lt;/res&gt;"
             + "&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;";
         soap(controlUrl, "SetAVTransportURI", envelope("SetAVTransportURI",
             "<InstanceID>0</InstanceID><CurrentURI>" + esc(url) + "</CurrentURI><CurrentURIMetaData>" + didl + "</CurrentURIMetaData>"));
@@ -133,10 +139,21 @@ public class DlnaCastPlugin extends Plugin {
 
     private static void soap(String controlUrl, String action, String body) throws Exception {
         Request req = new Request.Builder().url(controlUrl)
-            .addHeader("SOAPACTION", "\"" + AVT + "#" + action + "\"")
+            .addHeader("SOAPAction", "\"" + AVT + "#" + action + "\"")
             .post(RequestBody.create(body, MediaType.parse("text/xml; charset=\"utf-8\""))).build();
-        try (Response resp = http.newCall(req).execute()) { /* ignora corpo */ }
+        try (Response resp = http.newCall(req).execute()) {
+            // Valida a resposta: a TV devolve 500 + <UPnPError> quando recusa. Sem
+            // isso o cast falhava em silêncio ("nada aconteceu"). Surface o motivo.
+            if (!resp.isSuccessful()) {
+                String rb = resp.body() != null ? resp.body().string() : "";
+                Matcher em = ERRDESC.matcher(rb);
+                String why = em.find() ? em.group(1) : ("HTTP " + resp.code());
+                throw new Exception(action + " recusado pela TV: " + why);
+            }
+        }
     }
+
+    private static final Pattern ERRDESC = Pattern.compile("(?is)<errorDescription>(.*?)</errorDescription>");
 
     private static String esc(String s) { return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"); }
 
