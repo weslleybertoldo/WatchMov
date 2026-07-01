@@ -149,7 +149,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     let alive = true;
     setSniff({ status: 'trying' });
     sniffStream(embedUrl, 20000)
-      .then(r => { if (alive) setSniff(r ? { status: 'ok', res: r } : { status: 'fail' }); })
+      .then(r => {
+        if (!alive) return;
+        if (r?.url) { setSniff({ status: 'ok', res: r }); }
+        else {
+          setSniff({ status: 'fail', res: r ?? undefined });
+          if (r?.seenCount != null) toast.info(`Não capturei o vídeo (${r.seenCount} req vistas)`, { description: 'Tocando pelo servidor.' });
+        }
+      })
       .catch(() => { if (alive) setSniff({ status: 'fail' }); });
     return () => { alive = false; cancelSniff(); };
   }, [open, embedUrl, directMode]);
