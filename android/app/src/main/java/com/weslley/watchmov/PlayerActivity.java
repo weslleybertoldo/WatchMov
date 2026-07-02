@@ -350,28 +350,35 @@ public class PlayerActivity extends Activity {
                 // decide: ▣ Servidor ou Links). errorHandled evita tratar o mesmo link 2x.
                 if (errorHandled) return;
                 errorHandled = true;
+                final int total = urls != null ? urls.length : 0;
+                final int failedIdx = linkIndex();   // 0-based do link que falhou
                 if (currentUrl != null) triedUrls.add(currentUrl);
-                String nextUrl = null, nextMime = null;
+                String nextUrl = null, nextMime = null; int nextIdx = -1;
                 if (urls != null) {
                     for (int i = 0; i < urls.length; i++) {
                         if (urls[i] != null && !triedUrls.contains(urls[i])) {
-                            nextUrl = urls[i];
+                            nextUrl = urls[i]; nextIdx = i;
                             nextMime = (mimes != null && i < mimes.length) ? mimes[i] : null;
                             break;
                         }
                     }
                 }
+                String falhou = "Link " + (failedIdx >= 0 ? (failedIdx + 1) : "?") + "/" + total + " falhou";
                 if (nextUrl != null) {
-                    status.setText("Link falhou — tentando o próximo…");
+                    status.setText(falhou + " — tentando " + (nextIdx + 1) + "/" + total + "…");
                     final String nu = nextUrl, nm = nextMime;
                     progressHandler.postDelayed(() -> playUrl(nu, nm, 0), 700);
                 } else {
-                    status.setText("Nenhum link tocou. Toque em ▣ Servidor ou Links pra tentar de outra forma.");
+                    status.setText(falhou + ". Nenhum link tocou — toque em ▣ Servidor ou Links.");
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
-                else if (state == androidx.media3.common.Player.STATE_BUFFERING) { status.setText("Carregando vídeo…"); status.setVisibility(View.VISIBLE); }
+                else if (state == androidx.media3.common.Player.STATE_BUFFERING) {
+                    int i = linkIndex(), n = urls != null ? urls.length : 0;
+                    status.setText(n > 1 && i >= 0 ? "Carregando vídeo… (link " + (i + 1) + "/" + n + ")" : "Carregando vídeo…");
+                    status.setVisibility(View.VISIBLE);
+                }
             }
         });
 
@@ -418,6 +425,13 @@ public class PlayerActivity extends Activity {
         if (resumeKey == null || resumePrefs == null || player == null) return;
         long pos = player.getCurrentPosition();
         if (pos > 3000) resumePrefs.edit().putLong(resumeKey, pos).apply();
+    }
+
+    // Posição (0-based) do link atual dentro de urls[] — pro contador "X/N".
+    private int linkIndex() {
+        if (urls == null || currentUrl == null) return -1;
+        for (int i = 0; i < urls.length; i++) if (currentUrl.equals(urls[i])) return i;
+        return -1;
     }
 
     private void playUrl(String url, String mime, long startMs) {
