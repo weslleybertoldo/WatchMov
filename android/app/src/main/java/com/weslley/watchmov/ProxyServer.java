@@ -29,6 +29,18 @@ public class ProxyServer extends NanoHTTPD {
 
     private ProxyServer() { super(PORT); }
 
+    // Status 451 custom (não existe no enum do NanoHTTPD) — sinaliza pro player que o
+    // segmento caiu no muro anti-hotlink (redirect pro dummy). Distinto de 403/410.
+    private static final Response.IStatus BLOCKED_451 = new Response.IStatus() {
+        @Override public int getRequestStatus() { return 451; }
+        @Override public String getDescription() { return "451 Blocked"; }
+    };
+    // Redirect anti-abuso desses CDNs (EmbedPlayApi/lumicrest, SuperFlix): entregam
+    // um MP4/PNG dummy quando a requisição não vem do browser real (WebView).
+    private static boolean isAbuseHost(String host) {
+        return host != null && host.contains("cloudflare-terms-of-service-abuse");
+    }
+
     public static synchronized void ensure() {
         if (instance == null) {
             instance = new ProxyServer();
@@ -107,6 +119,14 @@ public class ProxyServer extends NanoHTTPD {
             if (range != null) rb.header("Range", range);
 
             okhttp3.Response up = http.newCall(rb.build()).execute();
+            // Caiu no muro anti-hotlink? (a URL final, após os redirects, é o domínio de
+            // abuso que serve um dummy). Falha limpo com 451 → o player cai pro Servidor
+            // em vez de tocar o MP4 falso / crashar o parser (NPE). Vale p/ manifesto e
+            // segmentos.
+            if (isAbuseHost(up.request().url().host())) {
+                up.close();
+                return cors(newFixedLengthResponse(BLOCKED_451, "text/plain", "blocked_abuse_redirect"));
+            }
             String ct = up.header("Content-Type", "application/octet-stream");
             String lu = u.toLowerCase(), lct = ct != null ? ct.toLowerCase() : "";
             // HLS do SuperFlix vem como text/plain em master.txt / /m3/ (sem .m3u8).

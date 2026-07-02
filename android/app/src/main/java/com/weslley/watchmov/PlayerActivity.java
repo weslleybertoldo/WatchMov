@@ -341,6 +341,18 @@ public class PlayerActivity extends Activity {
                     : null;
                 NativePlayerPlugin.reportError(currentUrl, error.errorCode, error.getErrorCodeName(),
                     causeTxt, getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
+                // Muro anti-hotlink (proxy devolveu 451): essa fonte só toca no browser
+                // real (EmbedPlayApi/lumicrest, SuperFlix). Player nativo não busca os
+                // segmentos → cai AUTOMÁTICO pro modo Servidor (iframe/WebView), que roda
+                // o JS da página e autoriza. Único caso de saída automática.
+                boolean walled = (error.getCause() instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)
+                    && ((androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) error.getCause()).responseCode == 451;
+                if (walled && !errorHandled) {
+                    errorHandled = true;
+                    status.setText("Fonte protegida — abrindo no Servidor…");
+                    progressHandler.postDelayed(() -> finishWithResult(false, true, false), 1200);
+                    return;
+                }
                 // NÃO sai sozinho do player. Antes, 403/410 recapturava e MANIFEST_MALFORMED
                 // caía no modo Servidor automaticamente — mas isso tirava o usuário do
                 // player quando ele só queria TROCAR o link ali mesmo. Agora fica no player:
