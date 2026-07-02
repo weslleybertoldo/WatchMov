@@ -44,14 +44,32 @@ public class StreamSnifferPlugin extends Plugin {
 
     private static String noQuery(String url) { int q = url.indexOf('?'); return q >= 0 ? url.substring(0, q) : url; }
 
-    public static boolean looksLikeVideo(String url) {
+    // Domínios que NUNCA são o vídeo (aposta/ads/tracker/abuso) — nem salva nem proba.
+    // Barra lixo tipo brwin.games/api/hall/manifest e o dummy do muro anti-hotlink.
+    private static final String[] BLOCKED_HOSTS = {
+        "cloudflare-terms-of-service-abuse", "brwin.games",
+        "doubleclick.net", "googlesyndication.com", "adservice.", "popads.", "popcash.",
+        "propellerads.", "propu.", "adnxs.", "onclickalgo.", "hilltopads.", "juicyads.",
+        "exoclick.", "trafficjunky.", "mgid.", "revcontent.", "outbrain.", "taboola."
+    };
+
+    public static boolean isBlockedHost(String url) {
         if (url == null) return false;
+        String u = url.toLowerCase();
+        for (String b : BLOCKED_HOSTS) if (u.contains(b)) return true;
+        return false;
+    }
+
+    public static boolean looksLikeVideo(String url) {
+        if (url == null || isBlockedHost(url)) return false;
         String u = url.toLowerCase();
         String path = noQuery(u);
         if (path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".mp4")
             || path.endsWith(".mkv") || path.endsWith(".webm") || path.endsWith(".m4v")
             || path.endsWith(".mov") || path.endsWith(".avi") || path.endsWith(".flv")) return true;
-        return u.contains("master.m3u8") || u.contains(".m3u8") || u.contains(".mpd") || u.contains("/manifest");
+        // NÃO casa "/manifest" cru (pegava /api/hall/manifest de aposta) — sem extensão
+        // vai pro probe, que confirma por conteúdo (#EXTM3U/ftyp/content-type).
+        return u.contains("master.m3u8") || u.contains(".m3u8") || u.contains(".mpd");
     }
 
     // Requests que NÃO vale a pena probar (recursos óbvios não-vídeo).
@@ -73,7 +91,7 @@ public class StreamSnifferPlugin extends Plugin {
 
     // Chamado pelo MainActivity (WebView + Service Worker) pra cada request.
     public static void inspect(String url, Map<String, String> headers) {
-        if (!watching || url == null) return;
+        if (!watching || url == null || isBlockedHost(url)) return;
         String ref = headers != null ? headers.get("Referer") : null;
         if (looksLikeVideo(url)) { report(url, ref, mimeFor(url)); return; }
         if (skipProbe(url)) return;
@@ -111,7 +129,7 @@ public class StreamSnifferPlugin extends Plugin {
     }
 
     private static void report(String url, String referer, String mime) {
-        if (instance == null || !watching || url == null) return;
+        if (instance == null || !watching || url == null || isBlockedHost(url)) return;
         if (!emitted.add(noQuery(url))) return;
         final String fMime = mime != null ? mime : mimeFor(url);
         final boolean isHls = fMime.toLowerCase().contains("mpegurl") || url.toLowerCase().contains(".m3u8");
