@@ -26,12 +26,14 @@ export const PROVIDERS: Provider[] = [
   {
     id: 'embedplayapi',
     name: 'Fonte 1 (EmbedPlayApi PT-BR)', // PRINCIPAL/default
-    // Player BR dublado. TMDB id.
+    // Player BR dublado. TMDB id. NOVO formato de path (jul/26): /embed/movie/{id}
+    // e /embed/tv/{id}/{s}/{e}. O formato antigo (/embed/{id}) passou a exibir um
+    // banner "Novo domínio da API, atualize no seu código" — domínio segue .top.
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
-        ? `https://embedplayapi.top/embed/${t.tmdbId}`
-        : `https://embedplayapi.top/embed/${t.tmdbId}/${s(t)}/${e(t)}`;
+        ? `https://embedplayapi.top/embed/movie/${t.tmdbId}`
+        : `https://embedplayapi.top/embed/tv/${t.tmdbId}/${s(t)}/${e(t)}`;
     },
   },
   {
