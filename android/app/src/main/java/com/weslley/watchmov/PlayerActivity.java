@@ -78,6 +78,7 @@ public class PlayerActivity extends Activity {
     private TextView status;
     private String currentUrl;
     private String[] urls;
+    private boolean errorHandled = false; // evita reabrir o seletor de links em cascata no mesmo link
     private String[] mimes;
     private String[] qualities;
     private String mReferer;
@@ -333,19 +334,19 @@ public class PlayerActivity extends Activity {
                 status.setText(msg);
                 status.setVisibility(View.VISIBLE);
                 android.widget.Toast.makeText(PlayerActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
-                // 403/410/HTTP ruim = link com token expirado → recaptura automática
-                // (invalida o link morto e volta pro servidor pra capturar um fresco).
-                if (error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
-                    status.setText("Link expirou — recapturando…");
-                    progressHandler.postDelayed(() -> finishWithResult(false, false, true), 1500);
-                }
-                // MANIFEST_MALFORMED: o player nativo não conseguiu parsear (CDN devolve
-                // HTML/anti-bot, ex. SuperFlix "security error"). O iframe roda no WebView
-                // (navegador real) e passa o anti-bot → cai automático no modo Servidor.
-                if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED) {
-                    status.setText("Player nativo bloqueado — abrindo no servidor…");
-                    android.widget.Toast.makeText(PlayerActivity.this, "Servidor com proteção — abrindo no player do site.", android.widget.Toast.LENGTH_LONG).show();
-                    progressHandler.postDelayed(() -> finishWithResult(false, true, false), 1500);
+                // NÃO sai sozinho do player. Antes, 403/410 recapturava e MANIFEST_MALFORMED
+                // caía no modo Servidor automaticamente — mas isso tirava o usuário do
+                // player quando ele só queria TROCAR o link ali mesmo. Agora fica no player:
+                // mostra o motivo e, se houver alternativas, abre o seletor "Links" (uma vez).
+                // Trocar de servidor continua manual pelo botão ▣ Servidor.
+                if (!errorHandled) {
+                    errorHandled = true;
+                    if (urls != null && urls.length > 1) {
+                        status.setText("Este link falhou — escolha outro.");
+                        showLinks();
+                    } else {
+                        status.setText("Este link falhou. Toque em ▣ Servidor pra abrir no player do site.");
+                    }
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
@@ -401,6 +402,7 @@ public class PlayerActivity extends Activity {
 
     private void playUrl(String url, String mime, long startMs) {
         currentUrl = url;
+        errorHandled = false; // novo link → volta a permitir tratar erro
         // O mime capturado nem sempre chega certo (SuperFlix/EmbedPlay servem HLS como
         // text/plain em master.txt/`/m3/` sem extensão). Se o mime já diz HLS/DASH,
         // usa direto; senão SNIFFA os bytes reais (OkHttp descomprime gzip) e decide
@@ -501,13 +503,31 @@ public class PlayerActivity extends Activity {
         return "";
     }
 
-    // Espelhar na TV: pergunta o método (Chromecast ou DLNA) e delega.
+    // Espelhar na TV: pergunta o método (Chromecast, DLNA ou espelhamento) e delega.
     private void castToTv() {
         new AlertDialog.Builder(this)
             .setTitle("Espelhar na TV")
-            .setItems(new String[]{ "Chromecast (Google Cast)", "Enviar para a TV (DLNA)" }, (d, i) -> {
-                if (i == 0) castViaChromecast(); else castViaDlna();
+            .setItems(new String[]{ "Chromecast (Google Cast)", "Enviar para a TV (DLNA)", "Espelhar tela (qualquer formato)" }, (d, i) -> {
+                if (i == 0) castViaChromecast();
+                else if (i == 1) castViaDlna();
+                else openScreenMirror();
             }).show();
+    }
+
+    // Espelhamento de tela do sistema (Miracast/Smart View): quem DECODIFICA é o
+    // ExoPlayer do celular; a TV só reproduz a tela → toca QUALQUER formato, inclusive
+    // os que o receptor DLNA da LG e o Chromecast recusam (MKV/HEVC/HLS raro). Custo:
+    // qualidade/latência um pouco piores e o celular fica dedicado. Abre a tela do SO
+    // (o usuário escolhe a TV e volta ao vídeo).
+    private void openScreenMirror() {
+        for (String a : new String[]{ "android.settings.CAST_SETTINGS", "android.settings.WIFI_DISPLAY_SETTINGS", android.provider.Settings.ACTION_DISPLAY_SETTINGS }) {
+            try {
+                startActivity(new Intent(a));
+                android.widget.Toast.makeText(this, "Escolha sua TV em Espelhamento/Smart View e volte ao vídeo.", android.widget.Toast.LENGTH_LONG).show();
+                return;
+            } catch (Exception ignored) {}
+        }
+        android.widget.Toast.makeText(this, "Abra o espelhamento pelas Configurações rápidas do Android (Smart View/Transmitir).", android.widget.Toast.LENGTH_LONG).show();
     }
 
     // ---- Chromecast (Google Cast) ----
