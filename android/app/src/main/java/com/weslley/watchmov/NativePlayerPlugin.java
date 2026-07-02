@@ -45,12 +45,13 @@ public class NativePlayerPlugin extends Plugin {
 
     // Erro de reprodução → JS registra na tabela wm_playback_errors (aba "Bugs").
     // Motivo REAL do erro (código + causa) pra diagnosticar por que o link não toca.
-    public static void reportError(String url, int code, String name, String cause,
+    public static void reportError(String url, int code, int httpCode, String name, String cause,
                                    String mime, String referer, String title) {
         if (instance == null) return;
         JSObject d = new JSObject();
         d.put("url", url);
         d.put("code", code);
+        d.put("httpCode", httpCode);   // status HTTP real (403/410/451…) ou 0
         d.put("name", name);
         d.put("cause", cause);
         d.put("mime", mime);

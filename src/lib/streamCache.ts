@@ -65,6 +65,21 @@ export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, 
   write(d);
 }
 
+// Remove um link da lista (ex.: expirou/falhou ao tocar). Compara por streamKey
+// (ignora o token). Se era o chosenUrl, limpa. Mantém a lista só com links bons.
+export function removeStream(url: string, tmdbId?: number, type?: string, season?: number, episode?: number) {
+  if (!url) return;
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const e = d[k];
+  if (!e) return;
+  const key = streamKey(url);
+  const arr = e.streams.filter(s => streamKey(s.url) !== key);
+  if (arr.length === e.streams.length) return; // não tinha esse link
+  e.streams = arr;
+  if (e.chosenUrl && streamKey(e.chosenUrl) === key) e.chosenUrl = undefined;
+  write(d);
+}
+
 // Assistiu por link (reprodutor) → reabre no reprodutor nesse link.
 export function setChosen(url: string, tmdbId?: number, type?: string, season?: number, episode?: number) {
   const d = read(); const k = keyFor(tmdbId, type, season, episode);

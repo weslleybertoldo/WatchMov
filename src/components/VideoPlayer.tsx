@@ -8,7 +8,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl } from '@/lib/streamCache';
+import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
 import { supabase } from '@/lib/supabase';
 
@@ -282,6 +282,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!open || directMode || !isNative()) return;
     let handle: { remove: () => void } | null = null;
     onPlayerError?.((e) => {
+      // Tira da lista SÓ o que é morte permanente: expirado (403/410), muro
+      // WebView-only (451) ou manifesto malformado (code 3002). 500/timeout/rede
+      // são temporários → mantém (o auto-avanço só pula na hora).
+      const permanent = e.httpCode === 403 || e.httpCode === 410 || e.httpCode === 451 || e.code === 3002;
+      if (e.url && permanent) {
+        removeStream(e.url, tmdbId, type, season, episode);
+        setCapturedList(prev => prev.filter(s => streamKey(s.url) !== streamKey(e.url!)));
+      }
       supabase.from('wm_playback_errors').insert({
         title: e.title ?? title ?? null,
         provider: providerId ?? null,

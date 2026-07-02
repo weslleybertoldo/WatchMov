@@ -340,7 +340,9 @@ public class PlayerActivity extends Activity {
                     ? error.getCause().getClass().getSimpleName()
                       + (error.getCause().getMessage() != null ? ": " + error.getCause().getMessage() : "")
                     : null;
-                NativePlayerPlugin.reportError(currentUrl, error.errorCode, error.getErrorCodeName(),
+                int httpCode = (error.getCause() instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)
+                    ? ((androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) error.getCause()).responseCode : 0;
+                NativePlayerPlugin.reportError(currentUrl, error.errorCode, httpCode, error.getErrorCodeName(),
                     causeTxt, getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
                 // AUTO-AVANÇA: o link falhou (inclui muro 451, googlevideo 403, 500, etc.)
                 // → tenta sozinho o PRÓXIMO link ainda não tentado. NÃO vai pro Servidor

@@ -12,7 +12,7 @@ interface NativePlayerPlugin {
 }
 
 export interface PlayerErrorEvent {
-  url?: string; code?: number; name?: string; cause?: string;
+  url?: string; code?: number; httpCode?: number; name?: string; cause?: string;
   mime?: string; referer?: string; title?: string;
 }
 
