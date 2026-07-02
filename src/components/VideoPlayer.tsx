@@ -352,11 +352,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   const tryCast = async () => {
     if (Capacitor.isNativePlatform()) {
+      // Servidor = iframe cross-origin: não dá pra "cast" o vídeo (DLNA/Chromecast).
+      // O caminho é ESPELHAR A TELA — a TV mostra a WebView tocando (a ideia original).
       try {
         await ScreenCast.openCast();
-        toast.info('Selecione sua TV', { description: 'Escolha a TV na lista de transmissão do Android.' });
-        return;
-      } catch { setCastOpen(true); return; }
+        toast.info('Espelhar tela', { description: 'Ative Espelhamento/Smart View e escolha sua TV — o vídeo do servidor aparece nela. Se a TV não listar, use o atalho "Transmitir/Smart View" nas configurações rápidas.' });
+      } catch {
+        toast.error('Abra pelas configurações rápidas', { description: 'Puxe a barra de cima e toque em Espelhar tela / Smart View / Transmitir, e escolha a TV.' });
+      }
+      return;
     }
     const w = window as unknown as { PresentationRequest?: new (urls: string[]) => { start: () => Promise<unknown> } };
     if (typeof w.PresentationRequest === 'function') {

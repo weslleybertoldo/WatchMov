@@ -20,8 +20,10 @@ public class ScreenCastPlugin extends Plugin {
 
     @PluginMethod()
     public void openCast(final PluginCall call) {
-        if (tryStart("android.settings.CAST_SETTINGS")
-                || tryStart("android.settings.WIFI_DISPLAY_SETTINGS")
+        // Ordem: espelhamento sem-fio (Miracast/Smart View — pega TV LG/Samsung comum)
+        // ANTES do Cast (Chromecast, que só lista dispositivo Google). Fallback = Display.
+        if (tryStart("android.settings.WIFI_DISPLAY_SETTINGS")
+                || tryStart("android.settings.CAST_SETTINGS")
                 || tryStart(Settings.ACTION_DISPLAY_SETTINGS)) {
             call.resolve();
         } else {
