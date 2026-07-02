@@ -78,7 +78,8 @@ public class PlayerActivity extends Activity {
     private TextView status;
     private String currentUrl;
     private String[] urls;
-    private boolean errorHandled = false; // evita reabrir o seletor de links em cascata no mesmo link
+    private boolean errorHandled = false; // evita tratar o MESMO link 2x (ExoPlayer às vezes emite erro repetido)
+    private final java.util.HashSet<String> triedUrls = new java.util.HashSet<>(); // links que já falharam (não repetir)
     private String[] mimes;
     private String[] qualities;
     private String mReferer;
@@ -341,31 +342,29 @@ public class PlayerActivity extends Activity {
                     : null;
                 NativePlayerPlugin.reportError(currentUrl, error.errorCode, error.getErrorCodeName(),
                     causeTxt, getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
-                // Muro anti-hotlink (proxy devolveu 451): essa fonte só toca no browser
-                // real (EmbedPlayApi/lumicrest, SuperFlix). Player nativo não busca os
-                // segmentos → cai AUTOMÁTICO pro modo Servidor (iframe/WebView), que roda
-                // o JS da página e autoriza. Único caso de saída automática.
-                boolean walled = (error.getCause() instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)
-                    && ((androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) error.getCause()).responseCode == 451;
-                if (walled && !errorHandled) {
-                    errorHandled = true;
-                    status.setText("Fonte protegida — abrindo no Servidor…");
-                    progressHandler.postDelayed(() -> finishWithResult(false, true, false), 1200);
-                    return;
-                }
-                // NÃO sai sozinho do player. Antes, 403/410 recapturava e MANIFEST_MALFORMED
-                // caía no modo Servidor automaticamente — mas isso tirava o usuário do
-                // player quando ele só queria TROCAR o link ali mesmo. Agora fica no player:
-                // mostra o motivo e, se houver alternativas, abre o seletor "Links" (uma vez).
-                // Trocar de servidor continua manual pelo botão ▣ Servidor.
-                if (!errorHandled) {
-                    errorHandled = true;
-                    if (urls != null && urls.length > 1) {
-                        status.setText("Este link falhou — escolha outro.");
-                        showLinks();
-                    } else {
-                        status.setText("Este link falhou. Toque em ▣ Servidor pra abrir no player do site.");
+                // AUTO-AVANÇA: o link falhou (inclui muro 451, googlevideo 403, 500, etc.)
+                // → tenta sozinho o PRÓXIMO link ainda não tentado. NÃO vai pro Servidor
+                // automaticamente. Se acabarem os links, fica no player com aviso (o user
+                // decide: ▣ Servidor ou Links). errorHandled evita tratar o mesmo link 2x.
+                if (errorHandled) return;
+                errorHandled = true;
+                if (currentUrl != null) triedUrls.add(currentUrl);
+                String nextUrl = null, nextMime = null;
+                if (urls != null) {
+                    for (int i = 0; i < urls.length; i++) {
+                        if (urls[i] != null && !triedUrls.contains(urls[i])) {
+                            nextUrl = urls[i];
+                            nextMime = (mimes != null && i < mimes.length) ? mimes[i] : null;
+                            break;
+                        }
                     }
+                }
+                if (nextUrl != null) {
+                    status.setText("Link falhou — tentando o próximo…");
+                    final String nu = nextUrl, nm = nextMime;
+                    progressHandler.postDelayed(() -> playUrl(nu, nm, 0), 700);
+                } else {
+                    status.setText("Nenhum link tocou. Toque em ▣ Servidor ou Links pra tentar de outra forma.");
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
