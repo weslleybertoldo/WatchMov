@@ -334,6 +334,13 @@ public class PlayerActivity extends Activity {
                 status.setText(msg);
                 status.setVisibility(View.VISIBLE);
                 android.widget.Toast.makeText(PlayerActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
+                // Registra o motivo REAL no banco (aba "Bugs") — cause já tem classe+msg.
+                String causeTxt = error.getCause() != null
+                    ? error.getCause().getClass().getSimpleName()
+                      + (error.getCause().getMessage() != null ? ": " + error.getCause().getMessage() : "")
+                    : null;
+                NativePlayerPlugin.reportError(currentUrl, error.errorCode, error.getErrorCodeName(),
+                    causeTxt, getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
                 // NÃO sai sozinho do player. Antes, 403/410 recapturava e MANIFEST_MALFORMED
                 // caía no modo Servidor automaticamente — mas isso tirava o usuário do
                 // player quando ele só queria TROCAR o link ali mesmo. Agora fica no player:

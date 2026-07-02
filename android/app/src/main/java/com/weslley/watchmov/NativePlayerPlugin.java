@@ -43,6 +43,22 @@ public class NativePlayerPlugin extends Plugin {
         instance.notifyListeners("playerWatched", d);
     }
 
+    // Erro de reprodução → JS registra na tabela wm_playback_errors (aba "Bugs").
+    // Motivo REAL do erro (código + causa) pra diagnosticar por que o link não toca.
+    public static void reportError(String url, int code, String name, String cause,
+                                   String mime, String referer, String title) {
+        if (instance == null) return;
+        JSObject d = new JSObject();
+        d.put("url", url);
+        d.put("code", code);
+        d.put("name", name);
+        d.put("cause", cause);
+        d.put("mime", mime);
+        d.put("referer", referer);
+        d.put("title", title);
+        instance.notifyListeners("playerError", d);
+    }
+
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
     public static void reportQuality(String url, int height) {
         if (instance == null || url == null || height <= 0) return;

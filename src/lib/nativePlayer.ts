@@ -8,6 +8,12 @@ interface NativePlayerPlugin {
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerWatched', cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'playerError', cb: (d: PlayerErrorEvent) => void): Promise<PluginListenerHandle>;
+}
+
+export interface PlayerErrorEvent {
+  url?: string; code?: number; name?: string; cause?: string;
+  mime?: string; referer?: string; title?: string;
 }
 
 const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
@@ -29,6 +35,12 @@ export function onPlayerQuality(cb: (d: { url: string; quality: string }) => voi
 export function onPlayerWatched(cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerWatched', cb);
+}
+
+// Erro de reprodução do player nativo (código/causa reais) → registrar no banco.
+export function onPlayerError(cb: (d: PlayerErrorEvent) => void): Promise<PluginListenerHandle> | null {
+  if (!Capacitor.isNativePlatform()) return null;
+  return NativePlayer.addListener('playerError', cb);
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link

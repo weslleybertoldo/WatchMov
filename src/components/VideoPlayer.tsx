@@ -9,7 +9,8 @@ import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl } from '@/lib/streamCache';
-import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched } from '@/lib/nativePlayer';
+import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
+import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
 // no reprodutor se já tiver link capturado.
@@ -274,6 +275,28 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
   }, [open, directMode, tmdbId, type, season, episode]);
+
+  // Registra no banco (aba "Bugs") todo erro de reprodução do player nativo, com o
+  // motivo REAL (código/causa/HTTP) — pra entender por que os links não tocam.
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerError?.((e) => {
+      supabase.from('wm_playback_errors').insert({
+        title: e.title ?? title ?? null,
+        provider: providerId ?? null,
+        url: e.url ?? null,
+        referer: e.referer ?? null,
+        mime: e.mime ?? null,
+        error_code: typeof e.code === 'number' ? e.code : null,
+        error_name: e.name ?? null,
+        error_cause: e.cause ?? null,
+        app_version: __APP_VERSION__,
+        platform: 'android',
+      }).then(({ error }) => { if (error) console.warn('[bugs] log falhou', error.message); });
+    })?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, directMode, providerId, title]);
 
   // <video> (Stremio/torrent): anexa a fonte (hls.js pra .m3u8; src direto pro resto).
   useEffect(() => {

@@ -17,6 +17,7 @@ import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
 import HistoryView from '@/components/streaming/HistoryView';
 import DownloadView from '@/components/streaming/DownloadView';
+import BugsView from '@/components/streaming/BugsView';
 import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
 import { useDownloads, hasAnyDownload, clearDownloadsFor, downloadedEpisodesOf, setDownloaded, epKey } from '@/lib/downloads';
 import UpdateChecker from '@/components/UpdateChecker';
@@ -74,6 +75,7 @@ export default function Index() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [bugsOpen, setBugsOpen] = useState(false);
   const dls = useDownloads();
 
   // Preserva o scroll vertical da página ao abrir um título e voltar.
@@ -92,6 +94,7 @@ export default function Index() {
     if (selected) { setSelected(null); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
+    if (bugsOpen) { setBugsOpen(false); return true; }
     if (settingsOpen) { setSettingsOpen(false); return true; }
     if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
@@ -99,7 +102,7 @@ export default function Index() {
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, historyOpen, downloadOpen, settingsOpen, searchOpen, continueFilter, listFilter, category, tab]);
+  }, [selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, searchOpen, continueFilter, listFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -152,7 +155,7 @@ export default function Index() {
   const dlAnimes = downloadedItems.filter(isAnime).map(itemToSummary);
   const dlSeries = downloadedItems.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -192,8 +195,10 @@ export default function Index() {
               episodesOf={(id) => downloadedEpisodesOf(dls, id)}
               onRemoveEpisodes={(id, eps) => setDownloaded(eps.map(e => epKey(id, e.season, e.ep)), false)}
               onBack={() => setDownloadOpen(false)} />
+          ) : bugsOpen ? (
+            <BugsView onBack={() => setBugsOpen(false)} />
           ) : (
-            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
           )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />

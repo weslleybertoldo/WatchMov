@@ -1,4 +1,4 @@
-import { Film, Tv, Sparkles, History, Download, LogOut, ArrowLeft } from 'lucide-react';
+import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export interface WatchedStats {
@@ -33,11 +33,12 @@ interface SettingsViewProps {
   stats: WatchedStats;
   onHistory: () => void;
   onDownload: () => void;
+  onBugs: () => void;
   onSignOut: () => void;
   onBack: () => void;
 }
 
-export default function SettingsView({ stats, onHistory, onDownload, onSignOut, onBack }: SettingsViewProps) {
+export default function SettingsView({ stats, onHistory, onDownload, onBugs, onSignOut, onBack }: SettingsViewProps) {
   return (
     <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -58,6 +59,10 @@ export default function SettingsView({ stats, onHistory, onDownload, onSignOut, 
       <Button variant="secondary" className="w-full justify-between gap-2 h-11" onClick={onDownload}>
         <span className="flex items-center gap-2"><Download className="w-4 h-4" /> Download</span>
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">em breve</span>
+      </Button>
+
+      <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onBugs}>
+        <Bug className="w-4 h-4" /> Bugs
       </Button>
 
       <Button variant="ghost" className="w-full justify-start gap-2 h-11 text-muted-foreground" onClick={onSignOut}>
