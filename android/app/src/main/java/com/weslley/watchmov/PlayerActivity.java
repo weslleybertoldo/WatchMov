@@ -540,7 +540,7 @@ public class PlayerActivity extends Activity {
     // qualidade/latência um pouco piores e o celular fica dedicado. Abre a tela do SO
     // (o usuário escolhe a TV e volta ao vídeo).
     private void openScreenMirror() {
-        for (String a : new String[]{ "android.settings.WIFI_DISPLAY_SETTINGS", "android.settings.CAST_SETTINGS", android.provider.Settings.ACTION_DISPLAY_SETTINGS }) {
+        for (String a : new String[]{ "android.settings.CAST_SETTINGS", "android.settings.WIFI_DISPLAY_SETTINGS", android.provider.Settings.ACTION_DISPLAY_SETTINGS }) {
             try {
                 startActivity(new Intent(a));
                 android.widget.Toast.makeText(this, "Escolha sua TV em Espelhamento/Smart View e volte ao vídeo.", android.widget.Toast.LENGTH_LONG).show();

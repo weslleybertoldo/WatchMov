@@ -20,10 +20,11 @@ public class ScreenCastPlugin extends Plugin {
 
     @PluginMethod()
     public void openCast(final PluginCall call) {
-        // Ordem: espelhamento sem-fio (Miracast/Smart View — pega TV LG/Samsung comum)
-        // ANTES do Cast (Chromecast, que só lista dispositivo Google). Fallback = Display.
-        if (tryStart("android.settings.WIFI_DISPLAY_SETTINGS")
-                || tryStart("android.settings.CAST_SETTINGS")
+        // Ordem: CAST_SETTINGS PRIMEIRO — no MIUI/Xiaomi é o "Transmitir" nativo (投屏)
+        // otimizado (o que funciona liso). WIFI_DISPLAY_SETTINGS = Miracast genérico
+        // (mais laggy) só como fallback. Por fim, Display.
+        if (tryStart("android.settings.CAST_SETTINGS")
+                || tryStart("android.settings.WIFI_DISPLAY_SETTINGS")
                 || tryStart(Settings.ACTION_DISPLAY_SETTINGS)) {
             call.resolve();
         } else {
