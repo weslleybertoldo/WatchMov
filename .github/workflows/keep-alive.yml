@@ -2,25 +2,34 @@ name: Keep Supabase Active
 
 on:
   schedule:
-    # A cada 5 dias as 9h UTC (antes do limite de 7 dias)
-    - cron: '0 9 */5 * *'
+    # 4x/dia. Criterio oficial do auto-pause NAO e "qualquer atividade reseta
+    # o contador" — e "sufficient user database activity... a few user
+    # requests to the database EACH DAY over the previous week"
+    # (docs/guides/platform/free-project-pausing). Ping a cada 3-5 dias falhou
+    # no NutriTrack: runs verdes 28/06 e 01/07 e pausou 04/07/2026.
+    # Alem disso, /auth/v1/health NAO conta como atividade — so REST/PostgREST.
+    - cron: '0 3,9,15,21 * * *'
   workflow_dispatch:
 
 jobs:
   ping-supabase:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping runtime do projeto (auth/v1/health)
+      - name: Pings REST/PostgREST (atividade que CONTA p/ o auto-pause)
         env:
           ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           set -e
-          RES=$(curl -s -w "\n%{http_code}" \
-            -H "apikey: $ANON_KEY" \
-            "https://nnvwpgpvzysvyntdrtay.supabase.co/auth/v1/health")
-          CODE=$(echo "$RES" | tail -1)
-          echo "WatchMov runtime ping: HTTP $CODE"
-          [ "$CODE" = "200" ] || (echo "ERRO" && exit 1)
+          # 3 queries por run x 4 runs/dia = ~12 queries/dia ("a few each day")
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "apikey: $ANON_KEY" \
+              -H "Authorization: Bearer $ANON_KEY" \
+              "https://nnvwpgpvzysvyntdrtay.supabase.co/rest/v1/wm_sections?select=id&limit=$i")
+            echo "WatchMov REST ping $i/3: HTTP $CODE"
+            [ "$CODE" = "200" ] || (echo "ERRO" && exit 1)
+            sleep 2
+          done
 
       - name: Executar SQL real no Postgres (camada extra)
         run: |
