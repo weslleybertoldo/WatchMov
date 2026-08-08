@@ -183,6 +183,27 @@ export async function discoverByGenre(type: TmdbMediaType, genreId: number, page
   return dedupeWithPoster((d.results || []).map(r => toSummary(r, type)));
 }
 
+// Episódios de uma temporada COM a data de exibição — o detalhe usa pra marcar
+// "Em breve" (ainda não foi ao ar) e "Novo" (foi ao ar faz menos de 30 dias).
+export interface TmdbEpisodeInfo { number: number; airDate?: string; name?: string }
+
+export async function getSeasonEpisodes(tvId: number, season: number): Promise<TmdbEpisodeInfo[]> {
+  const d = await tmdbFetch<{ episodes?: { episode_number: number; air_date?: string; name?: string }[] }>(
+    `/tv/${tvId}/season/${season}`);
+  return (d.episodes || []).map(e => ({
+    number: e.episode_number,
+    airDate: e.air_date || undefined,
+    name: e.name || undefined,
+  }));
+}
+
+// Relacionados do MESMO tipo (filme→filmes, série/anime→séries): o /recommendations
+// da TMDB já devolve só o tipo consultado.
+export async function getRecommendations(tmdbId: number, type: TmdbMediaType): Promise<MediaSummary[]> {
+  const d = await tmdbFetch<{ results: RawListItem[] }>(`/${type}/${tmdbId}/recommendations`);
+  return dedupeWithPoster((d.results || []).map(r => toSummary(r, type)));
+}
+
 // Animes = TV de animação japonesa (gênero 16 + idioma original ja).
 export const ANIME_ROWS: { id: number | null; name: string }[] = [
   { id: null, name: 'Populares' },

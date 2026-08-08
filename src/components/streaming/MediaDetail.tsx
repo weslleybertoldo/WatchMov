@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { MediaSummary, getDetails, type TmdbDetails } from '@/lib/tmdb';
+import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, type TmdbDetails, type TmdbEpisodeInfo } from '@/lib/tmdb';
 import { WatchItem, Season } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
 import { formatRating } from '@/lib/formatters';
@@ -13,7 +13,7 @@ import { useDownloads, setDownloaded, enqueueDownload, movieKey, epKey } from '@
 import { getEntry, streamKey } from '@/lib/streamCache';
 import { toast } from 'sonner';
 import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
-import { isUpcoming } from '@/components/streaming/MediaCard';
+import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -31,9 +31,10 @@ interface MediaDetailProps {
   media: MediaSummary;
   store: StoreLike;
   onBack: () => void;
+  onOpen?: (m: MediaSummary) => void;   // abrir um relacionado
 }
 
-export default function MediaDetail({ media, store, onBack }: MediaDetailProps) {
+export default function MediaDetail({ media, store, onBack, onOpen }: MediaDetailProps) {
   const storeType: 'movie' | 'series' = media.type === 'tv' ? 'series' : 'movie';
   const isSeries = storeType === 'series';
 
@@ -51,6 +52,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const notifyOn = useNotify(media.tmdbId);
   const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
   const [selEps, setSelEps] = useState<Set<number>>(new Set());
+  // Datas de exibição da temporada aberta → tags "Em breve"/"Novo" por episódio.
+  const [seasonEps, setSeasonEps] = useState<TmdbEpisodeInfo[]>([]);
+  const [related, setRelated] = useState<MediaSummary[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -58,6 +62,28 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
       .then(d => { if (alive) setDetails(d); })
       .catch(() => {})
       .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [media.tmdbId, media.type]);
+
+  // Datas de exibição da temporada ABERTA: é o que diz se o episódio já foi ao ar
+  // (a TMDB só traz air_date por episódio no endpoint da temporada).
+  useEffect(() => {
+    if (!isSeries || !details?.seasons?.length) { setSeasonEps([]); return; }
+    let alive = true;
+    setSeasonEps([]);
+    getSeasonEpisodes(media.tmdbId, selSeason)
+      .then(eps => { if (alive) setSeasonEps(eps); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isSeries, details, media.tmdbId, selSeason]);
+
+  // Relacionados (mesmo tipo do título aberto).
+  useEffect(() => {
+    let alive = true;
+    setRelated([]);
+    getRecommendations(media.tmdbId, media.type)
+      .then(r => { if (alive) setRelated(r.slice(0, 20)); })
+      .catch(() => {});
     return () => { alive = false; };
   }, [media.tmdbId, media.type]);
 
@@ -259,9 +285,11 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         <h1 className="text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
           {releaseLabel && <span>{releaseLabel}</span>}
-          {isUpcoming(details?.releaseDate) && (
+          {isUpcoming(details?.releaseDate) ? (
             <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">Em breve</span>
-          )}
+          ) : isNew(details?.releaseDate) ? (
+            <span className="px-2 py-0.5 rounded bg-primary text-primary-foreground text-xs font-medium">Novo</span>
+          ) : null}
           {rating && <span className="flex items-center gap-1 text-foreground font-medium"><Star className="w-4 h-4 fill-amber-400 text-amber-400" /> {rating}</span>}
           <span className="px-2 py-0.5 rounded bg-muted text-xs">{isSeries ? 'Série' : 'Filme'}</span>
           {details?.originalLanguage && (
@@ -358,6 +386,11 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
                   <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                     {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
                       const seen = watched.includes(ep);
+                      // Data de exibição do episódio: futura = "Em breve" (não dá pra
+                      // assistir ainda), últimos 30 dias = "Novo". Sem data, nada.
+                      const air = seasonEps.find(e => e.number === ep)?.airDate;
+                      const emBreve = isUpcoming(air);
+                      const novo = !emBreve && isNew(air);
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
                       const picked = selEps.has(ep);
                       return (
@@ -367,6 +400,12 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
                           className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${selecting && downloaded ? 'border-green-400/40 bg-green-400/5 text-muted-foreground opacity-70' : selecting && picked ? 'border-primary bg-primary/20 text-primary' : seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
                         >
                           {ep}
+                          {!selecting && emBreve && (
+                            <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-black/70 text-white/90">Em breve</span>
+                          )}
+                          {!selecting && novo && (
+                            <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-primary text-primary-foreground">Novo</span>
+                          )}
                           {seen && !selecting && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
                           {selecting && !downloaded && (
                             <span className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm border flex items-center justify-center ${picked ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
@@ -389,6 +428,20 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
                 </>
               );
             })()}
+          </div>
+        )}
+
+        {/* Relacionados: mesmo tipo do título aberto (filme→filmes, série/anime→séries). */}
+        {onOpen && related.length > 0 && (
+          <div className="space-y-2 pt-4">
+            <h2 className="text-sm font-semibold text-muted-foreground">
+              {isSeries ? 'Séries relacionadas' : 'Filmes relacionados'}
+            </h2>
+            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+              {related.map(r => (
+                <MediaCard key={`${r.type}-${r.tmdbId}`} media={r} onClick={() => onOpen(r)} />
+              ))}
+            </div>
           </div>
         )}
       </div>

@@ -205,7 +205,10 @@ export default function Index() {
       {/* Conteúdo */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
-          <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
+          <MediaDetail media={selected} store={store} onBack={() => setSelected(null)}
+            /* Relacionado NÃO passa pelo openMedia: ele grava o scroll da HOME, e aqui
+               estamos dentro do detalhe — sobrescrever bagunçaria a volta. */
+            onOpen={(m) => { setSelected(m); window.scrollTo(0, 0); }} />
         ) : settingsOpen ? (
           historyOpen ? (
             <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
