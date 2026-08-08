@@ -9,7 +9,7 @@ import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon, Bell, BellOff } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
-import { useDownloads, setDownloaded, enqueueDownload, movieKey, epKey } from '@/lib/downloads';
+import { useDownloads, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf } from '@/lib/downloads';
 import { getEntry, streamKey } from '@/lib/streamCache';
 import { toast } from 'sonner';
 import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
@@ -258,7 +258,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     let ok = 0, miss = 0;
     [...selEps].forEach(ep => {
       const s = streamFor(selSeason, ep);
-      if (s) { enqueueDownload(epKey(media.tmdbId, selSeason, ep), { ...s, title: `${media.title} T${selSeason}E${ep}`, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl, season: selSeason, ep }); ok++; }
+      if (s) { enqueueDownload(epKey(media.tmdbId, selSeason, ep), { ...s, title: `${media.title} T${selSeason}E${ep}`, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl, season: selSeason, ep, stillUrl: seasonEps.find(x => x.number === ep)?.stillUrl }); ok++; }
       else miss++;
     });
     cancelSelecting();
@@ -417,6 +417,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                       const novo = !emBreve && isNew(air);
                       const espelhado = castNow?.tmdbId === media.tmdbId
                         && castNow?.season === s.number && castNow?.episode === ep;
+                      // Progresso do episódio (mesma fonte da aba Download) — só a barra.
+                      const prog = watchProgressOf(epKey(media.tmdbId, s.number, ep));
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
                       const picked = selEps.has(ep);
                       return (
@@ -427,7 +429,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                         >
                           {still && (
                             <img src={still} alt={`Episódio ${ep}`} loading="lazy"
-                              className={`absolute inset-0 w-full h-full object-cover ${emBreve ? 'opacity-40' : 'opacity-70'}`} />
+                              className={`absolute inset-0 w-full h-full object-cover ${emBreve ? 'opacity-40' : seen ? 'opacity-35 grayscale' : 'opacity-70'}`} />
                           )}
                           <span className={`relative z-10 ${still ? 'px-1.5 rounded bg-black/60 text-white' : ''}`}>{ep}</span>
                           {!selecting && espelhado && (
@@ -439,13 +441,25 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                           {!selecting && novo && (
                             <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-primary text-primary-foreground">Novo</span>
                           )}
-                          {seen && !selecting && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
+                          {/* Assistido: badge com fundo — o check "chapado" sumia em
+                              cima da imagem do episódio. */}
+                          {seen && !selecting && (
+                            <span className="absolute top-1 right-1 z-10 w-5 h-5 rounded-full bg-green-500 flex items-center justify-center shadow">
+                              <Check className="w-3.5 h-3.5 text-white" />
+                            </span>
+                          )}
+                          {/* Barra de progresso (sem tempo), como na aba Download. */}
+                          {!selecting && prog && !prog.watched && prog.percent > 0 && (
+                            <span className="absolute bottom-0 inset-x-0 z-10 h-1 bg-white/25">
+                              <span className="block h-full bg-primary" style={{ width: `${prog.percent}%` }} />
+                            </span>
+                          )}
                           {selecting && !downloaded && (
                             <span className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm border flex items-center justify-center ${picked ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
                               {picked && <Check className="w-3 h-3 text-primary-foreground" />}
                             </span>
                           )}
-                          {downloaded && <DownloadCloud className="absolute bottom-0.5 right-0.5 w-4 h-4 text-green-400" />}
+                          {downloaded && <DownloadCloud className="absolute bottom-1 right-1 z-10 w-4 h-4 text-white drop-shadow" />}
                         </button>
                       );
                     })}

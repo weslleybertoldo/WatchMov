@@ -22,6 +22,7 @@ export const epKey = (tmdbId: number, season: number, ep: number) => `e:${tmdbId
 export interface DownloadMeta {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
   season?: number; ep?: number; url: string; referer?: string; mime?: string;
+  stillUrl?: string;   // frame do episódio (guardado aqui pra aba funcionar OFFLINE)
 }
 const META_KEY = 'watchmov_dl_meta';
 function readMeta(): Record<string, DownloadMeta> {
