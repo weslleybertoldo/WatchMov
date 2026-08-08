@@ -17,6 +17,12 @@ import { supabase } from '@/lib/supabase';
 // no reprodutor se já tiver link capturado.
 let pendingNextInPlayer = false;
 
+// Resolvedor on-device DESATIVADO: no emulador provou-se que o WebView oculto
+// navega a cadeia de iframes mas o player (JW) não inicia o vídeo com eventos
+// sintéticos (user-activation). Fica o fluxo iframe+sniffer comprovado. Reativar
+// só quando resolver server-side (proxy residencial) ou trusted-gesture on-device.
+const RESOLVER_ONDEVICE_ENABLED = false;
+
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
 
@@ -204,6 +210,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // (o que funciona) e, se falhar, os demais em paralelo. O 1º que resolver toca
   // no player nativo; os outros viram "Servidor 2/3…". Nenhum resolveu → iframe.
   useEffect(() => {
+    if (!RESOLVER_ONDEVICE_ENABLED) return;
     if (!open || directMode || !isNative()) return;
     const entry = getEntry(tmdbId, type, season, episode);
     if (entry?.chosenUrl || entry?.lastMode === 'server') return; // respeita cache/escolha do usuário
