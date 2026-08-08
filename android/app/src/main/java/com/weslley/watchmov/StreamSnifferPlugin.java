@@ -60,6 +60,26 @@ public class StreamSnifferPlugin extends Plugin {
         return false;
     }
 
+    // Recursos que QUEBRAM a página (anti-devtool blanka a tela ao detectar o
+    // browser controlado) ou são analytics/tracker — bloqueados no WebView pra a
+    // página renderizar e o sniffer captar (provado no resolvedor Playwright).
+    private static final String[] KILL_RES = {
+        "disable-devtool", "metricas.site", "whos.amung", "amung.us",
+        "pixel.morphify", "morphify.net", "histats", "static.cloudflareinsights",
+        "google-analytics.com", "googletagmanager.com",
+    };
+
+    public static boolean shouldBlockResource(String url) {
+        if (url == null) return false;
+        String u = url.toLowerCase();
+        for (String k : KILL_RES) if (u.contains(k)) return true;
+        return isBlockedHost(url);
+    }
+
+    public static android.webkit.WebResourceResponse blockedResponse() {
+        return new android.webkit.WebResourceResponse("text/plain", "utf-8", new java.io.ByteArrayInputStream(new byte[0]));
+    }
+
     public static boolean looksLikeVideo(String url) {
         if (url == null || isBlockedHost(url)) return false;
         String u = url.toLowerCase();

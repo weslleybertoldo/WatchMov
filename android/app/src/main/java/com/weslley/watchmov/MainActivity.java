@@ -78,8 +78,10 @@ public class MainActivity extends BridgeActivity {
                     sniffPopup.setWebViewClient(new android.webkit.WebViewClient() {
                         @Override
                         public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
-                            if (StreamSnifferPlugin.isWatching() && req.getUrl() != null) {
-                                StreamSnifferPlugin.inspect(req.getUrl().toString(), req.getRequestHeaders());
+                            String u = req.getUrl() != null ? req.getUrl().toString() : null;
+                            if (StreamSnifferPlugin.shouldBlockResource(u)) return StreamSnifferPlugin.blockedResponse();
+                            if (StreamSnifferPlugin.isWatching() && u != null) {
+                                StreamSnifferPlugin.inspect(u, req.getRequestHeaders());
                             }
                             return null;
                         }
@@ -139,8 +141,10 @@ public class MainActivity extends BridgeActivity {
             // Só emite quando o JS "armou" a captura (StreamSnifferPlugin.watching).
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
-                    StreamSnifferPlugin.inspect(request.getUrl().toString(), request.getRequestHeaders());
+                String u = request.getUrl() != null ? request.getUrl().toString() : null;
+                if (StreamSnifferPlugin.shouldBlockResource(u)) return StreamSnifferPlugin.blockedResponse();
+                if (StreamSnifferPlugin.isWatching() && u != null) {
+                    StreamSnifferPlugin.inspect(u, request.getRequestHeaders());
                 }
                 return super.shouldInterceptRequest(view, request);
             }
@@ -153,8 +157,10 @@ public class MainActivity extends BridgeActivity {
                 android.webkit.ServiceWorkerController.getInstance().setServiceWorkerClient(new android.webkit.ServiceWorkerClient() {
                     @Override
                     public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
-                        if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
-                            StreamSnifferPlugin.inspect(request.getUrl().toString(), request.getRequestHeaders());
+                        String u = request.getUrl() != null ? request.getUrl().toString() : null;
+                        if (StreamSnifferPlugin.shouldBlockResource(u)) return StreamSnifferPlugin.blockedResponse();
+                        if (StreamSnifferPlugin.isWatching() && u != null) {
+                            StreamSnifferPlugin.inspect(u, request.getRequestHeaders());
                         }
                         return null;
                     }
