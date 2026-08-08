@@ -73,10 +73,36 @@ function dbItemToLocal(row: DbItemRow): WatchItem {
   };
 }
 
+// Erro de REDE (offline) ≠ erro de banco: sem internet o app segue funcionando com
+// o cache local (downloads/continuar assistindo), então mostra aviso de modo offline
+// em vez de "TypeError: Failed to fetch".
+function isNetworkError(error: unknown): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  const msg = error instanceof Error ? error.message
+    : (typeof error === 'object' && error && 'message' in error ? String((error as { message: unknown }).message) : '');
+  return /failed to fetch|networkerror|network request failed|load failed/i.test(msg);
+}
+
 function reportDbError(action: string, error: unknown) {
-  const msg = error instanceof Error ? error.message : (typeof error === 'object' && error && 'message' in error ? String((error as { message: unknown }).message) : 'erro desconhecido');
   console.error(`[WatchStore] ${action}:`, error);
+  if (isNetworkError(error)) {
+    toast.info('Sem internet — modo offline', { description: 'Seus downloads continuam disponíveis.', id: 'offline' });
+    return;
+  }
+  const msg = error instanceof Error ? error.message : (typeof error === 'object' && error && 'message' in error ? String((error as { message: unknown }).message) : 'erro desconhecido');
   toast.error(`Falha ao ${action}`, { description: msg });
+}
+
+// Cache local da biblioteca — permite "Continuar assistindo"/Minha Lista offline.
+const CACHE_KEY = 'watchmov_store_cache';
+function readCache(userId: string): AppData | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    return c && c.userId === userId ? { sections: c.sections, items: c.items } : null;
+  } catch { return null; }
+}
+function writeCache(userId: string, d: AppData) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ userId, ...d })); } catch { /* quota */ }
 }
 
 const DEFAULT_SECTIONS = [
@@ -102,6 +128,10 @@ export function useWatchStore(userId?: string) {
   const loadFromDB = useCallback(async () => {
     if (!userId) return;
 
+    // Hidrata do cache ANTES da rede: offline a home/continuar assistindo aparecem.
+    const cached = readCache(userId);
+    if (cached && !loadedRef.current) { setData(cached); setLoading(false); }
+
     const [secRes, itemRes] = await Promise.all([
       supabase.from('wm_sections').select('*').eq('user_id', userId).order('created_at'),
       supabase.from('wm_items').select('*').eq('user_id', userId).order('created_at'),
@@ -109,6 +139,9 @@ export function useWatchStore(userId?: string) {
 
     if (secRes.error) reportDbError('carregar secoes', secRes.error);
     if (itemRes.error) reportDbError('carregar itens', itemRes.error);
+
+    // Falhou a rede: mantém o que veio do cache (não zera a tela).
+    if ((secRes.error || itemRes.error) && cached) { setLoading(false); return; }
 
     let sections = (secRes.data || []).map(dbSectionToLocal);
     const items = (itemRes.data || []).map(dbItemToLocal);
@@ -129,6 +162,13 @@ export function useWatchStore(userId?: string) {
     setData({ sections, items });
     setLoading(false);
   }, [userId]);
+
+  // Espelha a biblioteca no cache local a cada mudança (inclui progresso/assistido)
+  // → offline a home e "Continuar assistindo" continuam populadas.
+  useEffect(() => {
+    if (!userId || (data.sections.length === 0 && data.items.length === 0)) return;
+    writeCache(userId, data);
+  }, [userId, data]);
 
   useEffect(() => {
     loadedRef.current = false;

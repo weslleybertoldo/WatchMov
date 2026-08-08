@@ -69,6 +69,10 @@ public class DownloaderPlugin extends Plugin {
         JSObject o = new JSObject();
         o.put("key", d.request.id);
         o.put("state", stateName(d.state));
+        // title (gravado em request.data) + uri proxied: permitem RECONSTRUIR o item na
+        // aba Download mesmo sem o registro local (ex. baixado por uma versão antiga).
+        try { if (d.request.data != null && d.request.data.length > 0) o.put("title", new String(d.request.data)); } catch (Exception ignored) {}
+        try { o.put("uri", d.request.uri.toString()); } catch (Exception ignored) {}
         float p = d.getPercentDownloaded();
         o.put("percent", Float.isNaN(p) || p < 0 ? -1 : Math.round(p));
         o.put("bytes", d.getBytesDownloaded());

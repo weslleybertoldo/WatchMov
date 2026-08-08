@@ -27,7 +27,38 @@ function readMeta(): Record<string, DownloadMeta> {
   try { return JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch { return {}; }
 }
 function writeMeta(m: Record<string, DownloadMeta>) { localStorage.setItem(META_KEY, JSON.stringify(m)); notify(); }
-export function getDownloadMeta(): Record<string, DownloadMeta> { return readMeta(); }
+
+// Reconstrói a metadata a partir do PRÓPRIO download nativo (key + title + uri
+// proxied), pra itens sem registro local — ex. baixados por versão anterior, que
+// sumiam da aba. A key carrega tmdbId/tipo/temporada/ep; a uri carrega ?u= e &r=.
+function syntheticMeta(it: DownloadItem): DownloadMeta | null {
+  const p = it.key.split(':');
+  const tmdbId = Number(p[1]);
+  if (!tmdbId) return null;
+  let url = '', referer: string | undefined;
+  try {
+    const q = new URL(it.uri || '').searchParams;
+    url = q.get('u') || '';
+    referer = q.get('r') || undefined;
+  } catch { /* uri ausente/inválida */ }
+  if (p[0] === 'm') return { tmdbId, type: 'movie', title: it.title || `Filme ${tmdbId}`, url, referer };
+  return {
+    tmdbId, type: 'tv', title: it.title || `Série ${tmdbId}`,
+    season: Number(p[2]), ep: Number(p[3]), url, referer,
+  };
+}
+
+// Metadata efetiva: registro local (rico: poster) + reconstruída do nativo (legado).
+export function getDownloadMeta(): Record<string, DownloadMeta> {
+  const stored = readMeta();
+  const out: Record<string, DownloadMeta> = { ...stored };
+  items.forEach((it, k) => {
+    if (out[k] || it.state === 'removed') return;
+    const s = syntheticMeta(it);
+    if (s) out[k] = s;
+  });
+  return out;
+}
 
 // ── Fallback WEB (sem nativo): só marcador (sem arquivo) ──
 const WEB_KEY = 'watchmov_downloads';
@@ -71,9 +102,18 @@ function ensureInit() {
 // andamento E concluído. Offline usa o registro de metadata como fonte das chaves.
 function knownKeys(): Set<string> {
   if (!downloadsNative()) return webRead();
-  const s = new Set<string>(Object.keys(readMeta()));
-  items.forEach((v, k) => { if (v.state !== 'removed') s.add(k); });
-  return s;
+  return new Set<string>(Object.keys(getDownloadMeta()));
+}
+
+// Assistido/progresso offline: vem do streamCache (positionMs/durationMs salvos
+// pelo player), não da store Supabase. ≥92% = assistido.
+export function watchProgressOf(key: string): { percent: number; watched: boolean } | null {
+  const meta = getDownloadMeta()[key];
+  if (!meta) return null;
+  const e = getEntry(meta.tmdbId, meta.type, meta.season, meta.ep);
+  if (!e?.positionMs || !e.durationMs) return null;
+  const percent = Math.min(100, Math.round((e.positionMs / e.durationMs) * 100));
+  return { percent, watched: percent >= 92 };
 }
 function completedSet(): Set<string> {
   if (!downloadsNative()) return webRead();
@@ -141,8 +181,8 @@ export function clearDownloadsFor(tmdbId: number, isMovie: boolean) {
 // Reproduz um download OFFLINE direto do cache (sem passar por MediaDetail/TMDB,
 // que exigem rede). Retoma da posição salva; salva a posição ao fechar.
 export async function playDownloaded(key: string) {
-  const meta = readMeta()[key];
-  if (!meta) return;
+  const meta = getDownloadMeta()[key];   // inclui itens reconstruídos do nativo
+  if (!meta || !meta.url) return;
   const startMs = getEntry(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
   const res = await playNative({
     url: meta.url, referer: meta.referer, mime: meta.mime, title: meta.title,
@@ -169,5 +209,5 @@ export function useDownloadItem(key: string | null): DownloadItem | undefined {
 export function useDownloadList(): { meta: Record<string, DownloadMeta>; items: Map<string, DownloadItem> } {
   const [, force] = useReducer((x: number) => x + 1, 0);
   useEffect(() => { ensureInit(); listeners.add(force); return () => { listeners.delete(force); }; }, []);
-  return { meta: readMeta(), items };
+  return { meta: getDownloadMeta(), items };
 }

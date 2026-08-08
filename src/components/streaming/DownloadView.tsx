@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, Pencil, Check, Trash2, Play } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
-  movieKey, type DownloadMeta,
+  movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import type { DownloadItem } from '@/lib/downloader';
 
@@ -42,9 +42,9 @@ function Progress({ item }: { item?: DownloadItem }) {
   );
 }
 
-function Poster({ meta, item, onClick, editing, badge }: {
+function Poster({ meta, item, onClick, editing, badge, watched }: {
   meta: { title: string; posterUrl?: string }; item?: DownloadItem;
-  onClick: () => void; editing: boolean; badge?: string;
+  onClick: () => void; editing: boolean; badge?: string; watched?: boolean;
 }) {
   return (
     <button onClick={onClick} className="relative block text-left">
@@ -63,6 +63,11 @@ function Poster({ meta, item, onClick, editing, badge }: {
           </div>
         )}
         {badge && <span className="absolute top-1 right-1 text-[9px] bg-black/70 text-white rounded px-1">{badge}</span>}
+        {watched && (
+          <span className="absolute top-1 left-1 w-5 h-5 rounded-full bg-green-500/90 flex items-center justify-center" title="Assistido">
+            <Check className="w-3.5 h-3.5 text-white" />
+          </span>
+        )}
         <Progress item={item} />
       </div>
       <p className="text-xs mt-1 line-clamp-1">{meta.title}</p>
@@ -92,6 +97,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
           const item = items.get(e.key);
           const picked = sel.has(e.key);
           const done = item?.state === 'completed';
+          const wp = watchProgressOf(e.key);
           return (
             <button key={e.key}
               onClick={() => editing ? toggle(e.key) : (done ? playDownloaded(e.key) : undefined)}
@@ -106,6 +112,12 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
               )}
               {editing && picked && (
                 <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm bg-destructive flex items-center justify-center"><Check className="w-3 h-3 text-destructive-foreground" /></span>
+              )}
+              {!editing && wp?.watched && (
+                <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-green-500/90 flex items-center justify-center" title="Assistido"><Check className="w-3 h-3 text-white" /></span>
+              )}
+              {!editing && wp && !wp.watched && wp.percent > 0 && (
+                <span className="absolute bottom-0 inset-x-0 h-0.5 bg-white/15"><span className="block h-full bg-primary" style={{ width: `${wp.percent}%` }} /></span>
               )}
             </button>
           );
@@ -133,8 +145,12 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
           const item = g.type === 'movie' ? items.get(movieKey(g.tmdbId)) : undefined;
           const dlCount = g.episodes.filter(e => items.get(e.key)?.state === 'downloading' || items.get(e.key)?.state === 'queued').length;
           const badge = g.type === 'tv' ? `${g.episodes.length} ep${dlCount ? ` · ${dlCount}↓` : ''}` : undefined;
+          // Filme: check se assistido. Série: check se TODOS os eps baixados foram vistos.
+          const watched = g.type === 'movie'
+            ? !!watchProgressOf(movieKey(g.tmdbId))?.watched
+            : g.episodes.length > 0 && g.episodes.every(e => watchProgressOf(e.key)?.watched);
           return (
-            <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge}
+            <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge} watched={watched}
               onClick={() => editing ? onDelete(g) : onOpen(g)} />
           );
         })}
