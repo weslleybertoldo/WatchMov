@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'react';
 import { Downloader, downloadsNative, type DownloadItem } from './downloader';
 import { getEntry, setStreamPosition } from './streamCache';
+import { fmtClock } from './watchProgress';
 import { playNative } from './nativePlayer';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
@@ -106,14 +107,16 @@ function knownKeys(): Set<string> {
 }
 
 // Assistido/progresso offline: vem do streamCache (positionMs/durationMs salvos
-// pelo player), não da store Supabase. ≥92% = assistido.
-export function watchProgressOf(key: string): { percent: number; watched: boolean } | null {
+// pelo player), não da store Supabase. ≥92% = assistido. O label usa o MESMO
+// formato do "Continuar assistindo" da home ("22:55 / 1:40:15").
+export function watchProgressOf(key: string): { percent: number; watched: boolean; label: string } | null {
   const meta = getDownloadMeta()[key];
   if (!meta) return null;
   const e = getEntry(meta.tmdbId, meta.type, meta.season, meta.ep);
-  if (!e?.positionMs || !e.durationMs) return null;
+  if (!e?.positionMs) return null;
+  if (!e.durationMs) return { percent: 0, watched: false, label: fmtClock(e.positionMs) };
   const percent = Math.min(100, Math.round((e.positionMs / e.durationMs) * 100));
-  return { percent, watched: percent >= 92 };
+  return { percent, watched: percent >= 92, label: `${fmtClock(e.positionMs)} / ${fmtClock(e.durationMs)}` };
 }
 function completedSet(): Set<string> {
   if (!downloadsNative()) return webRead();
