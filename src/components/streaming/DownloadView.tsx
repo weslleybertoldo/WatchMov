@@ -127,7 +127,7 @@ export default function DownloadView({ movies, series, animes, onOpen, onRemove,
 
       {empty ? (
         <p className="text-sm text-muted-foreground py-8 text-center">
-          Em desenvolvimento — seus filmes, séries e animes baixados vão aparecer aqui, separados por tipo.
+          Nada baixado ainda. Abra um título, dê play e toque em ⤓ Baixar num link "Completo" (MASTER) — o vídeo fica disponível offline aqui.
         </p>
       ) : (
         <>
