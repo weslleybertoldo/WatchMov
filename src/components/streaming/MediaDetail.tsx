@@ -7,11 +7,13 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon, Bell, BellOff } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
 import { useDownloads, setDownloaded, enqueueDownload, movieKey, epKey } from '@/lib/downloads';
 import { getEntry, streamKey } from '@/lib/streamCache';
 import { toast } from 'sonner';
+import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
+import { isUpcoming } from '@/components/streaming/MediaCard';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -46,6 +48,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const [selSeason, setSelSeason] = useState(1);
   const [loading, setLoading] = useState(true);
   const dls = useDownloads();
+  const notifyOn = useNotify(media.tmdbId);
   const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
   const [selEps, setSelEps] = useState<Set<number>>(new Set());
 
@@ -142,8 +145,24 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const toggleList = async () => {
     const it = await ensureLib();
     if (!it) return;
-    store.updateItem(it.id, { favorite: !it.favorite });
-    setLibItem({ ...it, favorite: !it.favorite });
+    const next = !it.favorite;
+    store.updateItem(it.id, { favorite: next });
+    setLibItem({ ...it, favorite: next });
+    // Entrar na lista LIGA o sino; sair APAGA a inscrição (re-adicionar volta a ligar).
+    if (next) setNotify({ tmdbId: media.tmdbId, type: media.type, enabled: true, title: media.title, posterUrl: media.posterUrl });
+    else clearNotify(media.tmdbId, media.type);
+  };
+
+  // Sino manual: funciona dentro ou fora da lista; desligar aqui mantém desligado
+  // mesmo com o título na Minha Lista.
+  const toggleNotify = () => {
+    const on = !notifyOn;
+    setNotify({ tmdbId: media.tmdbId, type: media.type, enabled: on, title: media.title, posterUrl: media.posterUrl });
+    toast[on ? 'success' : 'info'](on ? 'Você será avisado' : 'Avisos desligados', {
+      description: on
+        ? (media.type === 'tv' ? 'Chega notificação quando sair episódio novo.' : 'Chega notificação quando estrear.')
+        : 'Não vamos mais avisar sobre este título.',
+    });
   };
 
   const onMovieProgress = (secs: number) => {
@@ -240,6 +259,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         <h1 className="text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
           {releaseLabel && <span>{releaseLabel}</span>}
+          {isUpcoming(details?.releaseDate) && (
+            <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">Em breve</span>
+          )}
           {rating && <span className="flex items-center gap-1 text-foreground font-medium"><Star className="w-4 h-4 fill-amber-400 text-amber-400" /> {rating}</span>}
           <span className="px-2 py-0.5 rounded bg-muted text-xs">{isSeries ? 'Série' : 'Filme'}</span>
           {details?.originalLanguage && (
@@ -293,6 +315,11 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
               {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
             </Button>
           )}
+          {/* Sino: avisa quando sair episódio novo (série) ou quando estrear (filme). */}
+          <Button variant={notifyOn ? 'default' : 'outline'} onClick={toggleNotify}
+            title={notifyOn ? 'Avisos ligados — toque pra desligar' : 'Avisar sobre novidades'}>
+            {notifyOn ? <Bell className="w-4 h-4 mr-1" /> : <BellOff className="w-4 h-4 mr-1" />} {notifyOn ? 'Avisando' : 'Avisar'}
+          </Button>
           {isSeries ? (
             <Button variant={selecting ? 'default' : 'outline'} onClick={selecting ? cancelSelecting : startSelecting} title="Baixar episódios">
               <Download className="w-4 h-4 mr-1" /> {selecting ? 'Cancelar' : 'Baixar eps'}

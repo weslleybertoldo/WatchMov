@@ -4,9 +4,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { WatchItem } from '@/types/watch';
 import {
-  MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime,
+  MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime, getDetails,
   MOVIE_GENRES, TV_GENRES, ANIME_ROWS, type TmdbMediaType,
 } from '@/lib/tmdb';
+import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
@@ -76,6 +77,17 @@ export default function Index() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [bugsOpen, setBugsOpen] = useState(false);
+
+  // Push: registra o device e carrega os sinos; tocar na notificação abre o título.
+  useEffect(() => {
+    initPush();
+    loadSubs();
+    onPushOpen(({ tmdbId, type }) => {
+      getDetails(tmdbId, type === 'tv' ? 'tv' : 'movie')
+        .then(d => setSelected({ tmdbId, title: d.title, posterUrl: d.posterUrl, type, rating: d.rating, votes: d.votes }))
+        .catch(() => {});
+    });
+  }, []);
 
   // Preserva o scroll vertical da página ao abrir um título e voltar.
   const homeScrollRef = useRef(0);
