@@ -115,8 +115,19 @@ public class ProxyServer extends NanoHTTPD {
                 String cookie = android.webkit.CookieManager.getInstance().getCookie(u);
                 if (cookie != null && !cookie.isEmpty()) rb.header("Cookie", cookie);
             } catch (Exception ignored) {}
-            String range = session.getHeaders().get("range");
-            if (range != null) rb.header("Range", range);
+            // Playlist (manifesto): busca IDENTITY (sem gzip) e SEM Range — igual ao
+            // fetch do navegador/curl que retorna #EXTM3U limpo. Evita o edge-case
+            // gzip+Range em que o ExoPlayer recebe bytes gzip → "não começa com
+            // #EXTM3U" (fembed/SuperFlix). Segmento (binário): mantém Range p/ seek.
+            String luEarly = u.toLowerCase();
+            boolean urlPlaylist = luEarly.contains(".m3u8") || luEarly.contains("/m3/") || luEarly.endsWith(".txt")
+                || luEarly.contains("/master") || luEarly.contains("playlist") || luEarly.contains(".m3u");
+            if (urlPlaylist) {
+                rb.header("Accept-Encoding", "identity");
+            } else {
+                String range = session.getHeaders().get("range");
+                if (range != null) rb.header("Range", range);
+            }
 
             okhttp3.Response up = http.newCall(rb.build()).execute();
             // Caiu no muro anti-hotlink? (a URL final, após os redirects, é o domínio de

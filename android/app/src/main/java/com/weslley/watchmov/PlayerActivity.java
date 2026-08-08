@@ -559,27 +559,52 @@ public class PlayerActivity extends Activity {
             }).show();
     }
 
-    // Handoff: manda a URL atual (+Referer/headers) pro player externo (WVC/VLC/MX).
+    private static final String UA_HANDOFF = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+
+    // Handoff: manda o(s) link(s) + Referer/headers pro player externo. No Web Video
+    // Cast enfileira TODOS os links capturados (extras add_to_queue +
+    // android_video_list_do_not_clear); VLC/MX recebem só o atual.
     private void openInExternal(String pkg) {
+        if (currentUrl == null) { android.widget.Toast.makeText(this, "Sem link", android.widget.Toast.LENGTH_SHORT).show(); return; }
+        final boolean isWvc = pkg.contains("instantbits") || pkg.contains("webvideocaster");
+        final java.util.List<String> us = new java.util.ArrayList<>();
+        final java.util.List<String> ms = new java.util.ArrayList<>();
+        if (isWvc && urls != null && urls.length > 0) {
+            for (int i = 0; i < urls.length; i++) if (urls[i] != null) { us.add(urls[i]); ms.add(mimes != null && i < mimes.length ? mimes[i] : null); }
+        }
+        if (us.isEmpty()) { us.add(currentUrl); ms.add(getIntent().getStringExtra(EXTRA_MIME)); }
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        for (int i = 0; i < us.size(); i++) {
+            final int idx = i;
+            h.postDelayed(() -> fireExternal(pkg, us.get(idx), ms.get(idx), isWvc, idx), idx * 600L);
+        }
+    }
+
+    private void fireExternal(String pkg, String url, String mime, boolean wvc, int idx) {
         try {
-            if (currentUrl == null) { android.widget.Toast.makeText(this, "Sem link", android.widget.Toast.LENGTH_SHORT).show(); return; }
-            String mime = getIntent().getStringExtra(EXTRA_MIME);
-            if (mime == null || mime.isEmpty()) mime = (currentUrl.contains(".m3u8") || currentUrl.contains("/m3/") || currentUrl.contains("master")) ? "application/x-mpegURL" : "video/*";
+            String m = (mime == null || mime.isEmpty())
+                ? ((url.contains(".m3u8") || url.contains("/m3/") || url.contains("master") || url.contains(".txt")) ? "application/x-mpegURL" : "video/*")
+                : mime;
             android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
             intent.setPackage(pkg);
-            intent.setDataAndType(android.net.Uri.parse(currentUrl), mime);
-            intent.putExtra("title", getIntent().getStringExtra(EXTRA_TITLE));
+            intent.setDataAndType(android.net.Uri.parse(url), m);
+            String t = getIntent().getStringExtra(EXTRA_TITLE);
+            intent.putExtra("title", (t != null ? t : "") + (idx > 0 ? " #" + (idx + 1) : ""));
             intent.putExtra("secure_uri", true);
-            android.os.Bundle h = new android.os.Bundle();
-            if (mReferer != null && !mReferer.isEmpty()) h.putString("Referer", mReferer);
-            h.putString("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
-            intent.putExtra("headers", h);
-            intent.putExtra("com.android.browser.headers", h);
-            intent.putExtra("android.media.intent.extra.HTTP_HEADERS", h);
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            android.os.Bundle hb = new android.os.Bundle();
+            if (mReferer != null && !mReferer.isEmpty()) hb.putString("Referer", mReferer);
+            hb.putString("User-Agent", UA_HANDOFF);
+            intent.putExtra("headers", hb);
+            intent.putExtra("com.android.browser.headers", hb);
+            intent.putExtra("android.media.intent.extra.HTTP_HEADERS", hb);
+            if (wvc) {
+                intent.putExtra("android_video_list_do_not_clear", true); // não limpa a fila do WVC
+                if (idx > 0) intent.putExtra("add_to_queue", true);        // 2º+ entram na fila
+            }
+            if (idx == 0) intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
         } catch (Exception e) {
-            android.widget.Toast.makeText(this, "Não consegui abrir: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show();
+            if (idx == 0) android.widget.Toast.makeText(this, "Não consegui abrir: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show();
         }
     }
 
