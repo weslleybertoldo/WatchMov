@@ -14,6 +14,7 @@ import { getEntry, streamKey } from '@/lib/streamCache';
 import { toast } from 'sonner';
 import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
 import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
+import type { CastNow } from '@/lib/nativePlayer';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -33,9 +34,10 @@ interface MediaDetailProps {
   onBack: () => void;
   onOpen?: (m: MediaSummary) => void;   // abrir um relacionado
   autoPlay?: null | { season: number; episode: number };  // atalho "espelhando na TV"
+  castNow?: CastNow | null;             // o que está espelhando agora (tag "Espelhado")
 }
 
-export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: MediaDetailProps) {
+export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, castNow }: MediaDetailProps) {
   const storeType: 'movie' | 'series' = media.type === 'tv' ? 'series' : 'movie';
   const isSeries = storeType === 'series';
 
@@ -305,6 +307,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: 
           ) : isNew(details?.releaseDate) ? (
             <span className="px-2 py-0.5 rounded bg-primary text-primary-foreground text-xs font-medium">Novo</span>
           ) : null}
+          {castNow?.tmdbId === media.tmdbId && !isSeries && (
+            <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">Espelhado</span>
+          )}
           {rating && <span className="flex items-center gap-1 text-foreground font-medium"><Star className="w-4 h-4 fill-amber-400 text-amber-400" /> {rating}</span>}
           <span className="px-2 py-0.5 rounded bg-muted text-xs">{isSeries ? 'Série' : 'Filme'}</span>
           {details?.originalLanguage && (
@@ -410,6 +415,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: 
                       const still = info?.stillUrl;
                       const emBreve = isUpcoming(air);
                       const novo = !emBreve && isNew(air);
+                      const espelhado = castNow?.tmdbId === media.tmdbId
+                        && castNow?.season === s.number && castNow?.episode === ep;
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
                       const picked = selEps.has(ep);
                       return (
@@ -423,6 +430,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: 
                               className={`absolute inset-0 w-full h-full object-cover ${emBreve ? 'opacity-40' : 'opacity-70'}`} />
                           )}
                           <span className={`relative z-10 ${still ? 'px-1.5 rounded bg-black/60 text-white' : ''}`}>{ep}</span>
+                          {!selecting && espelhado && (
+                            <span className="absolute top-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-t bg-primary text-primary-foreground">Espelhado</span>
+                          )}
                           {!selecting && emBreve && (
                             <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-black/70 text-white/90">Em breve</span>
                           )}
