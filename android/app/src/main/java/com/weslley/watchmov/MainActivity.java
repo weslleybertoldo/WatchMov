@@ -7,8 +7,11 @@ import android.view.View;
 import android.view.Window;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
+
+import java.util.Map;
 
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -22,6 +25,7 @@ public class MainActivity extends BridgeActivity {
 
     private View customView;                              // view de fullscreen HTML5 do player
     private WebChromeClient.CustomViewCallback customViewCallback;
+    private WebView sniffPopup;                           // popup oculta sniffada durante a captura
 
     // Hosts cuja navegação top-frame é permitida (app + login OAuth). Qualquer outra
     // navegação de documento inteiro = popunder/redirect de anúncio → bloqueada.
@@ -41,6 +45,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ApkInstallerPlugin.class);
         registerPlugin(ScreenCastPlugin.class);
         registerPlugin(ImmersivePlugin.class);
+        registerPlugin(StreamSnifferPlugin.class);
+        registerPlugin(NativePlayerPlugin.class);
+        registerPlugin(DlnaCastPlugin.class);
         super.onCreate(savedInstanceState);
 
         WebView webView = this.bridge.getWebView();
@@ -48,10 +55,43 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setSupportMultipleWindows(true);
 
         webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
-            // Popup clássico (window.open) → recusa.
+            // Popup (window.open): fora da captura recusa (anti-anúncio). DURANTE a
+            // captura, abre numa WebView oculta e observa o tráfego dela — vários
+            // players (ex. SuperFlix) abrem o vídeo em popup (como o Web Video Cast).
+            // COMO O WVC (xw0.onCreateWindow): popup SEM gesto do usuário = anúncio →
+            // bloqueia (return false). Só abre o sniffer quando o popup veio de um
+            // toque real (isUserGesture) — assim o stream real é pego no frame/SW
+            // principal e a propaganda não polui a lista nem rouba o play.
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
-                return false;
+                if (!StreamSnifferPlugin.isWatching()) return false;
+                if (!isUserGesture) return false;   // anúncio auto-aberto → bloqueia
+                try {
+                    if (sniffPopup != null) { try { sniffPopup.destroy(); } catch (Exception ignored) {} }
+                    sniffPopup = new WebView(MainActivity.this);
+                    android.webkit.WebSettings ps = sniffPopup.getSettings();
+                    ps.setJavaScriptEnabled(true);
+                    ps.setDomStorageEnabled(true);
+                    ps.setMediaPlaybackRequiresUserGesture(false);
+                    ps.setSupportMultipleWindows(true);
+                    ps.setJavaScriptCanOpenWindowsAutomatically(true);
+                    sniffPopup.setWebViewClient(new android.webkit.WebViewClient() {
+                        @Override
+                        public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
+                            if (StreamSnifferPlugin.isWatching() && req.getUrl() != null) {
+                                StreamSnifferPlugin.inspect(req.getUrl().toString(), req.getRequestHeaders());
+                            }
+                            return null;
+                        }
+                    });
+                    FrameLayout decor = (FrameLayout) getWindow().getDecorView();
+                    sniffPopup.setLayoutParams(new FrameLayout.LayoutParams(1, 1));
+                    decor.addView(sniffPopup);
+                    WebView.WebViewTransport t = (WebView.WebViewTransport) resultMsg.obj;
+                    t.setWebView(sniffPopup);
+                    resultMsg.sendToTarget();
+                    return true;
+                } catch (Exception e) { return false; }
             }
 
             // Botão de tela cheia DO PRÓPRIO player (HTML5 Fullscreen API). Sem isso
@@ -93,7 +133,34 @@ public class MainActivity extends BridgeActivity {
                 }
                 return super.shouldOverrideUrlLoading(view, request);
             }
+
+            // Sniffer passivo: observa o tráfego do iframe do servidor (que roda
+            // neste mesmo WebView) e, ao ver a URL do stream, avisa o JS via plugin.
+            // Só emite quando o JS "armou" a captura (StreamSnifferPlugin.watching).
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
+                    StreamSnifferPlugin.inspect(request.getUrl().toString(), request.getRequestHeaders());
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
         });
+
+        // Muitos players buscam o stream via SERVICE WORKER — que não passa pelo
+        // WebViewClient acima. Intercepta o SW também (como o Web Video Cast).
+        if (android.os.Build.VERSION.SDK_INT >= 24) {
+            try {
+                android.webkit.ServiceWorkerController.getInstance().setServiceWorkerClient(new android.webkit.ServiceWorkerClient() {
+                    @Override
+                    public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                        if (StreamSnifferPlugin.isWatching() && request.getUrl() != null) {
+                            StreamSnifferPlugin.inspect(request.getUrl().toString(), request.getRequestHeaders());
+                        }
+                        return null;
+                    }
+                });
+            } catch (Exception ignored) {}
+        }
     }
 
     // Liga/desliga tela cheia imersiva. NÃO mexe no layoutInDisplayCutoutMode pra

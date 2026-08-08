@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, Star, Loader2, Download } from 'lucide-react';
-import { episodesWatched, isEpisodeWatched, lastStopped } from '@/lib/watchProgress';
+import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon } from 'lucide-react';
+import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
+import { useDownloads, setDownloaded, movieKey, epKey } from '@/lib/downloads';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -42,6 +43,9 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const [stremioOpen, setStremioOpen] = useState(false);
   const [selSeason, setSelSeason] = useState(1);
   const [loading, setLoading] = useState(true);
+  const dls = useDownloads();
+  const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
+  const [selEps, setSelEps] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     let alive = true;
@@ -104,7 +108,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const playMovie = async () => { const it = await ensureLib(); markWatched(it); setPlayer({}); };
   const playEpisode = async (seasonNum: number, ep: number) => {
     const it = await ensureLib();
-    if (it) store.setEpisodeWatched(it.id, seasonNum, ep, true); // marca assistido ao abrir (check no grid + continuar)
+    markWatched(it); // entra em "Continuar assistindo"; NÃO marca assistido (só faltando 1 min ou manual)
     setPlayer({ season: seasonNum, episode: ep });
   };
   const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
@@ -158,6 +162,28 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     else setPlayer(null);
   };
 
+  const movieWatched = !isSeries && !!liveItem?.completed;
+
+  // ── Download (WIP: marca estado; salvamento real do vídeo é etapa nativa) ──
+  const movieDownloaded = !isSeries && dls.has(movieKey(media.tmdbId));
+  const toggleMovieDownload = async () => {
+    await ensureLib();
+    setDownloaded([movieKey(media.tmdbId)], !movieDownloaded);
+  };
+  const startSelecting = () => { setSelEps(new Set()); setSelecting(true); };
+  const cancelSelecting = () => { setSelecting(false); setSelEps(new Set()); };
+  const toggleSelEp = (ep: number) => setSelEps(prev => {
+    const next = new Set(prev);
+    if (next.has(ep)) next.delete(ep); else next.add(ep);
+    return next;
+  });
+  const confirmDownload = async () => {
+    if (selEps.size === 0) { cancelSelecting(); return; }
+    await ensureLib();
+    setDownloaded([...selEps].map(ep => epKey(media.tmdbId, selSeason, ep)), true);
+    cancelSelecting();
+  };
+
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
   const inList = !!liveItem?.favorite;
   const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
@@ -197,6 +223,24 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         {lastWatchedLabel && (
           <p className="text-xs text-green-400">Visto por último em {lastWatchedLabel}</p>
         )}
+        {liveItem && (() => {
+          const contLabel = continueLabel(liveItem);
+          const prog = continueProgress(liveItem);
+          if (!contLabel && !prog) return null;
+          return (
+            <div className="space-y-1">
+              {contLabel && <p className="text-xs font-medium text-foreground">{contLabel}</p>}
+              {prog && (
+                <div className="max-w-xs">
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-primary" style={{ width: `${Math.round(prog.pct * 100)}%` }} />
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{prog.label}</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {details?.genre && (
           <div className="flex flex-wrap gap-1">
             {details.genre.split(',').map((g, i) => (
@@ -206,7 +250,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
         )}
 
         {/* Ações — principal = servidores embed (retoma de onde parou); Torrent = Stremio/debrid */}
-        <div className="flex gap-2 pt-1">
+        <div className="flex flex-wrap gap-2 pt-1">
           <Button className="flex-1" onClick={playMain}>
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
@@ -216,6 +260,22 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           <Button variant={inList ? 'default' : 'outline'} onClick={toggleList}>
             {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Lista
           </Button>
+          {!isSeries && (
+            <Button variant={movieWatched ? 'default' : 'outline'}
+              title={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'}
+              onClick={async () => { const it = await ensureLib(); if (it) store.updateItem(it.id, it.completed ? { completed: false } : { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() }); }}>
+              {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
+            </Button>
+          )}
+          {isSeries ? (
+            <Button variant={selecting ? 'default' : 'outline'} onClick={selecting ? cancelSelecting : startSelecting} title="Baixar episódios">
+              <Download className="w-4 h-4 mr-1" /> {selecting ? 'Cancelar' : 'Baixar eps'}
+            </Button>
+          ) : (
+            <Button variant={movieDownloaded ? 'default' : 'outline'} onClick={toggleMovieDownload} title={movieDownloaded ? 'Baixado' : 'Baixar filme'}>
+              {movieDownloaded ? <DownloadCloud className="w-4 h-4 mr-1" /> : <Download className="w-4 h-4 mr-1" />} {movieDownloaded ? 'Baixado' : 'Baixar'}
+            </Button>
+          )}
         </div>
 
         {details?.synopsis && <p className="text-sm text-muted-foreground leading-relaxed">{details.synopsis}</p>}
@@ -241,21 +301,39 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
               const liveSeason = liveItem?.seasons?.find(x => x.number === s.number);
               const watched = liveSeason ? episodesWatched(liveSeason) : [];
               return (
-                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                  {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
-                    const seen = watched.includes(ep);
-                    return (
-                      <button
-                        key={ep}
-                        onClick={() => playEpisode(s.number, ep)}
-                        className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
-                      >
-                        {ep}
-                        {seen && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
-                      </button>
-                    );
-                  })}
-                </div>
+                <>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                    {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
+                      const seen = watched.includes(ep);
+                      const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
+                      const picked = selEps.has(ep);
+                      return (
+                        <button
+                          key={ep}
+                          onClick={() => (selecting ? (downloaded ? undefined : toggleSelEp(ep)) : playEpisode(s.number, ep))}
+                          className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${selecting && downloaded ? 'border-green-400/40 bg-green-400/5 text-muted-foreground opacity-70' : selecting && picked ? 'border-primary bg-primary/20 text-primary' : seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
+                        >
+                          {ep}
+                          {seen && !selecting && <Check className="absolute top-0.5 right-0.5 w-3 h-3 text-primary" />}
+                          {selecting && !downloaded && (
+                            <span className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm border flex items-center justify-center ${picked ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
+                              {picked && <Check className="w-3 h-3 text-primary-foreground" />}
+                            </span>
+                          )}
+                          {downloaded && <DownloadCloud className="absolute bottom-0.5 right-0.5 w-4 h-4 text-green-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selecting && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button size="sm" className="flex-1" onClick={confirmDownload} disabled={selEps.size === 0}>
+                        <Download className="w-4 h-4 mr-1" /> Baixar{selEps.size > 0 ? ` (${selEps.size})` : ''}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={cancelSelecting}><XIcon className="w-4 h-4" /></Button>
+                    </div>
+                  )}
+                </>
               );
             })()}
           </div>
@@ -275,8 +353,15 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           resumeAt={resumeMins > 0 ? resumeMins * 60 : undefined}
           directUrl={player.directUrl}
           torrent={player.torrent}
-          episodeWatched={isSeries && player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined}
-          onToggleWatched={isSeries && player.season && liveItem ? () => store.setEpisodeWatched(liveItem.id, player.season!, player.episode || 1, !isEpisodeWatched(liveItem, player.season, player.episode)) : undefined}
+          watched={isSeries ? (player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined) : movieWatched}
+          onSetWatched={
+            isSeries
+              ? (player.season && liveItem ? (v: boolean) => store.setEpisodeWatched(liveItem.id, player.season!, player.episode || 1, v) : undefined)
+              : async (v: boolean) => {
+                  const it = await ensureLib();
+                  if (it) store.updateItem(it.id, v ? { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() } : { completed: false });
+                }
+          }
           onNext={isSeries && hasNextEp ? onSeriesCompleted : undefined}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}

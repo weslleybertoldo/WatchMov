@@ -14,10 +14,15 @@ import SearchView, { clearSearchCache } from '@/components/streaming/SearchView'
 import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
-import { continueLabel } from '@/lib/watchProgress';
+import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
+import HistoryView from '@/components/streaming/HistoryView';
+import DownloadView from '@/components/streaming/DownloadView';
+import BugsView from '@/components/streaming/BugsView';
+import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
+import { useDownloads, hasAnyDownload, clearDownloadsFor, downloadedEpisodesOf, setDownloaded, epKey } from '@/lib/downloads';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, LogOut, Loader2, ArrowLeft } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft } from 'lucide-react';
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista' | 'procurar';
 
@@ -35,6 +40,19 @@ function itemToSummary(i: WatchItem): MediaSummary {
 // Anime = série de animação (gênero "Animação"). Western cartoons também caem aqui.
 const isAnime = (i: WatchItem): boolean =>
   i.type === 'series' && /anima[çc][ãa]o|anime/i.test(i.genre || '');
+
+const MOVIE_ROW_IDS = MOVIE_GENRES.map(g => g.id);
+const TV_ROW_IDS = TV_GENRES.map(g => g.id);
+
+// Loader de linha de gênero SEM repetição: cada título aparece só na sua categoria
+// predominante (1º gênero dele que tem linha) — evita Superman em Ação+Aventura+Ficção.
+const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => async () => {
+  const items = await discoverByGenre(type, genreId);
+  return items.filter(m => {
+    const primary = (m.genreIds || []).find(g => rowIds.includes(g));
+    return primary === undefined || primary === genreId;
+  });
+};
 
 const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'inicio', label: 'Início', icon: Home },
@@ -54,6 +72,11 @@ export default function Index() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [bugsOpen, setBugsOpen] = useState(false);
+  const dls = useDownloads();
 
   // Preserva o scroll vertical da página ao abrir um título e voltar.
   const homeScrollRef = useRef(0);
@@ -69,20 +92,24 @@ export default function Index() {
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (selected) { setSelected(null); return true; }
+    if (historyOpen) { setHistoryOpen(false); return true; }
+    if (downloadOpen) { setDownloadOpen(false); return true; }
+    if (bugsOpen) { setBugsOpen(false); return true; }
+    if (settingsOpen) { setSettingsOpen(false); return true; }
     if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
     if (listFilter) { setListFilter(null); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, searchOpen, continueFilter, listFilter, category, tab]);
+  }, [selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, searchOpen, continueFilter, listFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
-  const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i) });
+  const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i), progress: continueProgress(i) ?? undefined });
   const continueAll = store.continueWatching.filter(i => i.tmdbId);
   const continueMovies = continueAll.filter(i => i.type === 'movie').map(toCont);
   const continueAnimes = continueAll.filter(isAnime).map(toCont);
@@ -103,7 +130,32 @@ export default function Index() {
   const listFiltered = listFilter === 'movie' ? listMovies : listFilter === 'anime' ? listAnimes : listFilter === 'series' ? listSeries : [];
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); };
+  // ── Assistidos (painel + histórico) ──
+  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado.
+  const watchedItems = store.data.items.filter(i => i.tmdbId &&
+    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0));
+  const watchedMovies = watchedItems.filter(i => i.type === 'movie');
+  const watchedAnimes = watchedItems.filter(isAnime);
+  const watchedSeries = watchedItems.filter(i => i.type === 'series' && !isAnime(i));
+  const sumEps = (arr: WatchItem[]) => arr.reduce((n, i) => n + totalEpisodesWatched(i), 0);
+  const watchedStats: WatchedStats = {
+    moviesCount: watchedMovies.length,
+    seriesCount: watchedSeries.length,
+    seriesEpisodes: sumEps(watchedSeries),
+    animesCount: watchedAnimes.length,
+    animeEpisodes: sumEps(watchedAnimes),
+  };
+  const histMovies = watchedMovies.map(itemToSummary);
+  const histSeries = watchedSeries.map(itemToSummary);
+  const histAnimes = watchedAnimes.map(itemToSummary);
+
+  // ── Downloads (WIP): itens com algo baixado, separados por tipo ──
+  const downloadedItems = store.data.items.filter(i => i.tmdbId && hasAnyDownload(dls, i.tmdbId as number, i.type === 'movie'));
+  const dlMovies = downloadedItems.filter(i => i.type === 'movie').map(itemToSummary);
+  const dlAnimes = downloadedItems.filter(isAnime).map(itemToSummary);
+  const dlSeries = downloadedItems.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
+
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -123,8 +175,8 @@ export default function Index() {
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={signOut} title="Sair">
-              <LogOut className="w-4 h-4" />
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setHistoryOpen(false); }} title="Painel">
+              <Settings className="w-4 h-4" />
             </Button>
           </div>
         </div>
@@ -134,6 +186,20 @@ export default function Index() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
           <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
+        ) : settingsOpen ? (
+          historyOpen ? (
+            <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
+          ) : downloadOpen ? (
+            <DownloadView movies={dlMovies} series={dlSeries} animes={dlAnimes} onOpen={openMedia}
+              onRemove={(m) => clearDownloadsFor(m.tmdbId, m.type !== 'tv')}
+              episodesOf={(id) => downloadedEpisodesOf(dls, id)}
+              onRemoveEpisodes={(id, eps) => setDownloaded(eps.map(e => epKey(id, e.season, e.ep)), false)}
+              onBack={() => setDownloadOpen(false)} />
+          ) : bugsOpen ? (
+            <BugsView onBack={() => setBugsOpen(false)} />
+          ) : (
+            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+          )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
         ) : continueFilter ? (
@@ -170,7 +236,7 @@ export default function Index() {
               onSeeAll={() => setCategory({ title: 'Lançamentos recentes', loadPage: () => recent('movie'), cacheKey: 'cat-recent-movie' })} />
             {MOVIE_GENRES.slice(0, 6).map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
-                loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
+                loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
                 onSeeAll={() => openGenre('movie', g.id, g.name)} />
             ))}
             <footer className="pt-4 border-t border-border/50">
@@ -181,7 +247,7 @@ export default function Index() {
           <div className="space-y-6">
             {MOVIE_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
-                loader={() => discoverByGenre('movie', g.id)} onOpen={openMedia}
+                loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
                 onSeeAll={() => openGenre('movie', g.id, g.name)} />
             ))}
           </div>
@@ -189,7 +255,7 @@ export default function Index() {
           <div className="space-y-6">
             {TV_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
-                loader={() => discoverByGenre('tv', g.id)} onOpen={openMedia}
+                loader={genreRowLoader('tv', g.id, TV_ROW_IDS)} onOpen={openMedia}
                 onSeeAll={() => openGenre('tv', g.id, g.name)} />
             ))}
           </div>

@@ -52,6 +52,5 @@ export function useAndroidBackButton(handler: BackHandler) {
       const idx = handlers.lastIndexOf(ref);
       if (idx !== -1) handlers.splice(idx, 1);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
