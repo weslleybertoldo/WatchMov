@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Pencil, Check, Trash2, Play } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
-import type { DownloadItem } from '@/lib/downloader';
+import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
 
 interface TitleGroup {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
@@ -42,10 +42,10 @@ function Progress({ item }: { item?: DownloadItem }) {
   );
 }
 
-function Poster({ meta, item, onClick, editing, badge, watched, progress, subtitle }: {
+function Poster({ meta, item, onClick, editing, badge, watched, progress, subtitle, size }: {
   meta: { title: string; posterUrl?: string }; item?: DownloadItem;
   onClick: () => void; editing: boolean; badge?: string; watched?: boolean;
-  progress?: { percent: number; label: string } | null; subtitle?: string;
+  progress?: { percent: number; label: string } | null; subtitle?: string; size?: string;
 }) {
   return (
     <button onClick={onClick} className="relative block text-left">
@@ -72,6 +72,7 @@ function Poster({ meta, item, onClick, editing, badge, watched, progress, subtit
         <Progress item={item} />
       </div>
       <p className="text-xs mt-1 line-clamp-1">{meta.title}</p>
+      {size && <p className="text-[10px] text-muted-foreground">{size}</p>}
       {subtitle && <p className="text-[10px] text-green-400 truncate">{subtitle}</p>}
       {/* Barra + tempo assistido/total — mesmo formato do "Continuar assistindo". */}
       {progress && (
@@ -120,6 +121,9 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
               <span className="text-sm">{e.ep}</span>
               {!editing && item && item.state !== 'completed' && (
                 <span className="text-[9px] text-primary">{item.state === 'downloading' ? (item.percent >= 0 ? `${item.percent}%` : '…') : item.state === 'failed' ? 'falhou' : '…'}</span>
+              )}
+              {!editing && item?.state === 'completed' && (item.bytes ?? 0) > 0 && (
+                <span className="text-[9px] text-muted-foreground">{fmtBytes(item.bytes)}</span>
               )}
               {editing && picked && (
                 <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm bg-destructive flex items-center justify-center"><Check className="w-3 h-3 text-destructive-foreground" /></span>
@@ -171,9 +175,13 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
             const cur = [...g.episodes].reverse().find(e => { const p = watchProgressOf(e.key); return p && !p.watched; });
             if (cur) { progress = watchProgressOf(cur.key); subtitle = `EP ${cur.ep} | Temporada ${cur.season}`; }
           }
+          // Quanto ocupa no aparelho: filme = o próprio item; série = soma dos eps.
+          const bytes = g.type === 'movie'
+            ? (item?.bytes ?? 0)
+            : g.episodes.reduce((acc, e) => acc + (items.get(e.key)?.bytes ?? 0), 0);
           return (
             <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge} watched={watched}
-              progress={progress} subtitle={subtitle}
+              progress={progress} subtitle={subtitle} size={bytes > 0 ? fmtBytes(bytes) : undefined}
               onClick={() => editing ? onDelete(g) : onOpen(g)} />
           );
         })}
@@ -186,6 +194,20 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const { meta, items } = useDownloadList();
   const [editing, setEditing] = useState(false);
   const [openSeries, setOpenSeries] = useState<number | null>(null);
+
+  const [freeBytes, setFreeBytes] = useState(0);
+
+  // Rede de segurança: o app já retoma os downloads interrompidos ao abrir, mas se
+  // o usuário vem parar AQUI é porque quer ver o download andando — pede de novo.
+  // Junto, lê o espaço livre do aparelho pro resumo do topo.
+  useEffect(() => {
+    if (!downloadsNative()) return;
+    Downloader.resume().catch(() => {});
+    Downloader.storage().then(s => setFreeBytes(s?.freeBytes ?? 0)).catch(() => {});
+  }, []);
+
+  // Quanto os downloads ocupam ao todo (soma o que o Media3 já gravou em disco).
+  const totalBytes = [...items.values()].reduce((acc, i) => acc + (i.bytes ?? 0), 0);
 
   const groups = group(meta);
   const movies = groups.filter(g => g.type === 'movie');
@@ -221,6 +243,13 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
           </Button>
         )}
       </div>
+
+      {!empty && (totalBytes > 0 || freeBytes > 0) && (
+        <p className="text-xs text-muted-foreground -mt-4">
+          Ocupando <span className="text-foreground font-medium">{fmtBytes(totalBytes)}</span>
+          {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres no aparelho</>}
+        </p>
+      )}
 
       {empty ? (
         <p className="text-sm text-muted-foreground py-8 text-center">

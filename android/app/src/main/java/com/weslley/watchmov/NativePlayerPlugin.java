@@ -82,8 +82,21 @@ public class NativePlayerPlugin extends Plugin {
             Boolean.TRUE.equals(call.getBoolean("hasNext", false)), call.getString("key"),
             call.getLong("startMs", 0L),
             Boolean.TRUE.equals(call.getBoolean("offline", false)),
-            Boolean.TRUE.equals(call.getBoolean("watched", false)));
+            Boolean.TRUE.equals(call.getBoolean("watched", false)),
+            Boolean.TRUE.equals(call.getBoolean("downloaded", false)));
         call.resolve(new JSObject().put("ok", true));
+    }
+
+    // Apaga a posição salva de um episódio (chave tmdbId:type:season:ep). Usado ao
+    // AVANÇAR: o ep seguinte tem que começar do zero, e versões antigas deixaram o
+    // tempo do ep anterior gravado na chave do seguinte (a TV abria em 0:50:19).
+    @PluginMethod
+    public void clearResume(final PluginCall call) {
+        String key = call.getString("key");
+        if (key == null || key.isEmpty()) { call.resolve(); return; }
+        getContext().getSharedPreferences(PlayerActivity.RESUME_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().remove(key).apply();
+        call.resolve();
     }
 
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
@@ -110,6 +123,7 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));
         intent.putExtra(PlayerActivity.EXTRA_WATCHED, Boolean.TRUE.equals(call.getBoolean("watched", false)));
         intent.putExtra(PlayerActivity.EXTRA_OFFLINE, Boolean.TRUE.equals(call.getBoolean("offline", false)));
+        intent.putExtra(PlayerActivity.EXTRA_DOWNLOADED, Boolean.TRUE.equals(call.getBoolean("downloaded", false)));
         intent.putExtra(PlayerActivity.EXTRA_URLS, toArray(call.getArray("urls", null)));
         intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         intent.putExtra(PlayerActivity.EXTRA_QUALITIES, toArray(call.getArray("qualities", null)));

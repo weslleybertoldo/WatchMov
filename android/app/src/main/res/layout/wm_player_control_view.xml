@@ -57,6 +57,15 @@
         android:layout_gravity="center_vertical|end"
         android:layoutDirection="ltr">
 
+      <!-- De onde o vídeo está vindo AGORA: arquivo baixado ou link do servidor. -->
+      <TextView android:id="@+id/wm_source"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:layout_gravity="center_vertical"
+          android:layout_marginEnd="6dp"
+          android:textSize="12sp"
+          android:textColor="#B0FFFFFF"/>
+
       <!-- Botões próprios: assistido + espelhar, na mesma barra da legenda/config. -->
       <ImageButton android:id="@+id/wm_watched"
           style="@style/ExoStyledControls.Button.Bottom"
