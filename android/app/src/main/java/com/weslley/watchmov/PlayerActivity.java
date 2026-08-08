@@ -820,6 +820,12 @@ public class PlayerActivity extends Activity {
     private static int activeCastMode = CAST_NONE;
     private static String activeDlnaCtrl;
     private static String activeCastKey;
+    private static String activeCastTitle;     // o que está na TV (pro atalho do topo do app)
+
+    /** Espelhamento ativo? (sobrevive ao fechar o player — os estados são estáticos.) */
+    public static boolean isCasting() { return activeCastMode != CAST_NONE; }
+    public static String castKey() { return activeCastKey; }
+    public static String castTitle() { return activeCastTitle; }
     // "Próximo episódio" tocado no overlay do cast: a TV NÃO é desconectada — ao
     // reabrir com o novo episódio, reenviamos a mídia pro mesmo dispositivo.
     private static boolean castFollowNext = false;
@@ -865,6 +871,7 @@ public class PlayerActivity extends Activity {
         castGen++; // nova sessão — invalida qualquer poll da sessão anterior
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
         activeCastMode = mode; activeDlnaCtrl = (mode == CAST_DLNA ? ctrl : null); activeCastKey = resumeKey; // p/ retomar ao voltar
+        activeCastTitle = mTitle;
         // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
         // o áudio do celular disputava foco com a TV → oscilava. Mudo garante silêncio.
         if (player != null) { player.pause(); player.setPlayWhenReady(false); player.setVolume(0f); }
@@ -1000,7 +1007,7 @@ public class PlayerActivity extends Activity {
         }
         castGen++; // encerra a sessão — o poll em voo não reagenda
         castMode = CAST_NONE; dlnaCtrl = null;
-        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; // sessão encerrada
+        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; // sessão encerrada
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
@@ -1481,6 +1488,7 @@ public class PlayerActivity extends Activity {
             updateSourceUi(); updateWatchedUi();
             triedUrls.clear(); errorHandled = false;
             if (wmTitleTv != null) wmTitleTv.setText(title);
+            if (activeCastMode != CAST_NONE) { activeCastKey = key; activeCastTitle = title; }
             if (watchedBtn != null) watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
             if (nextBtn != null) nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
             if (nextCastBtn != null) nextCastBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);

@@ -15,10 +15,22 @@ export function isUpcoming(date?: string): boolean {
   return date > new Date().toISOString().slice(0, 10);
 }
 
+// Lançou faz menos de 30 dias → tag "Novo". Passado o mês, some sozinha (a conta é
+// feita na hora, não fica nada gravado).
+export const NEW_DAYS = 30;
+export function isNew(date?: string): boolean {
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (date > hoje) return false;                       // ainda não lançou = "Em breve"
+  const limite = new Date(Date.now() - NEW_DAYS * 86400000).toISOString().slice(0, 10);
+  return date >= limite;
+}
+
 export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
   const [loaded, setLoaded] = useState(false);
   const upcoming = isUpcoming(media.date);
+  const fresh = isNew(media.date);
   return (
     <button
       onClick={onClick}
@@ -29,11 +41,15 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
           {rank}
         </span>
       )}
-      {upcoming && (
+      {upcoming ? (
         <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-black/70 text-white/90 backdrop-blur-sm">
           Em breve
         </span>
-      )}
+      ) : fresh ? (
+        <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-primary text-primary-foreground">
+          Novo
+        </span>
+      ) : null}
       <div className={`rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>
         {media.posterUrl ? (
           <img

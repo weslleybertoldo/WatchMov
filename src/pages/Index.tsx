@@ -8,6 +8,7 @@ import {
   MOVIE_GENRES, TV_GENRES, ANIME_ROWS, type TmdbMediaType,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
+import { getCastNow, type CastNow } from '@/lib/nativePlayer';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
@@ -107,6 +108,33 @@ export default function Index() {
   // Preserva o scroll vertical da página ao abrir um título e voltar.
   const homeScrollRef = useRef(0);
   const openMedia = useCallback((m: MediaSummary) => { homeScrollRef.current = window.scrollY; setSelected(m); }, []);
+
+  // O que está espelhando na TV agora (o estado vive no nativo e sobrevive ao
+  // fechar o player) → atalho no topo pra voltar pro episódio que está na TV.
+  const [castNow, setCastNow] = useState<CastNow | null>(null);
+  const [autoPlay, setAutoPlay] = useState<null | { season: number; episode: number }>(null);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => { getCastNow().then(c => { if (alive) setCastNow(c); }).catch(() => {}); };
+    tick();
+    const id = window.setInterval(tick, 4000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, []);
+
+  // Toca no atalho: abre o título que está na TV já no episódio espelhado — é o
+  // mesmo caminho de clicar no episódio, então o player reassume os controles.
+  const openCastNow = useCallback(() => {
+    if (!castNow) return;
+    getDetails(castNow.tmdbId, castNow.type)
+      .then(d => {
+        setAutoPlay(castNow.type === 'tv' && castNow.episode > 0
+          ? { season: castNow.season, episode: castNow.episode } : null);
+        setSelected({ tmdbId: castNow.tmdbId, title: d.title, posterUrl: d.posterUrl,
+          type: castNow.type, rating: d.rating, votes: d.votes });
+        window.scrollTo(0, 0);
+      })
+      .catch(() => {});
+  }, [castNow]);
   useEffect(() => {
     if (!selected) {
       const y = homeScrollRef.current;
@@ -183,6 +211,13 @@ export default function Index() {
       <header className="sticky top-0 z-40 bg-background/85 backdrop-blur-md border-b border-border/50">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <img src="/logo.png" alt="WatchMov" className="h-7 cursor-pointer" onClick={() => changeTab('inicio')} />
+          {castNow && (
+            <button onClick={openCastNow} title="Abrir o que está na TV"
+              className="flex-1 mx-2 min-w-0 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/15 text-primary">
+              <Tv className="w-4 h-4 shrink-0" />
+              <span className="text-xs truncate">{castNow.title || 'Espelhando na TV'}</span>
+            </button>
+          )}
           <nav className="hidden sm:flex items-center gap-1">
             {TABS.map(t => (
               <button key={t.key} onClick={() => changeTab(t.key)}
@@ -205,7 +240,11 @@ export default function Index() {
       {/* Conteúdo */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
-          <MediaDetail media={selected} store={store} onBack={() => setSelected(null)} />
+          <MediaDetail media={selected} store={store} autoPlay={autoPlay} castNow={castNow}
+            onBack={() => { setAutoPlay(null); setSelected(null); }}
+            /* Relacionado NÃO passa pelo openMedia: ele grava o scroll da HOME, e aqui
+               estamos dentro do detalhe — sobrescrever bagunçaria a volta. */
+            onOpen={(m) => { setSelected(m); window.scrollTo(0, 0); }} />
         ) : settingsOpen ? (
           historyOpen ? (
             <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />

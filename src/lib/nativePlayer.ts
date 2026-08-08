@@ -7,6 +7,7 @@ interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
   loadNext(opts: Partial<PlayOpts>): Promise<{ ok: boolean }>;
   clearResume(opts: { key: string }): Promise<void>;
+  castStatus(): Promise<{ active: boolean; key?: string | null; title?: string | null }>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
@@ -71,6 +72,24 @@ export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> 
 export async function clearResumeNative(key: string): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   try { await NativePlayer.clearResume({ key }); } catch { /* ignore */ }
+}
+
+// O que está espelhando na TV agora (ou null). A key é `tmdbId:type:season:ep` —
+// é ela que permite reabrir exatamente o mesmo episódio pelo atalho do topo.
+export interface CastNow { tmdbId: number; type: 'movie' | 'tv'; season: number; episode: number; title?: string }
+
+export async function getCastNow(): Promise<CastNow | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const s = await NativePlayer.castStatus();
+    if (!s?.active || !s.key) return null;
+    const [id, type, season, ep] = s.key.split(':');
+    const tmdbId = Number(id);
+    if (!tmdbId || (type !== 'movie' && type !== 'tv')) return null;
+    return { tmdbId, type, season: Number(season) || 0, episode: Number(ep) || 0, title: s.title || undefined };
+  } catch {
+    return null;
+  }
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link

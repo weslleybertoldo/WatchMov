@@ -10,7 +10,7 @@ import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/
 interface TitleGroup {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
   keys: string[];
-  episodes: { season: number; ep: number; key: string }[];
+  episodes: { season: number; ep: number; key: string; stillUrl?: string }[];
 }
 
 function group(meta: Record<string, DownloadMeta>): TitleGroup[] {
@@ -19,7 +19,7 @@ function group(meta: Record<string, DownloadMeta>): TitleGroup[] {
     let g = map.get(m.tmdbId);
     if (!g) { g = { tmdbId: m.tmdbId, type: m.type, title: m.title, posterUrl: m.posterUrl, keys: [], episodes: [] }; map.set(m.tmdbId, g); }
     g.keys.push(key);
-    if (m.type === 'tv' && m.season != null && m.ep != null) g.episodes.push({ season: m.season, ep: m.ep, key });
+    if (m.type === 'tv' && m.season != null && m.ep != null) g.episodes.push({ season: m.season, ep: m.ep, key, stillUrl: m.stillUrl });
   }
   map.forEach(g => g.episodes.sort((a, b) => a.season - b.season || a.ep - b.ep));
   return [...map.values()].sort((a, b) => a.title.localeCompare(b.title));
@@ -113,12 +113,17 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
           return (
             <button key={e.key}
               onClick={() => editing ? toggle(e.key) : (done ? playDownloaded(e.key) : undefined)}
-              className={`relative aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition
+              className={`relative aspect-square overflow-hidden rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition
                 ${picked ? 'border-destructive bg-destructive/15 text-destructive'
                   : done ? 'border-green-400/40 bg-green-400/5 text-foreground'
                   : 'border-border bg-secondary/40 text-muted-foreground'}`}>
-              <span className="text-[10px] text-muted-foreground">T{e.season}</span>
-              <span className="text-sm">{e.ep}</span>
+              {/* Frame do episódio (guardado no meta quando baixou → funciona offline). */}
+              {e.stillUrl && (
+                <img src={e.stillUrl} alt="" loading="lazy"
+                  className={`absolute inset-0 w-full h-full object-cover ${wp?.watched ? 'opacity-25 grayscale' : 'opacity-40'}`} />
+              )}
+              <span className="relative z-10 text-[10px] text-muted-foreground">T{e.season}</span>
+              <span className="relative z-10 text-sm">{e.ep}</span>
               {!editing && item && item.state !== 'completed' && (
                 <span className="text-[9px] text-primary">{item.state === 'downloading' ? (item.percent >= 0 ? `${item.percent}%` : '…') : item.state === 'failed' ? 'falhou' : '…'}</span>
               )}
@@ -133,7 +138,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
               )}
               {!editing && wp && !wp.watched && (
                 <>
-                  <span className="absolute bottom-3 inset-x-1 h-0.5 rounded bg-white/15"><span className="block h-full bg-primary rounded" style={{ width: `${wp.percent}%` }} /></span>
+                  <span className="absolute bottom-4 inset-x-1 h-0.5 rounded bg-white/15"><span className="block h-full bg-primary rounded" style={{ width: `${wp.percent}%` }} /></span>
                   <span className="absolute bottom-0.5 inset-x-0 text-[8px] text-muted-foreground text-center truncate px-0.5">{wp.label}</span>
                 </>
               )}
