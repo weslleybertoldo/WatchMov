@@ -54,11 +54,6 @@ dependencies {
     implementation "androidx.media3:media3-ui:1.4.1"
     implementation "androidx.media3:media3-datasource-okhttp:1.4.1"
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
-    implementation "androidx.media3:media3-datasource-cronet:1.4.1"
-    // Cronet EMBEDDED (Chromium nativo bundlado) — garante o JA3 do Chrome + IDN/
-    // punycode. O play-services-cronet caía no engine Java (TLS da plataforma =
-    // igual OkHttp) → anti-bot barrava + UnknownHostException no host punycode.
-    implementation "org.chromium.net:cronet-embedded:119.6045.31"
     implementation "org.nanohttpd:nanohttpd:2.3.1"
     implementation "com.google.android.gms:play-services-cast-framework:21.5.0"
     testImplementation "junit:junit:$junitVersion"
