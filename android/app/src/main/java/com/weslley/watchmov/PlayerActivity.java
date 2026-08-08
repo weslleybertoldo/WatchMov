@@ -264,6 +264,11 @@ public class PlayerActivity extends Activity {
         // devolvendo "next" — o app resolve o próximo ep e reabre já castando.
         Button nextCast = pill("Próximo episódio ▶|", v -> {
             castFollowNext = true;
+            castMsg("Trocando de episódio na TV…", 4000);
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "NEXT_CAST_CLICADO",
+                "[recast] clique: castMode=" + castMode + " activeCastMode=" + activeCastMode
+                + " ctrl=" + (activeDlnaCtrl != null), getIntent().getStringExtra(EXTRA_MIME),
+                mReferer, getIntent().getStringExtra(EXTRA_TITLE));
             finishWithResult(true, false);
         });
         nextCast.setVisibility(hasNext ? View.VISIBLE : View.GONE);
@@ -438,6 +443,12 @@ public class PlayerActivity extends Activity {
 
         // Veio do "Próximo episódio" com a TV conectada: reenvia a NOVA mídia pro mesmo
         // dispositivo (sem desconectar) e segue espelhando.
+        if (castFollowNext || activeCastMode != CAST_NONE) {
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "PLAYER_ABERTO_CAST",
+                "[recast] abriu: follow=" + castFollowNext + " activeCastMode=" + activeCastMode
+                + " ctrl=" + (activeDlnaCtrl != null) + " key=" + resumeKey + " activeKey=" + activeCastKey,
+                getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
+        }
         if (castFollowNext) {
             castFollowNext = false;
             if (activeCastMode != CAST_NONE) {
