@@ -60,6 +60,32 @@ public class NativePlayerPlugin extends Plugin {
         instance.notifyListeners("playerError", d);
     }
 
+    // "Próximo episódio" tocado COM o player aberto: pede o link do próximo ep ao JS
+    // sem fechar a Activity (a sessão de espelhamento continua viva). Devolve false
+    // se não há JS escutando — aí o player usa o fluxo antigo (fecha devolvendo next).
+    public static boolean requestNext() {
+        if (instance == null) return false;
+        instance.notifyListeners("playerNext", new JSObject());
+        return true;
+    }
+
+    // Resposta do JS ao playerNext: troca o episódio na Activity VIVA. Sem url = o JS
+    // não achou link capturado pro próximo ep → o player cai no fluxo antigo.
+    @PluginMethod
+    public void loadNext(final PluginCall call) {
+        PlayerActivity act = PlayerActivity.current();
+        if (act == null) { call.resolve(new JSObject().put("ok", false)); return; }
+        act.loadNextInPlace(
+            call.getString("url"), call.getString("referer"), call.getString("mime"),
+            call.getString("title"), toArray(call.getArray("urls", null)),
+            toArray(call.getArray("mimes", null)), toArray(call.getArray("qualities", null)),
+            Boolean.TRUE.equals(call.getBoolean("hasNext", false)), call.getString("key"),
+            call.getLong("startMs", 0L),
+            Boolean.TRUE.equals(call.getBoolean("offline", false)),
+            Boolean.TRUE.equals(call.getBoolean("watched", false)));
+        call.resolve(new JSObject().put("ok", true));
+    }
+
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
     public static void reportQuality(String url, int height) {
         if (instance == null || url == null || height <= 0) return;

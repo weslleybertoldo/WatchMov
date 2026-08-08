@@ -9,7 +9,7 @@ import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
-import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
+import { playNative, loadNextNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
@@ -75,6 +75,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // evento (a closure do state fica velha) pra descartar o progresso do ep anterior.
   const ownStreamRef = useRef<SniffResult | null>(null);
   useEffect(() => { ownStreamRef.current = ownStream; });
+  // Player nativo ABERTO: o "Próximo episódio" entrega o link pra ele em vez de
+  // abrir outra Activity (senão a sessão de espelhamento na TV se perde).
+  const playerOpenRef = useRef(false);
+  const awaitingNextRef = useRef(false);   // pediu o próximo ep (evento playerNext)
+  // Episódio que está REALMENTE tocando no player (muda sem remontar o efeito) —
+  // sem isso a posição final do último ep era gravada na chave do PRIMEIRO.
+  const curEpRef = useRef<{ tmdbId?: number; type: 'movie' | 'tv'; season?: number; episode?: number }>({ tmdbId, type, season, episode });
+  const onNextRef = useRef(onNext);
+  useEffect(() => { onNextRef.current = onNext; });
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
   const [subsOpen, setSubsOpen] = useState(false);
@@ -193,14 +202,36 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (directMode || !isNative()) return;
     const entry = getEntry(tmdbId, type, season, episode);
     // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
+    let toPlay: SniffResult | null = null;
     if (entry?.lastMode === 'native' && entry.chosenUrl) {
       const ck = streamKey(entry.chosenUrl);
-      setOwnStream((entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
-    } else if (pendingNextInPlayer && entry?.streams?.length) {
-      setOwnStream(entry.streams[0]);   // veio do "Próximo" e o ep já tem link → reprodutor
+      toPlay = (entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl };
+    } else if ((pendingNextInPlayer || awaitingNextRef.current) && entry?.streams?.length) {
+      toPlay = entry.streams[0];        // veio do "Próximo" e o ep já tem link → reprodutor
     }
+    if (toPlay) setOwnStream(toPlay);
     pendingNextInPlayer = false;
+    // Player aberto esperando o próximo ep e este NÃO tem link capturado: avisa o
+    // nativo na hora (sem url) pra ele cair no fluxo antigo em vez de esperar o
+    // timeout — o app volta pro servidor e captura o link do ep novo.
+    if (awaitingNextRef.current && !toPlay) loadNextNative({});
   }, [open, directMode, tmdbId, type, season, episode]);
+
+  // "Próximo episódio" tocado DENTRO do player nativo: o player NÃO fecha mais —
+  // avança o episódio aqui e devolve o link pra ele (a TV segue espelhando).
+  // Assina UMA vez por abertura (via ref): se reassinasse a cada render, o handle
+  // ainda não resolvido escaparia do cleanup e o listener duplicado PULARIA episódios.
+  useEffect(() => {
+    if (!open || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    let dead = false;
+    onPlayerNext?.(() => {
+      if (awaitingNextRef.current) return;   // clique repetido: já estamos avançando
+      awaitingNextRef.current = true;
+      onNextRef.current?.();
+    })?.then(h => { handle = h; if (dead) h.remove(); });
+    return () => { dead = true; handle?.remove(); awaitingNextRef.current = false; };
+  }, [open]);
 
   // (B) Lista salva + captura passiva — roda também ao trocar de provedor (embedUrl),
   // acumulando links sem mexer no que já está tocando/escolhido.
@@ -272,25 +303,44 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // Auto-avanço ESCOPADO: se escolheu um MASTER, só avança entre masters; se
     // escolheu uma faixa, só entre faixas (não mistura completo com só-áudio/só-vídeo).
     const group = capturedList.filter(s => isTrackOnly(s.url) === isTrackOnly(ownStream.url));
-    playNative({
+    const opts = {
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
       offline: !!(dlKey && isDownloaded(dlKey) && streamKey(ownStream.url) === streamKey(getEntry(tmdbId, type, season, episode)?.chosenUrl || '')),
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
       qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
-    }).then(res => {
+    };
+    // Veio do "Próximo episódio" com o player JÁ ABERTO: entrega o link pro player
+    // vivo (não abre outra Activity) — assim o espelhamento na TV não se perde.
+    if (playerOpenRef.current) {
+      curEpRef.current = { tmdbId, type, season, episode };
+      awaitingNextRef.current = false;
+      loadNextNative(opts);
+      return;
+    }
+    playerOpenRef.current = true;
+    curEpRef.current = { tmdbId, type, season, episode };
+    playNative(opts).then(res => {
+      playerOpenRef.current = false;
+      const advanced = awaitingNextRef.current;   // já trocou de ep aqui no JS
+      awaitingNextRef.current = false;
       if (!res) return;
+      // O episódio que estava tocando ao fechar pode NÃO ser o que abriu o player
+      // (troca in-place) → grava posição/link na chave do ep certo.
+      const ep = curEpRef.current;
       // Estado final de "assistido" vem no resultado (o evento ao vivo se perde com o
       // WebView em background) → fonte da verdade ao fechar; garante mark E unmark.
       if (typeof res.watched === 'boolean') onSetWatched?.(res.watched);
       if (res.positionMs > 0) {
-        setStreamPosition(res.positionMs, tmdbId, type, season, episode);
+        setStreamPosition(res.positionMs, ep.tmdbId, ep.type, ep.season, ep.episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
       }
       if (res.recapture) { setCapturedList([]); goServer(); return; }  // link expirou (403/410) → recaptura fresco
       if (res.server) { goServer(); return; }                 // botão Servidor → modo servidor
-      if (res.next) { pendingNextInPlayer = true; onNext?.(); return; }  // Próximo ep
-      if (res.url) setChosen(res.url, tmdbId, type, season, episode);    // guarda o link atual
+      // O player fechou pedindo o próximo ep. Se o JS JÁ tinha avançado (in-place que
+      // não achou link), NÃO avança de novo — senão pularia um episódio.
+      if (res.next) { if (!advanced) { pendingNextInPlayer = true; onNext?.(); } return; }
+      if (res.url) setChosen(res.url, ep.tmdbId, ep.type, ep.season, ep.episode);   // guarda o link atual
       onClose();   // Voltar → fecha direto (volta pro detalhe), sem placeholder
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
