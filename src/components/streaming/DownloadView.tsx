@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Pencil, Check, Trash2, Play } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
-import type { DownloadItem } from '@/lib/downloader';
+import { Downloader, downloadsNative, type DownloadItem } from '@/lib/downloader';
 
 interface TitleGroup {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
@@ -186,6 +186,10 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const { meta, items } = useDownloadList();
   const [editing, setEditing] = useState(false);
   const [openSeries, setOpenSeries] = useState<number | null>(null);
+
+  // Rede de segurança: o app já retoma os downloads interrompidos ao abrir, mas se
+  // o usuário vem parar AQUI é porque quer ver o download andando — pede de novo.
+  useEffect(() => { if (downloadsNative()) Downloader.resume().catch(() => {}); }, []);
 
   const groups = group(meta);
   const movies = groups.filter(g => g.type === 'movie');

@@ -50,6 +50,57 @@ public class DownloaderPlugin extends Plugin {
             }
         };
         dm.addListener(listener);
+        resumePending();
+    }
+
+    /**
+     * Retoma sozinho os downloads que ficaram pela metade (app atualizado, fechado ou
+     * morto pelo sistema). Sem isso o usuário tinha que mandar baixar de novo.
+     * 3 coisas precisam acontecer, nessa ordem:
+     * 1. subir o ProxyServer — a URL baixada é http://127.0.0.1:8099/s?u=… e, com ele
+     *    fora do ar, o download resumido bate em "connection refused" e falha de novo;
+     * 2. religar o WatchDownloadService (o Media3 só baixa com o serviço rodando);
+     * 3. re-enfileirar o que está FAILED/STOPPED — esses NÃO voltam sozinhos. Re-enviar
+     *    a MESMA DownloadRequest continua de onde parou (o já baixado está no
+     *    SimpleCache), não recomeça do zero.
+     * Roda em thread: lê o índice em disco.
+     */
+    private void resumePending() {
+        new Thread(() -> {
+            try {
+                DownloadManager dm = DownloadUtil.getDownloadManager(getContext());
+                java.util.List<DownloadRequest> retry = new java.util.ArrayList<>();
+                java.util.List<String> unstop = new java.util.ArrayList<>();
+                boolean pending = false;
+                try (DownloadCursor c = dm.getDownloadIndex().getDownloads(
+                        Download.STATE_QUEUED, Download.STATE_DOWNLOADING,
+                        Download.STATE_STOPPED, Download.STATE_FAILED)) {
+                    while (c.moveToNext()) {
+                        Download d = c.getDownload();
+                        pending = true;
+                        if (d.state == Download.STATE_FAILED) retry.add(d.request);
+                        else if (d.state == Download.STATE_STOPPED) unstop.add(d.request.id);
+                    }
+                }
+                if (!pending) return;
+                ProxyServer.ensure();
+                DownloadService.sendResumeDownloads(getContext(), WatchDownloadService.class, true);
+                for (String id : unstop) {
+                    DownloadService.sendSetStopReason(getContext(), WatchDownloadService.class,
+                        id, Download.STOP_REASON_NONE, false);
+                }
+                for (DownloadRequest r : retry) {
+                    DownloadService.sendAddDownload(getContext(), WatchDownloadService.class, r, false);
+                }
+            } catch (Exception ignored) { }
+        }).start();
+    }
+
+    // Mesma retomada, disparável pelo JS (ex.: ao abrir a aba Download).
+    @PluginMethod
+    public void resume(PluginCall call) {
+        resumePending();
+        call.resolve();
     }
 
     private static String stateName(int s) {

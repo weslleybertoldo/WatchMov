@@ -18,6 +18,7 @@ interface DownloaderPlugin {
   enqueue(o: { key: string; url: string; referer?: string; mime?: string; title?: string }): Promise<void>;
   remove(o: { key: string }): Promise<void>;
   list(): Promise<{ downloads: DownloadItem[] }>;
+  resume(): Promise<void>;   // retoma o que ficou pela metade (app atualizado/fechado)
   addListener(event: 'downloadChanged', cb: (d: DownloadItem) => void): Promise<{ remove: () => void }>;
 }
 
