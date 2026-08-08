@@ -157,7 +157,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const saved = localStorage.getItem(srcKey);
       if (saved && available.some(p => p.id === saved)) return saved;
     } catch { /* ignore */ }
-    return available[0]?.id ?? 'embedplayapi';
+    // Padrão = Fonte 2 (SuperFlix): mais estável que a 1 (os mirrors do EmbedPlayApi
+    // caem com frequência). Cai na 1ª disponível se a 2 não existir pro título.
+    return available.find(p => p.id === 'superflix')?.id ?? available[0]?.id ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
 
