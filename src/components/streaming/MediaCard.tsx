@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import { formatRating } from '@/lib/formatters';
 import { Star, Film, Tv } from 'lucide-react';
@@ -10,6 +11,7 @@ interface MediaCardProps {
 
 export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
+  const [loaded, setLoaded] = useState(false);
   return (
     <button
       onClick={onClick}
@@ -20,9 +22,15 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
           {rank}
         </span>
       )}
-      <div className="rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all">
+      <div className={`rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>
         {media.posterUrl ? (
-          <img src={media.posterUrl} alt={media.title} loading="lazy" className="w-full h-full object-cover" />
+          <img
+            src={media.posterUrl}
+            alt={media.title}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            className={`w-full h-full object-cover transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-muted-foreground">
             {media.type === 'tv' ? <Tv className="w-6 h-6" /> : <Film className="w-6 h-6" />}
