@@ -224,11 +224,24 @@ export async function discoverAnime(page = 1, extraGenre?: number | null): Promi
 
 export type BrowseKind = 'movie' | 'tv' | 'anime';
 
+// Filtro "Destaques": recortes prontos (o que está por vir, o que bombou, o
+// premiado…). Cada um só muda ordenação/janela de datas do discover.
+export type BrowseHighlight = 'upcoming' | 'popular' | 'top_rated' | 'awarded' | 'now';
+
+export const BROWSE_HIGHLIGHTS: { value: BrowseHighlight; label: string }[] = [
+  { value: 'upcoming',  label: 'Em breve' },
+  { value: 'now',       label: 'Lançados agora' },
+  { value: 'popular',   label: 'Mais populares' },
+  { value: 'top_rated', label: 'Melhor avaliados' },
+  { value: 'awarded',   label: 'Premiados' },
+];
+
 export interface DiscoverFilters {
   kind: BrowseKind;
   genreIds?: number[];   // múltiplos gêneros (OR entre eles)
   years?: number[];      // múltiplos anos (qualquer um dos marcados)
   minRating?: number | null;
+  highlight?: BrowseHighlight | null;
   page?: number;
 }
 
@@ -277,6 +290,40 @@ export async function discoverFilter(f: DiscoverFilters): Promise<MediaSummary[]
     if (genreParam) params.with_genres = genreParam;
     if (isAnime) params.with_original_language = 'ja';
     if (f.minRating) params['vote_average.gte'] = String(f.minRating);
+
+    // Destaques: ajusta ordenação/janela de datas. "Em breve" precisa liberar o
+    // piso de votos (título não lançado quase não tem voto).
+    const today = new Date().toISOString().slice(0, 10);
+    const dateGte = apiType === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte';
+    const dateLte = apiType === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
+    switch (f.highlight) {
+      case 'upcoming':
+        params[dateGte] = today;
+        params.sort_by = 'popularity.desc';
+        params['vote_count.gte'] = '0';
+        break;
+      case 'now': {                                  // últimos 45 dias
+        const d = new Date(); d.setDate(d.getDate() - 45);
+        params[dateGte] = d.toISOString().slice(0, 10);
+        params[dateLte] = today;
+        params.sort_by = 'popularity.desc';
+        params['vote_count.gte'] = '10';
+        break;
+      }
+      case 'popular':
+        params.sort_by = 'popularity.desc';
+        params['vote_count.gte'] = '200';
+        break;
+      case 'top_rated':
+        params.sort_by = 'vote_average.desc';
+        params['vote_count.gte'] = '500';            // evita nota 10 com 3 votos
+        break;
+      case 'awarded':                                // aclamados: nota alta + muito voto
+        params.sort_by = 'vote_average.desc';
+        params['vote_count.gte'] = '3000';
+        params['vote_average.gte'] = String(Math.max(f.minRating ?? 0, 7.5));
+        break;
+    }
     if (year != null) {
       if (apiType === 'movie') params.primary_release_year = String(year);
       else params.first_air_date_year = String(year);
