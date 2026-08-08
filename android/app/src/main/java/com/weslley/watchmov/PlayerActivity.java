@@ -73,6 +73,7 @@ public class PlayerActivity extends Activity {
 
     private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
+    private boolean cronetActive;   // Cronet (Chromium) ativo → HLS toca direto (sem proxy)
     private Button qualityBtn;
     private PlayerView view;
     private TextView status;
@@ -301,6 +302,26 @@ public class PlayerActivity extends Activity {
         }
         if (!headers.isEmpty()) http.setDefaultRequestProperties(headers);
 
+        // CRONET (stack de rede do Chromium): alguns CDNs (SuperFlix/fembed) fazem
+        // anti-bot por FINGERPRINT TLS/JA3 e devolvem "security error" pro OkHttp,
+        // mas #EXTM3U pro Chrome/WebView. O Cronet tem o mesmo JA3 do Chrome → passa.
+        // Com Cronet ativo, o HLS toca DIRETO (sem proxy). Fallback: OkHttp+proxy.
+        androidx.media3.datasource.DataSource.Factory mediaHttp = http;
+        boolean cronetOn = false;
+        try {
+            org.chromium.net.CronetEngine engine = new org.chromium.net.CronetEngine.Builder(this)
+                .enableHttp2(true).enableQuic(false).build();
+            androidx.media3.datasource.cronet.CronetDataSource.Factory cf =
+                new androidx.media3.datasource.cronet.CronetDataSource.Factory(engine, java.util.concurrent.Executors.newCachedThreadPool())
+                    .setUserAgent(ua != null ? ua : defUa);
+            if (!headers.isEmpty()) cf.setDefaultRequestProperties(headers);
+            mediaHttp = cf;
+            cronetOn = true;
+        } catch (Throwable t) {
+            android.util.Log.w("Player", "Cronet indisponível → OkHttp+proxy: " + t);
+        }
+        cronetActive = cronetOn;
+
         // Buffer maior p/ o HLS via proxy (cada segmento é um round-trip extra):
         // acumula mais antes de tocar e, sobretudo, ~15s após rebuffer → menos
         // travadas/paradas pra carregar. prioritizeTime = mantém a janela por tempo.
@@ -311,7 +332,7 @@ public class PlayerActivity extends Activity {
 
         trackSelector = new DefaultTrackSelector(this);
         player = new ExoPlayer.Builder(this)
-            .setMediaSourceFactory(new DefaultMediaSourceFactory(http))
+            .setMediaSourceFactory(new DefaultMediaSourceFactory(mediaHttp))
             .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(10000)
@@ -485,7 +506,11 @@ public class PlayerActivity extends Activity {
         // o m3u8 gzip/text-plain que o ExoPlayer recebe cru → "Input does not start with
         // #EXTM3U" (MANIFEST_MALFORMED). O proxy descomprime, garante #EXTM3U e reescreve
         // os segmentos (mesmo caminho que o cast já usa OK). MP4 toca direto.
-        String playUri = MimeTypes.APPLICATION_M3U8.equals(mimeType) ? ProxyServer.local(url, mReferer) : url;
+        // Com Cronet ativo, HLS toca DIRETO (Chromium busca o CDN, passa o anti-bot
+        // TLS + trata gzip/relativos). Sem Cronet, mantém o proxy OkHttp.
+        String playUri = MimeTypes.APPLICATION_M3U8.equals(mimeType)
+            ? (cronetActive ? url : ProxyServer.local(url, mReferer))
+            : url;
         MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
         player.setMediaItem(item);
         if (startMs > 0) player.seekTo(startMs);
