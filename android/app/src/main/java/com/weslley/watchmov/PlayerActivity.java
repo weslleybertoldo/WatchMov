@@ -439,6 +439,9 @@ public class PlayerActivity extends Activity {
             }
         });
 
+        // Abrindo já espelhando: NÃO inicia o vídeo local — os dois puxariam o MESMO
+        // HLS pelo MESMO proxy e a TV perdia banda/conexão logo após a troca.
+        castSilentStart = castFollowNext && activeCastMode != CAST_NONE;
         playUrl(currentUrl, getIntent().getStringExtra(EXTRA_MIME), resolvedStart);
 
         // Veio do "Próximo episódio" com a TV conectada: reenvia a NOVA mídia pro mesmo
@@ -565,7 +568,8 @@ public class PlayerActivity extends Activity {
         MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
         player.setMediaItem(item);
         if (startMs > 0) player.seekTo(startMs);
-        player.setPlayWhenReady(true);
+        player.setPlayWhenReady(!castSilentStart);
+        if (castSilentStart) player.setVolume(0f);
         player.prepare();
         progressHandler.removeCallbacks(progressTick);
         progressHandler.postDelayed(progressTick, 5000);
@@ -765,6 +769,9 @@ public class PlayerActivity extends Activity {
     // "Próximo episódio" tocado no overlay do cast: a TV NÃO é desconectada — ao
     // reabrir com o novo episódio, reenviamos a mídia pro mesmo dispositivo.
     private static boolean castFollowNext = false;
+    private boolean castSilentStart = false;   // abriu já espelhando → não toca local
+    private long recastAtMs = 0;               // instante do recast (p/ diagnosticar queda)
+    private boolean recastDropReported = false;
     private String dlnaCtrl;
     private boolean dlnaPaused = false;
     private long lastRemotePosMs = 0, lastRemoteDurMs = 0;
@@ -832,6 +839,8 @@ public class PlayerActivity extends Activity {
             final String tt = getIntent().getStringExtra(EXTRA_TITLE);
             final String t = tt != null ? tt : "WatchMov";
             startCasting(CAST_DLNA, ctrl);                 // overlay + pausa o local já
+            recastAtMs = android.os.SystemClock.elapsedRealtime();
+            recastDropReported = false;
             if (castStatusTv != null) castStatusTv.setText("Enviando próximo episódio pra TV…");
             new Thread(() -> {
                 // A TV costuma recusar logo após o Stop do episódio anterior
@@ -972,6 +981,19 @@ public class PlayerActivity extends Activity {
                         // ainda carregando) contam como tocando — senão o ícone virava ▶
                         // no início enquanto a TV só estava abrindo o stream.
                         if (fst != null && !fst.isEmpty()) { dlnaPaused = "PAUSED_PLAYBACK".equals(fst); updatePlayIcon(!dlnaPaused); }
+                        // A TV parou logo após a troca de episódio? registra o estado
+                        // real que ela reportou (STOPPED/NO_MEDIA_PRESENT/…) pra saber
+                        // POR QUE cai, em vez de adivinhar.
+                        if (!recastDropReported && recastAtMs > 0
+                            && android.os.SystemClock.elapsedRealtime() - recastAtMs < 40000
+                            && fst != null && !"PLAYING".equals(fst) && !"TRANSITIONING".equals(fst)
+                            && !"PAUSED_PLAYBACK".equals(fst)) {
+                            recastDropReported = true;
+                            NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_TV_PAROU",
+                                "[recast] TV state=" + fst + " apos " + (android.os.SystemClock.elapsedRealtime() - recastAtMs) + "ms"
+                                + " pos=" + lastRemotePosMs, getIntent().getStringExtra(EXTRA_MIME), mReferer,
+                                getIntent().getStringExtra(EXTRA_TITLE));
+                        }
                         if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
                         updateCastSeek();
                         progressHandler.postDelayed(castPoll, 1500); // próximo ciclo só agora

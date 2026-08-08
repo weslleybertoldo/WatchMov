@@ -190,6 +190,11 @@ export async function playDownloaded(key: string) {
   // um só: retoma de onde parou na home e o que assistir aqui reflete lá.
   const resumeKey = `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`;
   const startMs = getPosition(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
+  // Próximo episódio BAIXADO (mesma temporada): habilita o botão "Próximo" do player
+  // — sem isso, quem abre pela aba Download nunca via a opção (nem no espelhamento).
+  const nextKey = (meta.type === 'tv' && meta.season != null && meta.ep != null)
+    ? epKey(meta.tmdbId, meta.season, meta.ep + 1) : null;
+  const hasNext = !!nextKey && items.get(nextKey)?.state === 'completed';
   // Salva a posição a cada ~5s (igual ao fluxo normal): se o app morrer, não perde.
   let handle: { remove: () => void } | null = null;
   onPlayerProgress?.(({ positionMs, durationMs }) => {
@@ -198,9 +203,11 @@ export async function playDownloaded(key: string) {
   try {
     const res = await playNative({
       url: meta.url, referer: meta.referer, mime: meta.mime, title: meta.title,
-      startMs, offline: true, key: resumeKey,
+      startMs, offline: true, key: resumeKey, hasNext,
     });
     if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+    // "Próximo" no player → toca o episódio seguinte JÁ BAIXADO (encadeia offline).
+    if (res?.next && nextKey) { handle?.remove(); handle = null; await playDownloaded(nextKey); }
   } finally {
     handle?.remove();
     notify();   // atualiza a barra da aba na volta
