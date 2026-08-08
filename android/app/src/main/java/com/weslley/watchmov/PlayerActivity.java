@@ -358,7 +358,11 @@ public class PlayerActivity extends Activity {
                 if (currentUrl != null) triedUrls.add(currentUrl);
                 String nextUrl = null, nextMime = null; int nextIdx = -1;
                 if (urls != null) {
-                    for (int i = 0; i < urls.length; i++) {
+                    // Segue a sequência PRA FRENTE a partir do link que falhou: escolheu o
+                    // 6 e falhou → tenta 7, 8, 9… NÃO volta pro 1 (se o user quisesse o 1
+                    // teria escolhido o 1). Acabou a lista → para. Se o link atual não está
+                    // em urls[] (failedIdx<0), começa do início.
+                    for (int i = Math.max(failedIdx + 1, 0); i < urls.length; i++) {
                         if (urls[i] != null && !triedUrls.contains(urls[i]) && !isTrackOnly(urls[i])) {
                             nextUrl = urls[i]; nextIdx = i;
                             nextMime = (mimes != null && i < mimes.length) ? mimes[i] : null;
