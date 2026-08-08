@@ -1342,15 +1342,22 @@ public class PlayerActivity extends Activity {
                         try { DlnaCastPlugin.castSync(dev.controlUrl, castUrl, mTitle != null ? mTitle : "WatchMov"); }
                         catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                         final String ferr = err;
-                        // Mostra o overlay JÁ (o seek abaixo leva alguns segundos).
+                        // Mostra o overlay JÁ (o seek leva alguns segundos) e SÓ DEPOIS
+                        // dispara o seek: o startCasting incrementa o castGen, e o
+                        // seekWithRetry usa esse gen como guarda — disparado antes, ele
+                        // abortava sozinho e a TV começava do zero (o 1º espelhamento
+                        // tem que continuar de onde o celular estava).
                         runOnUiThread(() -> {
                             castMsg(ferr == null ? "Tocando na TV — o app vira controle" : ferr, ferr == null ? 4000 : 8000);
-                            if (ferr == null) startCasting(CAST_DLNA, dev.controlUrl);
+                            if (ferr != null) return;
+                            startCasting(CAST_DLNA, dev.controlUrl);
+                            // Continua na posição atual do reprodutor (ex.: 30min → abre em
+                            // 30min). COM retry+confirmação: o Seek logo após o Play é
+                            // recusado enquanto a TV carrega — sem insistir, ela tocava do 0.
+                            if (castFromMs > 3000) {
+                                new Thread(() -> seekWithRetry(dev.controlUrl, castFromMs, "inicial")).start();
+                            }
                         });
-                        // Continua na posição atual do reprodutor (ex.: 30min → abre em
-                        // 30min). COM retry+confirmação: o Seek logo após o Play é
-                        // recusado enquanto a TV carrega — sem insistir, ela tocava do 0.
-                        if (ferr == null && castFromMs > 3000) seekWithRetry(dev.controlUrl, castFromMs, "inicial");
                     }).start();
                 }).show();
             });
