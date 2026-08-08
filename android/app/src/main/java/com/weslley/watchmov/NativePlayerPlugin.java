@@ -83,6 +83,7 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_KEY, call.getString("key"));
         intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));
         intent.putExtra(PlayerActivity.EXTRA_WATCHED, Boolean.TRUE.equals(call.getBoolean("watched", false)));
+        intent.putExtra(PlayerActivity.EXTRA_OFFLINE, Boolean.TRUE.equals(call.getBoolean("offline", false)));
         intent.putExtra(PlayerActivity.EXTRA_URLS, toArray(call.getArray("urls", null)));
         intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         intent.putExtra(PlayerActivity.EXTRA_QUALITIES, toArray(call.getArray("qualities", null)));

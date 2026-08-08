@@ -62,6 +62,7 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_KEY = "resumeKey";
     public static final String EXTRA_HAS_NEXT = "hasNext";
     public static final String EXTRA_WATCHED = "watched";
+    public static final String EXTRA_OFFLINE = "offline";
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
     private static final String RESUME_PREFS = "watchmov_resume";
     public static final String RESULT_POSITION = "positionMs";
@@ -83,6 +84,7 @@ public class PlayerActivity extends Activity {
     private String[] mimes;
     private String[] qualities;
     private String mReferer;
+    private boolean offline = false;              // item baixado → toca do cache (CacheDataSource)
     private boolean hasNext = false;
     private boolean watched = false;              // estado atual do "assistido"
     private boolean userUnwatched = false;        // desmarcou manual → não auto-marcar de novo
@@ -144,6 +146,7 @@ public class PlayerActivity extends Activity {
         final long startMs = getIntent().getLongExtra(EXTRA_START_MS, 0);
         hasNext = getIntent().getBooleanExtra(EXTRA_HAS_NEXT, false);
         watched = getIntent().getBooleanExtra(EXTRA_WATCHED, false);
+        offline = getIntent().getBooleanExtra(EXTRA_OFFLINE, false);
         resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
         long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
@@ -310,8 +313,13 @@ public class PlayerActivity extends Activity {
             .build();
 
         trackSelector = new DefaultTrackSelector(this);
+        // Offline (item baixado): lê do SimpleCache via CacheDataSource (não precisa de
+        // rede). Online: OkHttp normal (descomprime gzip do m3u8).
+        androidx.media3.exoplayer.source.MediaSource.Factory msFactory = offline
+            ? new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(this))
+            : new DefaultMediaSourceFactory(http);
         player = new ExoPlayer.Builder(this)
-            .setMediaSourceFactory(new DefaultMediaSourceFactory(http))
+            .setMediaSourceFactory(msFactory)
             .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(10000)
@@ -489,7 +497,9 @@ public class PlayerActivity extends Activity {
         // o m3u8 gzip/text-plain que o ExoPlayer recebe cru → "Input does not start with
         // #EXTM3U" (MANIFEST_MALFORMED). O proxy descomprime, garante #EXTM3U e reescreve
         // os segmentos (mesmo caminho que o cast já usa OK). MP4 toca direto.
-        String playUri = MimeTypes.APPLICATION_M3U8.equals(mimeType) ? ProxyServer.local(url, mReferer) : url;
+        // Offline: baixamos via proxy (chaves de cache = URLs proxied) → toca sempre pelo
+        // proxy pra bater no cache. Online: HLS via proxy, MP4 direto.
+        String playUri = (offline || MimeTypes.APPLICATION_M3U8.equals(mimeType)) ? ProxyServer.local(url, mReferer) : url;
         MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
         player.setMediaItem(item);
         if (startMs > 0) player.seekTo(startMs);

@@ -9,7 +9,9 @@ import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
-import { useDownloads, setDownloaded, movieKey, epKey } from '@/lib/downloads';
+import { useDownloads, setDownloaded, enqueueDownload, movieKey, epKey } from '@/lib/downloads';
+import { getEntry, streamKey } from '@/lib/streamCache';
+import { toast } from 'sonner';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -164,11 +166,22 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
 
   const movieWatched = !isSeries && !!liveItem?.completed;
 
-  // ── Download (WIP: marca estado; salvamento real do vídeo é etapa nativa) ──
+  // ── Download offline (Media3): usa a MASTER que o player capturou/escolheu (só dá
+  // pra baixar o que já foi aberto uma vez — não há resolve headless). ──
   const movieDownloaded = !isSeries && dls.has(movieKey(media.tmdbId));
+  const streamFor = (s: number | undefined, ep: number | undefined) => {
+    const e = getEntry(media.tmdbId, media.type, s, ep);
+    if (!e?.chosenUrl) return null;
+    const st = (e.streams ?? []).find(x => streamKey(x.url) === streamKey(e.chosenUrl!));
+    return { url: e.chosenUrl, referer: st?.referer, mime: st?.mime };
+  };
   const toggleMovieDownload = async () => {
     await ensureLib();
-    setDownloaded([movieKey(media.tmdbId)], !movieDownloaded);
+    if (movieDownloaded) { setDownloaded([movieKey(media.tmdbId)], false); return; }
+    const s = streamFor(undefined, undefined);
+    if (!s) { toast.error('Abra o filme uma vez pra baixar', { description: 'O download usa o link que o player captura ao reproduzir.' }); return; }
+    enqueueDownload(movieKey(media.tmdbId), { ...s, title: media.title });
+    toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });
   };
   const startSelecting = () => { setSelEps(new Set()); setSelecting(true); };
   const cancelSelecting = () => { setSelecting(false); setSelEps(new Set()); };
@@ -180,8 +193,15 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   const confirmDownload = async () => {
     if (selEps.size === 0) { cancelSelecting(); return; }
     await ensureLib();
-    setDownloaded([...selEps].map(ep => epKey(media.tmdbId, selSeason, ep)), true);
+    let ok = 0, miss = 0;
+    [...selEps].forEach(ep => {
+      const s = streamFor(selSeason, ep);
+      if (s) { enqueueDownload(epKey(media.tmdbId, selSeason, ep), { ...s, title: `${media.title} T${selSeason}E${ep}` }); ok++; }
+      else miss++;
+    });
     cancelSelecting();
+    if (ok) toast.success(`Baixando ${ok} episódio(s)…`, { description: 'Acompanhe na aba Download.' });
+    if (miss) toast.error(`${miss} episódio(s) sem link`, { description: 'Abra cada um uma vez pra baixar.' });
   };
 
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);

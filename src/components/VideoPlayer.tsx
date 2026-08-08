@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2 } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import Hls from 'hls.js';
 import { toast } from 'sonner';
@@ -11,6 +11,7 @@ import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
+import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, movieKey, epKey } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -135,6 +136,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   }, [open]);
 
   const target: PlayerTarget = { tmdbId, imdbId, type, season, episode };
+
+  // Chave de download deste título/episódio (m:tmdbId / e:tmdbId:s:e). Se baixado,
+  // o player nativo toca do cache (offline). O download é da MASTER escolhida.
+  const dlKey = tmdbId == null ? null
+    : (type === 'movie' ? movieKey(tmdbId)
+      : (season != null && episode != null ? epKey(tmdbId, season, episode) : null));
+  const dlItem = useDownloadItem(dlKey);
+  const dlDone = dlItem?.state === 'completed';
   const available = PROVIDERS.filter(p => p.build(target));
   // Lembra a fonte escolhida por título (tmdbId+type). Não muda o padrão global.
   const srcKey = `watchmov_src_${tmdbId ?? imdbId}_${type}`;
@@ -220,6 +229,17 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setOwnStream(r);
   };
 
+  // Baixa (offline) a MASTER escolhida deste título/ep. A master baixada vira a
+  // "lembrada" (chosenUrl) → ao reabrir, o player toca do cache. Já baixado = remove.
+  const toggleDownload = (r: SniffResult) => {
+    if (!dlKey) return;
+    if (dlItem && dlItem.state !== 'removed') { removeDownload(dlKey); toast.info('Download removido'); return; }
+    addStreams([r], tmdbId, type, season, episode);
+    setChosen(r.url, tmdbId, type, season, episode);
+    enqueueDownload(dlKey, { url: r.url, referer: r.referer, mime: r.mime, title });
+    toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });
+  };
+
   // Assistir pelo servidor (iframe): grava que a última vez foi no servidor
   // (ao reabrir o título abre o servidor, não o reprodutor).
   const goServer = () => {
@@ -240,6 +260,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const group = capturedList.filter(s => isTrackOnly(s.url) === isTrackOnly(ownStream.url));
     playNative({
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
+      offline: !!(dlKey && isDownloaded(dlKey) && streamKey(ownStream.url) === streamKey(getEntry(tmdbId, type, season, episode)?.chosenUrl || '')),
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
       qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
@@ -625,17 +646,28 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                     const kind = s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4';
                     const track = isTrackOnly(s.url);
                     return (
-                      <button key={s.url} onClick={() => chooseStream(s)} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-foreground">
-                            Link {gi} <span className="text-[10px] text-muted-foreground">({kind})</span>
-                            <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{track ? 'FAIXA' : 'MASTER'}</span>
-                            {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
-                        </div>
-                        {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
-                      </button>
+                      <div key={s.url} className="w-full flex items-center gap-1 px-3 py-2.5 hover:bg-secondary border-b border-border/40">
+                        <button onClick={() => chooseStream(s)} className="flex-1 min-w-0 text-left flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-foreground">
+                              Link {gi} <span className="text-[10px] text-muted-foreground">({kind})</span>
+                              <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{track ? 'FAIXA' : 'MASTER'}</span>
+                              {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
+                          </div>
+                          {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
+                        </button>
+                        {!track && dlKey && isNative() && (
+                          <button onClick={(e) => { e.stopPropagation(); toggleDownload(s); }} className="shrink-0 w-9 h-9 flex items-center justify-center rounded hover:bg-background/60"
+                            title={dlDone ? 'Baixado — toque pra remover' : 'Baixar (offline)'}>
+                            {dlDone ? <Trash2 className="w-4 h-4 text-green-400" />
+                              : dlItem?.state === 'downloading' ? <span className="text-[10px] font-semibold text-primary">{dlItem.percent >= 0 ? `${dlItem.percent}%` : '…'}</span>
+                              : dlItem && dlItem.state !== 'removed' ? <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                              : <Download className="w-4 h-4 text-muted-foreground" />}
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </>
