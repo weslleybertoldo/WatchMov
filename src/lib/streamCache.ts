@@ -61,7 +61,10 @@ export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, 
     if (idx >= 0) arr[idx] = { url: s.url, mime: s.mime || arr[idx].mime, referer: s.referer || arr[idx].referer, quality: s.quality || arr[idx].quality };
     else arr.push(s);
   }
-  d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, lastMode: prev?.lastMode, positionMs: prev?.positionMs, ts: Date.now() };
+  // PRESERVA durationMs: é a duração REAL medida pelo player. Sem isso, capturar um
+  // link novo apagava a duração e a barra/tempo ("22:55 / 1:40:15") sumia.
+  d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, lastMode: prev?.lastMode,
+           positionMs: prev?.positionMs, durationMs: prev?.durationMs, ts: Date.now() };
   write(d);
 }
 

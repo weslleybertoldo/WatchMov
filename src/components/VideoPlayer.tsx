@@ -352,7 +352,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       }).then(({ error }) => { if (error) console.warn('[bugs] log falhou', error.message); });
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
-  }, [open, directMode, providerId, title]);
+    // tmdbId/type/season/episode nas deps: o callback usa essas chaves pra remover o
+    // link e registrar o erro — sem elas, trocar de episódio com o player aberto
+    // gravava/removia no episódio ANTERIOR.
+  }, [open, directMode, providerId, title, tmdbId, type, season, episode]);
 
   // <video> (Stremio/torrent): anexa a fonte (hls.js pra .m3u8; src direto pro resto).
   useEffect(() => {
