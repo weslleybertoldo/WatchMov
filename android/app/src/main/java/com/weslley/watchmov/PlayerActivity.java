@@ -356,7 +356,7 @@ public class PlayerActivity extends Activity {
                 String nextUrl = null, nextMime = null; int nextIdx = -1;
                 if (urls != null) {
                     for (int i = 0; i < urls.length; i++) {
-                        if (urls[i] != null && !triedUrls.contains(urls[i])) {
+                        if (urls[i] != null && !triedUrls.contains(urls[i]) && !isTrackOnly(urls[i])) {
                             nextUrl = urls[i]; nextIdx = i;
                             nextMime = (mimes != null && i < mimes.length) ? mimes[i] : null;
                             break;
@@ -561,29 +561,38 @@ public class PlayerActivity extends Activity {
 
     private static final String UA_HANDOFF = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
-    // Handoff: manda o(s) link(s) + Referer/headers pro player externo. No Web Video
-    // Cast enfileira TODOS os links capturados (extras add_to_queue +
-    // android_video_list_do_not_clear); VLC/MX recebem só o atual.
+    // Detecta faixa ISOLADA (só vídeo ou só áudio): /m3/ = variante de vídeo,
+    // /md/ = faixa de áudio. Sozinhas dão "sem som"/"só áudio" — não mandar.
+    private static boolean isTrackOnly(String u) {
+        String l = u.toLowerCase();
+        return l.contains("/m3/") || l.contains("/md/");
+    }
+
+    // Handoff pro player externo. Manda a(s) MASTER (playlist completa áudio+vídeo);
+    // ignora as faixas isoladas (/m3/,/md/) que sozinhas só têm vídeo OU áudio.
     private void openInExternal(String pkg) {
         if (currentUrl == null) { android.widget.Toast.makeText(this, "Sem link", android.widget.Toast.LENGTH_SHORT).show(); return; }
-        final boolean isWvc = pkg.contains("instantbits") || pkg.contains("webvideocaster");
         final java.util.List<String> us = new java.util.ArrayList<>();
         final java.util.List<String> ms = new java.util.ArrayList<>();
-        if (isWvc && urls != null && urls.length > 0) {
-            for (int i = 0; i < urls.length; i++) if (urls[i] != null) { us.add(urls[i]); ms.add(mimes != null && i < mimes.length ? mimes[i] : null); }
+        if (urls != null) {
+            for (int i = 0; i < urls.length; i++) {
+                String u = urls[i];
+                if (u == null || isTrackOnly(u)) continue;
+                us.add(u); ms.add(mimes != null && i < mimes.length ? mimes[i] : null);
+            }
         }
         if (us.isEmpty()) { us.add(currentUrl); ms.add(getIntent().getStringExtra(EXTRA_MIME)); }
         final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
         for (int i = 0; i < us.size(); i++) {
             final int idx = i;
-            h.postDelayed(() -> fireExternal(pkg, us.get(idx), ms.get(idx), isWvc, idx), idx * 600L);
+            h.postDelayed(() -> fireExternal(pkg, us.get(idx), ms.get(idx), idx), idx * 700L);
         }
     }
 
-    private void fireExternal(String pkg, String url, String mime, boolean wvc, int idx) {
+    private void fireExternal(String pkg, String url, String mime, int idx) {
         try {
             String m = (mime == null || mime.isEmpty())
-                ? ((url.contains(".m3u8") || url.contains("/m3/") || url.contains("master") || url.contains(".txt")) ? "application/x-mpegURL" : "video/*")
+                ? ((url.contains(".m3u8") || url.contains("master") || url.contains(".txt")) ? "application/x-mpegURL" : "video/*")
                 : mime;
             android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
             intent.setPackage(pkg);
@@ -597,10 +606,6 @@ public class PlayerActivity extends Activity {
             intent.putExtra("headers", hb);
             intent.putExtra("com.android.browser.headers", hb);
             intent.putExtra("android.media.intent.extra.HTTP_HEADERS", hb);
-            if (wvc) {
-                intent.putExtra("android_video_list_do_not_clear", true); // não limpa a fila do WVC
-                if (idx > 0) intent.putExtra("add_to_queue", true);        // 2º+ entram na fila
-            }
             if (idx == 0) intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
         } catch (Exception e) {
