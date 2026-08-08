@@ -36,7 +36,11 @@ public class DownloaderPlugin extends Plugin {
             R.string.download_channel_name, 0, NotificationUtil.IMPORTANCE_LOW);
         DownloadManager dm = DownloadUtil.getDownloadManager(getContext());
         listener = new DownloadManager.Listener() {
-            @Override public void onDownloadChanged(DownloadManager m, Download d, Exception e) { emit(d); }
+            @Override public void onDownloadChanged(DownloadManager m, Download d, Exception e) {
+                JSObject o = toJson(d);
+                if (e != null && e.getMessage() != null) o.put("reason", e.getMessage());
+                notifyListeners("downloadChanged", o);
+            }
             @Override public void onDownloadRemoved(DownloadManager m, Download d) {
                 JSObject o = new JSObject();
                 o.put("key", d.request.id);
@@ -46,10 +50,6 @@ public class DownloaderPlugin extends Plugin {
             }
         };
         dm.addListener(listener);
-    }
-
-    private void emit(Download d) {
-        notifyListeners("downloadChanged", toJson(d));
     }
 
     private static String stateName(int s) {
@@ -72,6 +72,7 @@ public class DownloaderPlugin extends Plugin {
         float p = d.getPercentDownloaded();
         o.put("percent", Float.isNaN(p) || p < 0 ? -1 : Math.round(p));
         o.put("bytes", d.getBytesDownloaded());
+        if (d.state == Download.STATE_FAILED) o.put("reason", "falha (código " + d.failureReason + ")");
         return o;
     }
 

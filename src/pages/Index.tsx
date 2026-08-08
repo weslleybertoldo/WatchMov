@@ -20,7 +20,6 @@ import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
 import BugsView from '@/components/streaming/BugsView';
 import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
-import { useDownloads, hasAnyDownload, clearDownloadsFor, downloadedEpisodesOf, setDownloaded, epKey } from '@/lib/downloads';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
 import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft } from 'lucide-react';
@@ -77,7 +76,6 @@ export default function Index() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [bugsOpen, setBugsOpen] = useState(false);
-  const dls = useDownloads();
 
   // Preserva o scroll vertical da página ao abrir um título e voltar.
   const homeScrollRef = useRef(0);
@@ -150,12 +148,6 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  // ── Downloads (WIP): itens com algo baixado, separados por tipo ──
-  const downloadedItems = store.data.items.filter(i => i.tmdbId && hasAnyDownload(dls, i.tmdbId as number, i.type === 'movie'));
-  const dlMovies = downloadedItems.filter(i => i.type === 'movie').map(itemToSummary);
-  const dlAnimes = downloadedItems.filter(isAnime).map(itemToSummary);
-  const dlSeries = downloadedItems.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
-
   const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); };
 
   return (
@@ -191,11 +183,7 @@ export default function Index() {
           historyOpen ? (
             <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
           ) : downloadOpen ? (
-            <DownloadView movies={dlMovies} series={dlSeries} animes={dlAnimes} onOpen={openMedia}
-              onRemove={(m) => clearDownloadsFor(m.tmdbId, m.type !== 'tv')}
-              episodesOf={(id) => downloadedEpisodesOf(dls, id)}
-              onRemoveEpisodes={(id, eps) => setDownloaded(eps.map(e => epKey(id, e.season, e.ep)), false)}
-              onBack={() => setDownloadOpen(false)} />
+            <DownloadView onBack={() => setDownloadOpen(false)} />
           ) : bugsOpen ? (
             <BugsView onBack={() => setBugsOpen(false)} />
           ) : (

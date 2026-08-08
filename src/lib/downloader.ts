@@ -9,6 +9,7 @@ export interface DownloadItem {
   state: DownloadState;
   percent: number;   // 0..100, ou -1 se desconhecido
   bytes?: number;
+  reason?: string;   // motivo da falha (state === 'failed')
 }
 
 interface DownloaderPlugin {

@@ -56,9 +56,8 @@ export default function SettingsView({ stats, onHistory, onDownload, onBugs, onS
         <History className="w-4 h-4" /> Histórico
       </Button>
 
-      <Button variant="secondary" className="w-full justify-between gap-2 h-11" onClick={onDownload}>
-        <span className="flex items-center gap-2"><Download className="w-4 h-4" /> Download</span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">em breve</span>
+      <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onDownload}>
+        <Download className="w-4 h-4" /> Download
       </Button>
 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onBugs}>
