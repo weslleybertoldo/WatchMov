@@ -16,6 +16,7 @@ import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
 import HistoryView from '@/components/streaming/HistoryView';
+import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
 import BugsView from '@/components/streaming/BugsView';
 import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
@@ -218,6 +219,7 @@ export default function Index() {
           <CategoryView title={category.title} loadPage={category.loadPage} cacheKey={category.cacheKey} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
           <div className="space-y-6">
+            <HeroCarousel onOpen={openMedia} />
             {continueMovies.length > 0 && (
               <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => setContinueFilter('movie')} />
             )}

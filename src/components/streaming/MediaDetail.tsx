@@ -185,6 +185,12 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
   };
 
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
+  // Lançamento MM/AAAA (ex 05/2026) a partir da data completa do TMDB; cai no ano.
+  const releaseLabel = (() => {
+    const rd = details?.releaseDate;
+    if (rd && /^\d{4}-\d{2}/.test(rd)) return `${rd.slice(5, 7)}/${rd.slice(0, 4)}`;
+    return media.year;
+  })();
   const inList = !!liveItem?.favorite;
   const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
   const hasProgress = resumeMins > 0 || (isSeries && !!liveItem?.seasons?.some(s => episodesWatched(s).length > 0));
@@ -213,7 +219,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
       <div className="-mt-12 relative px-1 space-y-3">
         <h1 className="text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-          {media.year && <span>{media.year}</span>}
+          {releaseLabel && <span>{releaseLabel}</span>}
           {rating && <span className="flex items-center gap-1 text-foreground font-medium"><Star className="w-4 h-4 fill-amber-400 text-amber-400" /> {rating}</span>}
           <span className="px-2 py-0.5 rounded bg-muted text-xs">{isSeries ? 'Série' : 'Filme'}</span>
           {details?.originalLanguage && (
