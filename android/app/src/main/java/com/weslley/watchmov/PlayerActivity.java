@@ -659,6 +659,14 @@ public class PlayerActivity extends Activity {
             String m = (mime == null || mime.isEmpty())
                 ? ((url.contains(".m3u8") || url.contains("master") || url.contains(".txt")) ? "application/x-mpegURL" : "video/*")
                 : mime;
+            // Áudio em PORTUGUÊS também no app externo (WVC/VLC/MX): manda pelo proxy
+            // da LAN com &ap=pt — o mesmo caminho do DLNA, que REMOVE as faixas de
+            // áudio não-PT do master (senão o player externo pega o inglês, que vem
+            // marcado como DEFAULT no HLS). Sem IP de Wi-Fi, cai na URL original.
+            if (m.contains("mpegURL") || m.contains("mpegurl")) {
+                String ip = localIp();
+                if (ip != null) url = ProxyServer.lan(url, mReferer, ip);
+            }
             android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
             intent.setPackage(pkg);
             intent.setDataAndType(android.net.Uri.parse(url), m);
