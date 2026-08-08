@@ -663,7 +663,11 @@ public class PlayerActivity extends Activity {
             // da LAN com &ap=pt — o mesmo caminho do DLNA, que REMOVE as faixas de
             // áudio não-PT do master (senão o player externo pega o inglês, que vem
             // marcado como DEFAULT no HLS). Sem IP de Wi-Fi, cai na URL original.
-            if (m.contains("mpegURL") || m.contains("mpegurl")) {
+            String lu = url.toLowerCase();
+            boolean hls = m.toLowerCase().contains("mpegurl")
+                || lu.contains(".m3u8") || lu.contains(".txt") || lu.contains("master")
+                || lu.contains("/m3/") || lu.contains("playlist");
+            if (hls && !url.contains("/s?u=")) {          // não re-proxiar o que já é proxy
                 String ip = localIp();
                 if (ip != null) url = ProxyServer.lan(url, mReferer, ip);
             }
@@ -680,6 +684,11 @@ public class PlayerActivity extends Activity {
             intent.putExtra("com.android.browser.headers", hb);
             intent.putExtra("android.media.intent.extra.HTTP_HEADERS", hb);
             if (idx == 0) intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            // Registra a URL REAL entregue ao app externo — sem isso não dá pra saber
+            // se o áudio veio errado por falta do ap=pt ou porque o player externo
+            // ignora faixa alternativa de áudio.
+            if (idx == 0) NativePlayerPlugin.reportError(url, 0, 0, "HANDOFF_EXTERNO",
+                "[handoff] pkg=" + pkg + " mime=" + m, m, mReferer, getIntent().getStringExtra(EXTRA_TITLE));
             startActivity(intent);
         } catch (Exception e) {
             if (idx == 0) android.widget.Toast.makeText(this, "Não consegui abrir: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show();
@@ -788,7 +797,10 @@ public class PlayerActivity extends Activity {
         // proxy era diagnóstico interno (não diz nada pro usuário) → removido.
         if (ip == null) castMsg("Conecte o celular no mesmo Wi-Fi da TV", 8000);
         if (castOverlay != null) castOverlay.setVisibility(View.VISIBLE);
-        if (view != null) view.hideController();
+        // DESLIGA o controller do player local: ele fica por cima do overlay e ENGOLE
+        // os toques (pausar/avançar/parar espelhamento não respondiam). hideController
+        // sozinho não basta — ele reaparece ao tocar na tela.
+        if (view != null) { view.hideController(); view.setUseController(false); }
         updatePlayIcon(true);
         progressHandler.removeCallbacks(castPoll);
         progressHandler.postDelayed(castPoll, 800);
@@ -854,6 +866,7 @@ public class PlayerActivity extends Activity {
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
+        if (view != null) view.setUseController(true);      // devolve os controles locais
         progressHandler.removeCallbacks(hideCastMsg);
         if (castMsgTv != null) castMsgTv.setVisibility(View.GONE);   // some com a faixa
         if (player != null) player.setVolume(1f); // restaura o áudio local
