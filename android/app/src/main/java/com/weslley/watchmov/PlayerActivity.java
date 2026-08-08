@@ -257,6 +257,15 @@ public class PlayerActivity extends Activity {
         android.widget.HorizontalScrollView castRowScroll = new android.widget.HorizontalScrollView(this);
         castRowScroll.setHorizontalScrollBarEnabled(false);
         castRowScroll.addView(castRow);
+        // Próximo episódio SEM derrubar a TV: marca pra reenviar a nova mídia no MESMO
+        // dispositivo (DLNA aceita SetAVTransportURI novo sem desconectar) e fecha
+        // devolvendo "next" — o app resolve o próximo ep e reabre já castando.
+        Button nextCast = pill("Próximo episódio ▶|", v -> {
+            castFollowNext = true;
+            finishWithResult(true, false);
+        });
+        nextCast.setVisibility(hasNext ? View.VISIBLE : View.GONE);
+
         Button stopCast = pill("Parar espelhamento", v -> {
             if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
             else stopCasting(true);
@@ -270,7 +279,17 @@ public class PlayerActivity extends Activity {
             @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) {}
         });
         LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.7), ViewGroup.LayoutParams.WRAP_CONTENT);
-        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp); castCol.addView(castRowScroll); castCol.addView(stopCast);
+        // Botões centralizados (fillViewport evita o scroll "colar" o conteúdo à
+        // esquerda) e "Parar espelhamento" mais abaixo, separado dos controles.
+        castRowScroll.setFillViewport(true);
+        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nextLp.gravity = Gravity.CENTER_HORIZONTAL; nextLp.topMargin = 24;
+        nextCast.setLayoutParams(nextLp);
+        LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        stopLp.gravity = Gravity.CENTER_HORIZONTAL; stopLp.topMargin = 56;
+        stopCast.setLayoutParams(stopLp);
+        castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp);
+        castCol.addView(castRowScroll); castCol.addView(nextCast); castCol.addView(stopCast);
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -399,9 +418,15 @@ public class PlayerActivity extends Activity {
 
         playUrl(currentUrl, getIntent().getStringExtra(EXTRA_MIME), resolvedStart);
 
+        // Veio do "Próximo episódio" com a TV conectada: reenvia a NOVA mídia pro mesmo
+        // dispositivo (sem desconectar) e segue espelhando.
+        if (castFollowNext && activeCastMode != CAST_NONE) {
+            castFollowNext = false;
+            recastCurrent();
+        }
         // Retoma o espelhamento se voltamos pro MESMO título e há cast ativo (o vídeo
         // segue na TV): reabre o overlay/controles sem re-castar (pausa o local de novo).
-        if (activeCastMode != CAST_NONE && resumeKey != null && resumeKey.equals(activeCastKey)) {
+        else if (activeCastMode != CAST_NONE && resumeKey != null && resumeKey.equals(activeCastKey)) {
             if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
                 startCasting(CAST_DLNA, activeDlnaCtrl);
             } else if (activeCastMode == CAST_CC) {
@@ -683,6 +708,9 @@ public class PlayerActivity extends Activity {
     private static int activeCastMode = CAST_NONE;
     private static String activeDlnaCtrl;
     private static String activeCastKey;
+    // "Próximo episódio" tocado no overlay do cast: a TV NÃO é desconectada — ao
+    // reabrir com o novo episódio, reenviamos a mídia pro mesmo dispositivo.
+    private static boolean castFollowNext = false;
     private String dlnaCtrl;
     private boolean dlnaPaused = false;
     private long lastRemotePosMs = 0, lastRemoteDurMs = 0;
@@ -722,6 +750,42 @@ public class PlayerActivity extends Activity {
         updatePlayIcon(true);
         progressHandler.removeCallbacks(castPoll);
         progressHandler.postDelayed(castPoll, 800);
+    }
+
+    // Troca a mídia NA TV sem derrubar a conexão: o DLNA aceita um novo
+    // SetAVTransportURI no mesmo controlUrl (é o que o "Próximo episódio" usa).
+    // No Chromecast, o load() na sessão viva faz o mesmo papel.
+    private void recastCurrent() {
+        if (currentUrl == null) return;
+        if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
+            final String ctrl = activeDlnaCtrl;
+            final String ip = localIp();
+            final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
+            final String tt = getIntent().getStringExtra(EXTRA_TITLE);
+            final String t = tt != null ? tt : "WatchMov";
+            startCasting(CAST_DLNA, ctrl);                 // overlay + pausa o local já
+            if (castStatusTv != null) castStatusTv.setText("Enviando próximo episódio pra TV…");
+            new Thread(() -> {
+                String err = null;
+                try { DlnaCastPlugin.castSync(ctrl, castUrl, t); }
+                catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                final String fe = err;
+                runOnUiThread(() -> {
+                    if (fe == null) {
+                        if (castStatusTv != null) castStatusTv.setText("Reproduzindo na TV (DLNA)");
+                    } else {
+                        android.widget.Toast.makeText(this, "Não consegui enviar o próximo episódio: " + fe, android.widget.Toast.LENGTH_LONG).show();
+                        stopCasting(true);                  // caiu → volta a tocar local
+                    }
+                });
+            }).start();
+        } else if (activeCastMode == CAST_CC) {
+            try {
+                com.google.android.gms.cast.framework.CastSession cs =
+                    com.google.android.gms.cast.framework.CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession();
+                if (cs != null && cs.isConnected()) loadOnCast(cs);
+            } catch (Exception ignored) {}
+        }
     }
 
     // Parou/desconectou: esconde o overlay e volta a tocar local na posição da TV.
