@@ -65,6 +65,51 @@ public class ProxyServer extends NanoHTTPD {
         } catch (Exception e) { return b; }
     }
 
+    private static boolean looksLikePlaylist(byte[] b) {
+        if (b == null || b.length < 7) return false;
+        String head = new String(b, 0, Math.min(b.length, 64), java.nio.charset.StandardCharsets.ISO_8859_1);
+        return head.contains("#EXTM3U");
+    }
+
+    private static String guessContentType(String url, byte[] b) {
+        if (looksLikePlaylist(b)) return "application/vnd.apple.mpegurl";
+        String l = url.toLowerCase();
+        if (l.contains(".mp4") || l.contains(".m4s")) return "video/mp4";
+        if (l.contains(".ts")) return "video/mp2t";
+        return "application/octet-stream";
+    }
+
+    /**
+     * Lê a URL do cache de DOWNLOADS (Media3), se estiver baixada. Upstream nulo =
+     * cache-only: se faltar qualquer pedaço, lança e devolvemos null → o proxy segue
+     * buscando na rede como sempre (nenhuma regressão pra quem não baixou).
+     */
+    @androidx.media3.common.util.UnstableApi
+    private static byte[] readFromCache(String url) {
+        try {
+            androidx.media3.datasource.cache.Cache cache = DownloadUtil.getCacheIfReady();
+            if (cache == null) return null;
+            String key = DownloadUtil.cacheKey(url);
+            if (cache.getCachedSpans(key).isEmpty()) return null;      // nada baixado
+            androidx.media3.datasource.cache.CacheDataSource ds =
+                new androidx.media3.datasource.cache.CacheDataSource(cache, null);
+            androidx.media3.datasource.DataSpec spec = new androidx.media3.datasource.DataSpec.Builder()
+                .setUri(android.net.Uri.parse(url)).setKey(key).build();
+            try {
+                ds.open(spec);
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = ds.read(buf, 0, buf.length)) != androidx.media3.common.C.RESULT_END_OF_INPUT) out.write(buf, 0, n);
+                return out.toByteArray();
+            } finally {
+                try { ds.close(); } catch (Exception ignored) {}
+            }
+        } catch (Throwable t) {
+            return null;   // qualquer falha → caminho normal (rede)
+        }
+    }
+
     // URL local (ExoPlayer no próprio aparelho).
     public static String local(String url, String referer) {
         ensure();
@@ -107,6 +152,21 @@ public class ProxyServer extends NanoHTTPD {
         String u = session.getParms().get("u");
         String r = session.getParms().get("r");
         if (u == null || u.isEmpty()) return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "no url");
+        // BAIXADO? Serve do disco (cache do Media3) em vez de ir no CDN: espelhar um
+        // título já baixado (DLNA/WVC/Chromecast) fica rápido e funciona sem internet.
+        // Cache miss/erro → null → segue pelo caminho normal (rede), sem regressão.
+        byte[] cached = readFromCache(u);
+        if (cached != null) {
+            String ctc = guessContentType(u, cached);
+            if (looksLikePlaylist(cached)) {
+                boolean prefPtC = "pt".equalsIgnoreCase(session.getParms().get("ap"));
+                String bodyC = new String(cached, java.nio.charset.StandardCharsets.UTF_8);
+                return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(bodyC, u, r, prefPtC)));
+            }
+            Response rc = newFixedLengthResponse(Response.Status.OK, ctc, new java.io.ByteArrayInputStream(cached), cached.length);
+            rc.addHeader("Accept-Ranges", "bytes");
+            return cors(rc);
+        }
         try {
             Request.Builder rb = new Request.Builder().url(u).header("User-Agent", UA);
             // Header set do Chrome (alguns anti-bot conferem Accept/sec-fetch/sec-ch-ua).
