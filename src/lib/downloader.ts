@@ -10,6 +10,8 @@ export interface DownloadItem {
   percent: number;   // 0..100, ou -1 se desconhecido
   bytes?: number;
   reason?: string;   // motivo da falha (state === 'failed')
+  title?: string;    // gravado no DownloadRequest.data (reconstrói item sem registro local)
+  uri?: string;      // URI proxied (http://127.0.0.1:8099/s?u=...&r=...)
 }
 
 interface DownloaderPlugin {

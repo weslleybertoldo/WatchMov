@@ -168,7 +168,7 @@ export default function Index() {
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setHistoryOpen(false); }} title="Painel">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setHistoryOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
           </div>
