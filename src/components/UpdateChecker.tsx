@@ -30,6 +30,7 @@ export default function UpdateChecker() {
   const [justChecked, setJustChecked] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [needsPerm, setNeedsPerm] = useState(false);
+  const [forced, setForced] = useState(false); // release marcado [force] → atualização obrigatória
   const mountedRef = useRef(true);
 
   const handleDownload = async () => {
@@ -72,6 +73,7 @@ export default function UpdateChecker() {
           download_url: apkAsset?.browser_download_url || release.html_url,
         });
         setDismissed(false);
+        setForced(/\[force\]/i.test(release.body || "")); // corpo do release contém [force]
       } else {
         setUpdate(null);
         setJustChecked(true);
@@ -90,10 +92,11 @@ export default function UpdateChecker() {
     checkUpdate();
   }, []);
 
-  if (update && !dismissed) {
+  if (update && (!dismissed || forced)) {
     return (
       <>
-        <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-md">
+        {forced && <div className="fixed inset-0 z-40 bg-black/80" />}
+        <div className={`fixed left-4 right-4 z-50 mx-auto max-w-md ${forced ? "top-1/2 -translate-y-1/2" : "bottom-4"}`}>
           <div className="bg-card border border-blue-300 dark:border-blue-700 rounded-xl p-4 shadow-lg">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
@@ -102,9 +105,11 @@ export default function UpdateChecker() {
                   v{CURRENT_VERSION} → v{update.version}
                 </p>
               </div>
-              <button onClick={() => setDismissed(true)} className="p-1 text-muted-foreground hover:text-foreground">
-                <X size={16} />
-              </button>
+              {!forced && (
+                <button onClick={() => setDismissed(true)} className="p-1 text-muted-foreground hover:text-foreground">
+                  <X size={16} />
+                </button>
+              )}
             </div>
             {progress !== null ? (
               <div className="mt-3">
