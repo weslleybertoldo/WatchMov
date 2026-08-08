@@ -537,15 +537,50 @@ public class PlayerActivity extends Activity {
         return "";
     }
 
-    // Espelhar na TV: pergunta o método (Chromecast, DLNA ou espelhamento) e delega.
+    // Espelhar na TV: Chromecast, DLNA, espelhamento + players externos instalados
+    // (Web Video Cast/VLC/MX) que recebem a URL atual (com Referer) e castam melhor.
     private void castToTv() {
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        labels.add("Chromecast (Google Cast)");
+        labels.add("Enviar para a TV (DLNA)");
+        labels.add("Espelhar tela (qualquer formato)");
+        final java.util.List<String> extPkgs = new java.util.ArrayList<>();
+        android.content.pm.PackageManager pm = getPackageManager();
+        for (String[] a : ExternalCastPlugin.APPS) {
+            try { pm.getPackageInfo(a[1], 0); labels.add(a[2]); extPkgs.add(a[1]); } catch (Exception ignored) {}
+        }
         new AlertDialog.Builder(this)
             .setTitle("Espelhar na TV")
-            .setItems(new String[]{ "Chromecast (Google Cast)", "Enviar para a TV (DLNA)", "Espelhar tela (qualquer formato)" }, (d, i) -> {
+            .setItems(labels.toArray(new String[0]), (d, i) -> {
                 if (i == 0) castViaChromecast();
                 else if (i == 1) castViaDlna();
-                else openScreenMirror();
+                else if (i == 2) openScreenMirror();
+                else openInExternal(extPkgs.get(i - 3));
             }).show();
+    }
+
+    // Handoff: manda a URL atual (+Referer/headers) pro player externo (WVC/VLC/MX).
+    private void openInExternal(String pkg) {
+        try {
+            if (currentUrl == null) { android.widget.Toast.makeText(this, "Sem link", android.widget.Toast.LENGTH_SHORT).show(); return; }
+            String mime = getIntent().getStringExtra(EXTRA_MIME);
+            if (mime == null || mime.isEmpty()) mime = (currentUrl.contains(".m3u8") || currentUrl.contains("/m3/") || currentUrl.contains("master")) ? "application/x-mpegURL" : "video/*";
+            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            intent.setPackage(pkg);
+            intent.setDataAndType(android.net.Uri.parse(currentUrl), mime);
+            intent.putExtra("title", getIntent().getStringExtra(EXTRA_TITLE));
+            intent.putExtra("secure_uri", true);
+            android.os.Bundle h = new android.os.Bundle();
+            if (mReferer != null && !mReferer.isEmpty()) h.putString("Referer", mReferer);
+            h.putString("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+            intent.putExtra("headers", h);
+            intent.putExtra("com.android.browser.headers", h);
+            intent.putExtra("android.media.intent.extra.HTTP_HEADERS", h);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception e) {
+            android.widget.Toast.makeText(this, "Não consegui abrir: " + e.getMessage(), android.widget.Toast.LENGTH_LONG).show();
+        }
     }
 
     // Espelhamento de tela do sistema (Miracast/Smart View): quem DECODIFICA é o
