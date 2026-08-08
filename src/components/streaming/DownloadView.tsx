@@ -1,114 +1,170 @@
 import { useState } from 'react';
-import { MediaSummary } from '@/lib/tmdb';
-import MediaCard from './MediaCard';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Pencil, Check, X, Trash2 } from 'lucide-react';
+import { ArrowLeft, Pencil, Check, Trash2, Play } from 'lucide-react';
+import {
+  useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
+  movieKey, type DownloadMeta,
+} from '@/lib/downloads';
+import type { DownloadItem } from '@/lib/downloader';
 
-export interface DownloadedEp { season: number; ep: number }
-
-interface DownloadViewProps {
-  movies: MediaSummary[];
-  series: MediaSummary[];
-  animes: MediaSummary[];
-  onOpen: (media: MediaSummary) => void;              // filme → abre detalhe
-  onRemove: (media: MediaSummary) => void;            // lápis → exclui todos os downloads do título
-  episodesOf: (tmdbId: number) => DownloadedEp[];      // eps baixados de uma série
-  onRemoveEpisodes: (tmdbId: number, eps: DownloadedEp[]) => void;
-  onBack: () => void;
+interface TitleGroup {
+  tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
+  keys: string[];
+  episodes: { season: number; ep: number; key: string }[];
 }
 
-function Section({ title, items, editing, onOpen, onRemove }: {
-  title: string; items: MediaSummary[]; editing: boolean;
-  onOpen: (m: MediaSummary) => void; onRemove: (m: MediaSummary) => void;
-}) {
-  if (items.length === 0) return null;
+function group(meta: Record<string, DownloadMeta>): TitleGroup[] {
+  const map = new Map<number, TitleGroup>();
+  for (const [key, m] of Object.entries(meta)) {
+    let g = map.get(m.tmdbId);
+    if (!g) { g = { tmdbId: m.tmdbId, type: m.type, title: m.title, posterUrl: m.posterUrl, keys: [], episodes: [] }; map.set(m.tmdbId, g); }
+    g.keys.push(key);
+    if (m.type === 'tv' && m.season != null && m.ep != null) g.episodes.push({ season: m.season, ep: m.ep, key });
+  }
+  map.forEach(g => g.episodes.sort((a, b) => a.season - b.season || a.ep - b.ep));
+  return [...map.values()].sort((a, b) => a.title.localeCompare(b.title));
+}
+
+// Barra de progresso / estado sobre a arte.
+function Progress({ item }: { item?: DownloadItem }) {
+  if (!item || item.state === 'completed' || item.state === 'removed') return null;
+  if (item.state === 'failed') {
+    return <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1 py-0.5 text-[9px] text-destructive truncate">Falhou: {item.reason || 'erro'}</div>;
+  }
+  const p = item.percent >= 0 ? item.percent : null;
   return (
-    <div className="space-y-2">
-      <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-        {items.map(m => (
-          <div key={`${m.type}-${m.tmdbId}`} className="relative">
-            <MediaCard media={m} onClick={() => (editing ? onRemove(m) : onOpen(m))} />
-            {editing && (
-              <button
-                onClick={() => onRemove(m)}
-                className="absolute -top-1 -right-1 z-10 h-6 w-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow"
-                title="Excluir todos os downloads"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        ))}
+    <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1.5 py-1">
+      <div className="h-1 rounded bg-white/20 overflow-hidden">
+        <div className="h-full bg-primary transition-all" style={{ width: `${p ?? 6}%` }} />
       </div>
+      <p className="text-[9px] text-white/80 mt-0.5">{item.state === 'downloading' ? (p != null ? `${p}%` : 'baixando…') : item.state === 'queued' ? 'na fila…' : item.state}</p>
     </div>
   );
 }
 
-// Sub-tela: eps baixados de uma série, com seleção pra excluir individualmente.
-function SeriesDownloads({ media, episodes, onRemoveEpisodes, onBack }: {
-  media: MediaSummary; episodes: DownloadedEp[];
-  onRemoveEpisodes: (tmdbId: number, eps: DownloadedEp[]) => void; onBack: () => void;
+function Poster({ meta, item, onClick, editing, badge }: {
+  meta: { title: string; posterUrl?: string }; item?: DownloadItem;
+  onClick: () => void; editing: boolean; badge?: string;
 }) {
-  const [sel, setSel] = useState<Set<string>>(new Set());
-  const key = (e: DownloadedEp) => `${e.season}:${e.ep}`;
-  const toggle = (e: DownloadedEp) => setSel(prev => {
-    const next = new Set(prev);
-    if (next.has(key(e))) next.delete(key(e)); else next.add(key(e));
-    return next;
-  });
-  const removeSelected = () => {
-    const eps = episodes.filter(e => sel.has(key(e)));
-    if (eps.length) onRemoveEpisodes(media.tmdbId, eps);
-    setSel(new Set());
-  };
+  return (
+    <button onClick={onClick} className="relative block text-left">
+      <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-secondary">
+        {meta.posterUrl
+          ? <img src={meta.posterUrl} alt={meta.title} className="w-full h-full object-cover" />
+          : <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs p-2 text-center">{meta.title}</div>}
+        {!editing && item?.state === 'completed' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 active:opacity-100">
+            <Play className="w-8 h-8 text-white fill-current" />
+          </div>
+        )}
+        {editing && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <span className="w-8 h-8 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"><Trash2 className="w-4 h-4" /></span>
+          </div>
+        )}
+        {badge && <span className="absolute top-1 right-1 text-[9px] bg-black/70 text-white rounded px-1">{badge}</span>}
+        <Progress item={item} />
+      </div>
+      <p className="text-xs mt-1 line-clamp-1">{meta.title}</p>
+    </button>
+  );
+}
 
+// Sub-tela: episódios baixados de uma série. Clicar reproduz; lápis → selecionar/excluir.
+function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string, DownloadItem>; onBack: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const toggle = (k: string) => setSel(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const removeSel = () => { sel.forEach(k => removeDownload(k)); setSel(new Set()); setEditing(false); };
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
-        <h1 className="text-xl font-bold truncate">{media.title}</h1>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
+          <h1 className="text-lg font-bold truncate">{g.title}</h1>
+        </div>
+        <Button variant={editing ? 'default' : 'outline'} size="icon" className="h-8 w-8" onClick={() => { setEditing(e => !e); setSel(new Set()); }}>
+          {editing ? <Check className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+        </Button>
       </div>
-      <p className="text-sm text-muted-foreground">Episódios baixados — selecione pra excluir.</p>
       <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-        {episodes.map(e => {
-          const picked = sel.has(key(e));
+        {g.episodes.map(e => {
+          const item = items.get(e.key);
+          const picked = sel.has(e.key);
+          const done = item?.state === 'completed';
           return (
-            <button key={key(e)} onClick={() => toggle(e)}
-              className={`relative aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition ${picked ? 'border-destructive bg-destructive/15 text-destructive' : 'border-green-400/40 bg-green-400/5 text-foreground'}`}>
+            <button key={e.key}
+              onClick={() => editing ? toggle(e.key) : (done ? playDownloaded(e.key) : undefined)}
+              className={`relative aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition
+                ${picked ? 'border-destructive bg-destructive/15 text-destructive'
+                  : done ? 'border-green-400/40 bg-green-400/5 text-foreground'
+                  : 'border-border bg-secondary/40 text-muted-foreground'}`}>
               <span className="text-[10px] text-muted-foreground">T{e.season}</span>
               <span className="text-sm">{e.ep}</span>
-              {picked && (
-                <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm bg-destructive flex items-center justify-center">
-                  <Check className="w-3 h-3 text-destructive-foreground" />
-                </span>
+              {!editing && item && item.state !== 'completed' && (
+                <span className="text-[9px] text-primary">{item.state === 'downloading' ? (item.percent >= 0 ? `${item.percent}%` : '…') : item.state === 'failed' ? 'falhou' : '…'}</span>
+              )}
+              {editing && picked && (
+                <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm bg-destructive flex items-center justify-center"><Check className="w-3 h-3 text-destructive-foreground" /></span>
               )}
             </button>
           );
         })}
       </div>
-      <Button variant="destructive" className="w-full gap-2" onClick={removeSelected} disabled={sel.size === 0}>
-        <Trash2 className="w-4 h-4" /> Excluir{sel.size > 0 ? ` (${sel.size})` : ''}
-      </Button>
+      {editing && (
+        <Button variant="destructive" className="w-full gap-2" onClick={removeSel} disabled={sel.size === 0}>
+          <Trash2 className="w-4 h-4" /> Excluir{sel.size > 0 ? ` (${sel.size})` : ''}
+        </Button>
+      )}
     </div>
   );
 }
 
-// Mesma separação da Minha Lista (Filmes/Séries/Animes). Lápis exclui todos os
-// downloads do título; clicar numa série abre os eps baixados pra excluir individual.
-export default function DownloadView({ movies, series, animes, onOpen, onRemove, episodesOf, onRemoveEpisodes, onBack }: DownloadViewProps) {
-  const [editing, setEditing] = useState(false);
-  const [openSeries, setOpenSeries] = useState<MediaSummary | null>(null);
-  const empty = movies.length === 0 && series.length === 0 && animes.length === 0;
+function Section({ title, groups, items, editing, onOpen, onDelete }: {
+  title: string; groups: TitleGroup[]; items: Map<string, DownloadItem>; editing: boolean;
+  onOpen: (g: TitleGroup) => void; onDelete: (g: TitleGroup) => void;
+}) {
+  if (groups.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+        {groups.map(g => {
+          const item = g.type === 'movie' ? items.get(movieKey(g.tmdbId)) : undefined;
+          const dlCount = g.episodes.filter(e => items.get(e.key)?.state === 'downloading' || items.get(e.key)?.state === 'queued').length;
+          const badge = g.type === 'tv' ? `${g.episodes.length} ep${dlCount ? ` · ${dlCount}↓` : ''}` : undefined;
+          return (
+            <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge}
+              onClick={() => editing ? onDelete(g) : onOpen(g)} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-  if (openSeries) {
-    const eps = episodesOf(openSeries.tmdbId);
-    if (eps.length === 0) { setOpenSeries(null); return null; }
-    return <SeriesDownloads media={openSeries} episodes={eps} onRemoveEpisodes={onRemoveEpisodes} onBack={() => setOpenSeries(null)} />;
+export default function DownloadView({ onBack }: { onBack: () => void }) {
+  const { meta, items } = useDownloadList();
+  const [editing, setEditing] = useState(false);
+  const [openSeries, setOpenSeries] = useState<number | null>(null);
+
+  const groups = group(meta);
+  const movies = groups.filter(g => g.type === 'movie');
+  const series = groups.filter(g => g.type === 'tv');
+  const empty = groups.length === 0;
+
+  if (openSeries != null) {
+    const g = series.find(s => s.tmdbId === openSeries);
+    if (!g) { setOpenSeries(null); return null; }
+    return <SeriesEpisodes g={g} items={items} onBack={() => setOpenSeries(null)} />;
   }
 
-  // Série/anime abre a sub-tela de eps; filme abre o detalhe.
-  const openItem = (m: MediaSummary) => (m.type === 'tv' ? setOpenSeries(m) : onOpen(m));
+  const openItem = (g: TitleGroup) => {
+    if (g.type === 'tv') { setOpenSeries(g.tmdbId); return; }
+    const item = items.get(movieKey(g.tmdbId));
+    if (item?.state === 'completed') playDownloaded(movieKey(g.tmdbId));
+  };
+  const deleteItem = (g: TitleGroup) => clearDownloadsFor(g.tmdbId, g.type === 'movie');
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -131,9 +187,8 @@ export default function DownloadView({ movies, series, animes, onOpen, onRemove,
         </p>
       ) : (
         <>
-          <Section title="Filmes" items={movies} editing={editing} onOpen={openItem} onRemove={onRemove} />
-          <Section title="Séries" items={series} editing={editing} onOpen={openItem} onRemove={onRemove} />
-          <Section title="Animes" items={animes} editing={editing} onOpen={openItem} onRemove={onRemove} />
+          <Section title="Filmes" groups={movies} items={items} editing={editing} onOpen={openItem} onDelete={deleteItem} />
+          <Section title="Séries" groups={series} items={items} editing={editing} onOpen={openItem} onDelete={deleteItem} />
         </>
       )}
     </div>

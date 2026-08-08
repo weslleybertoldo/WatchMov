@@ -180,7 +180,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     if (movieDownloaded) { setDownloaded([movieKey(media.tmdbId)], false); return; }
     const s = streamFor(undefined, undefined);
     if (!s) { toast.error('Abra o filme uma vez pra baixar', { description: 'O download usa o link que o player captura ao reproduzir.' }); return; }
-    enqueueDownload(movieKey(media.tmdbId), { ...s, title: media.title });
+    enqueueDownload(movieKey(media.tmdbId), { ...s, title: media.title, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl });
     toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });
   };
   const startSelecting = () => { setSelEps(new Set()); setSelecting(true); };
@@ -196,7 +196,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
     let ok = 0, miss = 0;
     [...selEps].forEach(ep => {
       const s = streamFor(selSeason, ep);
-      if (s) { enqueueDownload(epKey(media.tmdbId, selSeason, ep), { ...s, title: `${media.title} T${selSeason}E${ep}` }); ok++; }
+      if (s) { enqueueDownload(epKey(media.tmdbId, selSeason, ep), { ...s, title: `${media.title} T${selSeason}E${ep}`, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl, season: selSeason, ep }); ok++; }
       else miss++;
     });
     cancelSelecting();
@@ -376,6 +376,7 @@ export default function MediaDetail({ media, store, onBack }: MediaDetailProps) 
           season={player.season}
           episode={player.episode}
           title={isSeries && player.season ? `${media.title} — T${player.season} E${player.episode}` : (details?.title || media.title)}
+          posterUrl={media.posterUrl}
           resumeAt={resumeMins > 0 ? resumeMins * 60 : undefined}
           directUrl={player.directUrl}
           torrent={player.torrent}

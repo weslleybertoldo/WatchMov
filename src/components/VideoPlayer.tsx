@@ -38,6 +38,7 @@ interface VideoPlayerProps {
   season?: number;
   episode?: number;
   title?: string;
+  posterUrl?: string;
   resumeAt?: number;          // segundos (só VidAPI usa)
   directUrl?: string;         // stream HTTP direto (Stremio) — toca em <video>, ignora provedores
   torrent?: { magnet: string; fileIdx?: number };  // WebTorrent (Stremio sem debrid)
@@ -49,7 +50,7 @@ interface VideoPlayerProps {
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onNext } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onNext } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -236,7 +237,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (dlItem && dlItem.state !== 'removed') { removeDownload(dlKey); toast.info('Download removido'); return; }
     addStreams([r], tmdbId, type, season, episode);
     setChosen(r.url, tmdbId, type, season, episode);
-    enqueueDownload(dlKey, { url: r.url, referer: r.referer, mime: r.mime, title });
+    enqueueDownload(dlKey, {
+      url: r.url, referer: r.referer, mime: r.mime, title,
+      tmdbId: tmdbId!, type, posterUrl, season, ep: episode,
+    });
     toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });
   };
 
@@ -604,7 +608,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           <Sparkles className="w-5 h-5 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground">{capturedList.length === 1 ? 'Vídeo pronto no seu player' : `${capturedList.length} vídeos detectados`}</p>
-            <p className="text-xs text-muted-foreground">Controles, buffer e (em breve) espelhar/baixar.</p>
+            <p className="text-xs text-muted-foreground">Controles, buffer, espelhar e baixar offline.</p>
           </div>
           <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setPreferIframe(true)}>Servidor</Button>
           <Button size="sm" className="shrink-0" onClick={() => capturedList.length === 1 ? chooseStream(capturedList[0]) : setPickerOpen(true)}>
