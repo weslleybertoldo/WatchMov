@@ -420,9 +420,17 @@ public class PlayerActivity extends Activity {
 
         // Veio do "Próximo episódio" com a TV conectada: reenvia a NOVA mídia pro mesmo
         // dispositivo (sem desconectar) e segue espelhando.
-        if (castFollowNext && activeCastMode != CAST_NONE) {
+        if (castFollowNext) {
             castFollowNext = false;
-            recastCurrent();
+            if (activeCastMode != CAST_NONE) {
+                recastCurrent();
+            } else {
+                // Diagnóstico: veio do "Próximo" mas o estado do cast se perdeu no
+                // caminho (é o que faz o usuário ter de reconectar) → registra pra ler.
+                NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_SEM_SESSAO",
+                    "[recast] castFollowNext=true mas activeCastMode=NONE (estado do cast perdido ao trocar de episódio)",
+                    getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
+            }
         }
         // Retoma o espelhamento se voltamos pro MESMO título e há cast ativo (o vídeo
         // segue na TV): reabre o overlay/controles sem re-castar (pausa o local de novo).
@@ -766,16 +774,26 @@ public class PlayerActivity extends Activity {
             startCasting(CAST_DLNA, ctrl);                 // overlay + pausa o local já
             if (castStatusTv != null) castStatusTv.setText("Enviando próximo episódio pra TV…");
             new Thread(() -> {
+                // A TV costuma recusar logo após o Stop do episódio anterior
+                // ("Transition not available"): espera e TENTA DE NOVO. NÃO derruba a
+                // conexão em falha — o usuário não deve precisar reconectar.
                 String err = null;
-                try { DlnaCastPlugin.castSync(ctrl, castUrl, t); }
-                catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                for (int i = 0; i < 3; i++) {
+                    try { Thread.sleep(i == 0 ? 900 : 2000); } catch (InterruptedException ignored) {}
+                    try { DlnaCastPlugin.castSync(ctrl, castUrl, t); err = null; break; }
+                    catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                }
                 final String fe = err;
                 runOnUiThread(() -> {
                     if (fe == null) {
                         if (castStatusTv != null) castStatusTv.setText("Reproduzindo na TV (DLNA)");
                     } else {
-                        android.widget.Toast.makeText(this, "Não consegui enviar o próximo episódio: " + fe, android.widget.Toast.LENGTH_LONG).show();
-                        stopCasting(true);                  // caiu → volta a tocar local
+                        // Mantém o espelhamento ativo (a TV segue pareada) e registra o
+                        // motivo real pra diagnóstico — o usuário pode tocar de novo.
+                        if (castStatusTv != null) castStatusTv.setText("A TV recusou o próximo episódio — toque em Próximo de novo");
+                        android.widget.Toast.makeText(this, "TV recusou o episódio: " + fe, android.widget.Toast.LENGTH_LONG).show();
+                        NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_DLNA_FALHOU",
+                            "[recast] " + fe, getIntent().getStringExtra(EXTRA_MIME), mReferer, tt);
                     }
                 });
             }).start();
