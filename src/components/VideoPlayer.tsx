@@ -1,11 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import Hls from 'hls.js';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
+import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
+import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
+import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
+import { resolveEmbed } from '@/lib/resolver';
+import { supabase } from '@/lib/supabase';
+
+// Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
+// no reprodutor se já tiver link capturado.
+let pendingNextInPlayer = false;
+
+// Resolvedor on-device DESATIVADO: no emulador provou-se que o WebView oculto
+// navega a cadeia de iframes mas o player (JW) não inicia o vídeo com eventos
+// sintéticos (user-activation). Fica o fluxo iframe+sniffer comprovado. Reativar
+// só quando resolver server-side (proxy residencial) ou trusted-gesture on-device.
+const RESOLVER_ONDEVICE_ENABLED = false;
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
@@ -27,13 +43,13 @@ interface VideoPlayerProps {
   torrent?: { magnet: string; fileIdx?: number };  // WebTorrent (Stremio sem debrid)
   onProgress?: (seconds: number) => void;
   onCompleted?: () => void;
-  episodeWatched?: boolean;        // série: episódio atual marcado como assistido
-  onToggleWatched?: () => void;    // alterna a marcação do episódio atual
+  watched?: boolean;               // assistido (episódio atual ou filme)
+  onSetWatched?: (v: boolean) => void;  // define a marcação de assistido (true/false)
   onNext?: () => void;             // série: avança pro próximo episódio
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted, episodeWatched, onToggleWatched, onNext } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onNext } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -41,6 +57,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Captura passiva (estilo Web Video Cast): o iframe do servidor toca normal e o
+  // nativo observa o tráfego, ACUMULANDO todos os vídeos detectados (o usuário
+  // escolhe qual — resolve anúncio/servidor interno). O escolhido toca no ExoPlayer
+  // nativo e fica no cache (reabre direto + retoma de onde parou).
+  const [capturedList, setCapturedList] = useState<SniffResult[]>([]);   // vídeos detectados
+  const [pickerOpen, setPickerOpen] = useState(false);                   // lista pra escolher
+  const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
+  const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
+  const [resolving, setResolving] = useState(false);                     // resolvendo on-device
+  const playedRef = useRef(false);   // evita reabrir o ExoPlayer em loop
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
   const [subsOpen, setSubsOpen] = useState(false);
@@ -115,22 +143,231 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const saved = localStorage.getItem(srcKey);
       if (saved && available.some(p => p.id === saved)) return saved;
     } catch { /* ignore */ }
-    return available[0]?.id ?? 'betterflix';
+    return available[0]?.id ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
 
   const directMode = !!directUrl || !!torrent;
-  let src: string | null;
-  if (torrent) {
-    src = tor.url ?? null;
-  } else if (directUrl) {
-    src = directUrl;
-  } else {
-    src = provider ? provider.build(target) : null;
-    if (src && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
-      src += `&resumeAt=${Math.floor(resumeAt)}`;
-    }
+
+  // URL do embed do servidor (iframe, como hoje).
+  let embedUrl: string | null = provider ? provider.build(target) : null;
+  if (embedUrl && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
+    embedUrl += `&resumeAt=${Math.floor(resumeAt)}`;
   }
+
+  // <video> HTML5 = só Stremio/torrent (directMode). O stream capturado nos
+  // servidores toca no ExoPlayer nativo (headers Referer + buffer).
+  const nativeOwn = isNative() && !!ownStream && !preferIframe && !directMode;
+  const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : null;
+  const src: string | null = nativeOwn ? (ownStream?.url ?? null) : directMode ? videoSrc : embedUrl;
+
+  // Ao abrir: carrega a lista salva; se há um último link escolhido, reabre nele
+  // (ExoPlayer). O sniffer fica SEMPRE ativo no modo servidor, acumulando links
+  // novos na lista salva (mesmo no meio do filme) — nunca perde os já achados.
+  // (A) Auto-abrir do cache — SÓ ao abrir o TÍTULO (não depende de embedUrl, pra
+  // trocar de provedor no servidor NÃO reabrir o reprodutor sozinho).
+  useEffect(() => {
+    if (!open) return;
+    setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
+    playedRef.current = false;
+    if (directMode || !isNative()) return;
+    const entry = getEntry(tmdbId, type, season, episode);
+    // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
+    if (entry?.lastMode === 'native' && entry.chosenUrl) {
+      const ck = streamKey(entry.chosenUrl);
+      setOwnStream((entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl });
+    } else if (pendingNextInPlayer && entry?.streams?.length) {
+      setOwnStream(entry.streams[0]);   // veio do "Próximo" e o ep já tem link → reprodutor
+    }
+    pendingNextInPlayer = false;
+  }, [open, directMode, tmdbId, type, season, episode]);
+
+  // (B) Lista salva + captura passiva — roda também ao trocar de provedor (embedUrl),
+  // acumulando links sem mexer no que já está tocando/escolhido.
+  useEffect(() => {
+    if (!open || directMode || !embedUrl || !isNative()) { setCapturedList([]); return; }
+    setCapturedList(getEntry(tmdbId, type, season, episode)?.streams ?? []);
+    let alive = true;
+    let stop = () => {};
+    watchStream(r => {
+      if (!alive) return;
+      // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar.
+      setCapturedList(prev => {
+        const key = streamKey(r.url);
+        const idx = prev.findIndex(x => streamKey(x.url) === key);
+        if (idx < 0) return [...prev, r];
+        const copy = [...prev];
+        copy[idx] = { url: r.url, mime: r.mime || copy[idx].mime, referer: r.referer || copy[idx].referer };
+        return copy;
+      });
+      addStreams([r], tmdbId, type, season, episode);
+    }).then(fn => { if (alive) stop = fn; else fn(); });
+    return () => { alive = false; stop(); };
+  }, [open, embedUrl, directMode, tmdbId, type, season, episode]);
+
+  // (B2) RESOLVEDOR ON-DEVICE (estilo Smart Play): ao abrir (nativo, sem escolha
+  // prévia em cache), resolve os provedores num WebView OCULTO — embedplayapi 1º
+  // (o que funciona) e, se falhar, os demais em paralelo. O 1º que resolver toca
+  // no player nativo; os outros viram "Servidor 2/3…". Nenhum resolveu → iframe.
+  useEffect(() => {
+    if (!RESOLVER_ONDEVICE_ENABLED) return;
+    if (!open || directMode || !isNative()) return;
+    const entry = getEntry(tmdbId, type, season, episode);
+    if (entry?.chosenUrl || entry?.lastMode === 'server') return; // respeita cache/escolha do usuário
+    let alive = true;
+    let played = false;
+    setResolving(true);
+    const push = (r: { url: string; referer?: string; mime?: string }) => {
+      if (!alive) return;
+      const s: SniffResult = { url: r.url, referer: r.referer, mime: r.mime };
+      setCapturedList(prev => prev.some(x => streamKey(x.url) === streamKey(r.url)) ? prev : [...prev, s]);
+      addStreams([s], tmdbId, type, season, episode);
+      if (!played) { played = true; setResolving(false); setChosen(r.url, tmdbId, type, season, episode); setOwnStream(s); }
+    };
+    (async () => {
+      const provs = available;                       // embedplayapi já é o 1º
+      const [first, ...rest] = provs;
+      const firstUrl = first?.build(target);
+      const r0 = firstUrl ? await resolveEmbed(firstUrl, 14000) : null;
+      if (!alive) return;
+      if (r0?.url) push(r0);
+      const restJobs = rest.map(async (q) => {
+        const u = q.build(target); if (!u) return;
+        const rr = await resolveEmbed(u, 14000);
+        if (alive && rr?.url) push(rr);
+      });
+      if (r0?.url) { Promise.all(restJobs); }         // já tocando → demais em background
+      else { await Promise.all(restJobs); }           // 1º falhou → corre os demais
+      if (alive && !played) { setResolving(false); setPreferIframe(true); } // nenhum → iframe
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, directMode, tmdbId, imdbId, type, season, episode]);
+
+  // Escolhe um link → vira o "último aberto" (reabre nele) e toca no ExoPlayer.
+  const chooseStream = (r: SniffResult) => {
+    setPickerOpen(false); setPreferIframe(false);
+    playedRef.current = false;
+    addStreams([r], tmdbId, type, season, episode);
+    setChosen(r.url, tmdbId, type, season, episode);
+    setOwnStream(r);
+  };
+
+  // Assistir pelo servidor (iframe): grava que a última vez foi no servidor
+  // (ao reabrir o título abre o servidor, não o reprodutor).
+  const goServer = () => {
+    setPickerOpen(false);
+    setOwnStream(null);
+    setPreferIframe(true);
+    playedRef.current = false;
+    setServerMode(tmdbId, type, season, episode);
+  };
+
+  // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
+  useEffect(() => {
+    if (!nativeOwn || !ownStream || playedRef.current) return;
+    playedRef.current = true;
+    const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
+    playNative({
+      url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
+      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
+      qualities: capturedList.map(s => s.quality ?? ''), hasNext: !!onNext,
+      key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
+    }).then(res => {
+      if (!res) return;
+      // Estado final de "assistido" vem no resultado (o evento ao vivo se perde com o
+      // WebView em background) → fonte da verdade ao fechar; garante mark E unmark.
+      if (typeof res.watched === 'boolean') onSetWatched?.(res.watched);
+      if (res.positionMs > 0) {
+        setStreamPosition(res.positionMs, tmdbId, type, season, episode);
+        onProgress?.(Math.floor(res.positionMs / 1000));
+      }
+      if (res.recapture) { setCapturedList([]); goServer(); return; }  // link expirou (403/410) → recaptura fresco
+      if (res.server) { goServer(); return; }                 // botão Servidor → modo servidor
+      if (res.next) { pendingNextInPlayer = true; onNext?.(); return; }  // Próximo ep
+      if (res.url) setChosen(res.url, tmdbId, type, season, episode);    // guarda o link atual
+      onClose();   // Voltar → fecha direto (volta pro detalhe), sem placeholder
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOwn, ownStream]);
+
+  const continueNative = () => { playedRef.current = false; setOwnStream(s => (s ? { ...s } : s)); };
+
+  // Salva a posição que o ExoPlayer reporta a cada ~5s (retomar de onde parou).
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerProgress?.(({ positionMs, durationMs }) => {
+      if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode, durationMs);
+    })?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, directMode, tmdbId, type, season, episode]);
+
+  // "Assistido" reportado pelo player nativo (botão ou faltando 1 min pro fim).
+  useEffect(() => {
+    if (!open || !isNative() || !onSetWatched) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerWatched?.(({ watched: w }) => onSetWatched(w))?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, tmdbId, type, season, episode, onSetWatched]);
+
+  // Aprende a resolução real do link (do ExoPlayer) e rotula na lista.
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerQuality?.(({ url, quality }) => {
+      if (!quality) return;
+      setCapturedList(prev => prev.map(s => streamKey(s.url) === streamKey(url) ? { ...s, quality } : s));
+      addStreams([{ url, quality }], tmdbId, type, season, episode);
+    })?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, directMode, tmdbId, type, season, episode]);
+
+  // Registra no banco (aba "Bugs") todo erro de reprodução do player nativo, com o
+  // motivo REAL (código/causa/HTTP) — pra entender por que os links não tocam.
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    let handle: { remove: () => void } | null = null;
+    onPlayerError?.((e) => {
+      // Tira da lista SÓ o que é morte permanente: expirado (403/410), muro
+      // WebView-only (451) ou manifesto malformado (code 3002). 500/timeout/rede
+      // são temporários → mantém (o auto-avanço só pula na hora).
+      const permanent = e.httpCode === 403 || e.httpCode === 410 || e.httpCode === 451 || e.code === 3002;
+      if (e.url && permanent) {
+        removeStream(e.url, tmdbId, type, season, episode);
+        setCapturedList(prev => prev.filter(s => streamKey(s.url) !== streamKey(e.url!)));
+      }
+      supabase.from('wm_playback_errors').insert({
+        title: e.title ?? title ?? null,
+        provider: providerId ?? null,
+        url: e.url ?? null,
+        referer: e.referer ?? null,
+        mime: e.mime ?? null,
+        error_code: typeof e.code === 'number' ? e.code : null,
+        error_name: e.name ?? null,
+        error_cause: e.cause ?? null,
+        app_version: __APP_VERSION__,
+        platform: 'android',
+      }).then(({ error }) => { if (error) console.warn('[bugs] log falhou', error.message); });
+    })?.then(h => { handle = h; });
+    return () => { handle?.remove(); };
+  }, [open, directMode, providerId, title]);
+
+  // <video> (Stremio/torrent): anexa a fonte (hls.js pra .m3u8; src direto pro resto).
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!open || !directMode || !videoSrc || !v) return;
+    const isHls = /\.m3u8(\?|$)/i.test(videoSrc);
+    let hls: Hls | null = null;
+    if (isHls && !v.canPlayType('application/vnd.apple.mpegurl') && Hls.isSupported()) {
+      hls = new Hls({ enableWorker: true });
+      hls.loadSource(videoSrc);
+      hls.attachMedia(v);
+    } else {
+      v.src = videoSrc;
+    }
+    return () => { if (hls) hls.destroy(); };
+  }, [open, directMode, videoSrc]);
 
   useEffect(() => {
     if (!open) return;
@@ -162,11 +399,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   const tryCast = async () => {
     if (Capacitor.isNativePlatform()) {
+      // Servidor = iframe cross-origin: não dá pra "cast" o vídeo (DLNA/Chromecast).
+      // O caminho é ESPELHAR A TELA — a TV mostra a WebView tocando (a ideia original).
       try {
         await ScreenCast.openCast();
-        toast.info('Selecione sua TV', { description: 'Escolha a TV na lista de transmissão do Android.' });
-        return;
-      } catch { setCastOpen(true); return; }
+        toast.info('Espelhar tela', { description: 'Ative Espelhamento/Smart View e escolha sua TV — o vídeo do servidor aparece nela. Se a TV não listar, use o atalho "Transmitir/Smart View" nas configurações rápidas.' });
+      } catch {
+        toast.error('Abra pelas configurações rápidas', { description: 'Puxe a barra de cima e toque em Espelhar tela / Smart View / Transmitir, e escolha a TV.' });
+      }
+      return;
     }
     const w = window as unknown as { PresentationRequest?: new (urls: string[]) => { start: () => Promise<unknown> } };
     if (typeof w.PresentationRequest === 'function') {
@@ -216,6 +457,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         : 'relative z-20 shrink-0 flex items-center justify-between px-3 py-2 bg-black/95'}>
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
+          {/* Botão SEMPRE visível: lista de links capturados (escolher / servidor). */}
+          {!directMode && (
+            <Button variant="ghost" size="icon" className="relative h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
+              title="Links do vídeo" onClick={() => setPickerOpen(true)}>
+              <ListVideo className="w-5 h-5" />
+              {capturedList.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">{capturedList.length}</span>
+              )}
+            </Button>
+          )}
           <div className="relative" hidden={directMode}>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Trocar fonte" onClick={() => setSourceOpen(o => !o)}>
               <Layers className="w-5 h-5" />
@@ -253,9 +504,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               )}
             </div>
           )}
-          {onToggleWatched && (
-            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${episodeWatched ? 'text-primary' : 'text-white/80'}`} title={episodeWatched ? 'Assistido (toque pra desmarcar)' : 'Marcar como assistido'} onClick={onToggleWatched}>
-              {episodeWatched ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+          {onSetWatched && (
+            <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${watched ? 'text-primary' : 'text-white/80'}`} title={watched ? 'Assistido (toque pra desmarcar)' : 'Marcar como assistido'} onClick={() => onSetWatched(!watched)}>
+              {watched ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
             </Button>
           )}
           {onNext && (
@@ -297,18 +548,35 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-amber-400">Formato não suportado no navegador: {tor.name}</p>
             <p className="text-white/50 text-xs">O navegador só decodifica MP4 (H.264) e WebM. Este arquivo (provável .mkv/.avi) não toca aqui — escolha uma opção MP4 ou abra no Stremio.</p>
           </div>
+        ) : nativeOwn ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
+            <Sparkles className="w-8 h-8 text-primary" />
+            <p className="text-white">Tocando no seu player</p>
+            <p className="text-white/50 text-xs">Fechou o player? Use os botões abaixo.</p>
+            <div className="flex flex-wrap gap-2 justify-center">
+              <Button size="sm" onClick={continueNative}>Continuar</Button>
+              <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>Trocar link</Button>
+              <Button size="sm" variant="ghost" className="text-white/70" onClick={goServer}>Servidor</Button>
+            </div>
+          </div>
+        ) : (isNative() && !directMode && !preferIframe && resolving) ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
+            <Loader2 className="w-7 h-7 animate-spin text-primary" />
+            <p className="text-white">Buscando servidores…</p>
+            <p className="text-white/50 text-xs">Achando a melhor fonte pra tocar no seu player.</p>
+            <Button size="sm" variant="ghost" className="text-white/70" onClick={goServer}>Abrir no servidor</Button>
+          </div>
         ) : !src ? (
           <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
         ) : directMode ? (
           <video
-            key={src}
-            src={src}
+            ref={videoRef}
+            key={videoSrc ?? 'video'}
             className="w-full h-full bg-black"
             controls
             autoPlay
             playsInline
             onLoadedMetadata={e => {
-              // "Continuar de onde parou" no player nativo (Stremio/torrent).
               if (resumeAt && resumeAt > 0 && resumeAt < e.currentTarget.duration - 5) {
                 e.currentTarget.currentTime = resumeAt;
               }
@@ -316,6 +584,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             onTimeUpdate={e => {
               const secs = Math.floor(e.currentTarget.currentTime);
               if (secs > 0 && Math.abs(secs - lastSavedRef.current) >= 30) { lastSavedRef.current = secs; onProgress?.(secs); }
+              const dur = e.currentTarget.duration;
+              if (dur > 60 && e.currentTarget.currentTime >= dur - 60 && !watched) onSetWatched?.(true);
             }}
             onEnded={() => { if (!completedRef.current) { completedRef.current = true; onCompleted?.(); } }}
           >
@@ -333,6 +603,51 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           />
         )}
       </div>
+
+      {/* Banner: vídeo(s) capturado(s) em background enquanto assiste no servidor. */}
+      {!directMode && !nativeOwn && !preferIframe && capturedList.length > 0 && (
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-6 z-30 w-[92%] max-w-md bg-card border border-primary/40 rounded-xl shadow-2xl p-3 flex items-center gap-3 animate-fade-in">
+          <Sparkles className="w-5 h-5 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">{capturedList.length === 1 ? 'Vídeo pronto no seu player' : `${capturedList.length} vídeos detectados`}</p>
+            <p className="text-xs text-muted-foreground">Controles, buffer e (em breve) espelhar/baixar.</p>
+          </div>
+          <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setPreferIframe(true)}>Servidor</Button>
+          <Button size="sm" className="shrink-0" onClick={() => capturedList.length === 1 ? chooseStream(capturedList[0]) : setPickerOpen(true)}>
+            {capturedList.length === 1 ? 'Reproduzir' : 'Escolher'}
+          </Button>
+        </div>
+      )}
+
+      {/* Lista de vídeos detectados (escolher qual reproduzir). */}
+      {pickerOpen && (
+        <div className="absolute inset-0 z-40 bg-black/80 flex items-center justify-center p-4" onClick={() => setPickerOpen(false)}>
+          <div className="bg-card border border-border rounded-xl w-full max-w-md max-h-[70vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-3 border-b border-border sticky top-0 bg-card">
+              <h3 className="font-semibold text-foreground text-sm">Links do vídeo ({capturedList.length})</h3>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPickerOpen(false)}><X className="w-4 h-4" /></Button>
+            </div>
+            <button onClick={goServer} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
+              <Server className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-foreground">Assistir pelo servidor</span>
+            </button>
+            {capturedList.length === 0 ? (
+              <p className="text-xs text-muted-foreground p-4 text-center">Nenhum link ainda. Dê play no servidor e aguarde — os links aparecem aqui.</p>
+            ) : capturedList.map((s, i) => {
+              const chosen = ownStream?.url === s.url;
+              return (
+                <button key={s.url} onClick={() => chooseStream(s)} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground">Link {i + 1} <span className="text-[10px] text-muted-foreground">({s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4'})</span>{(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
+                  </div>
+                  {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {castOpen && (
         <div className="absolute inset-0 z-10 bg-black/80 flex items-end sm:items-center justify-center p-4" onClick={() => setCastOpen(false)}>

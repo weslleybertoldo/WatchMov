@@ -1,0 +1,5 @@
+node_modules/
+dbg-*.png
+*.log
+test-results/
+.env

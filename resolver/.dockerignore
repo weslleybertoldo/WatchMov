@@ -1,0 +1,4 @@
+node_modules
+dbg-*.png
+.git
+*.log
