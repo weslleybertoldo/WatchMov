@@ -56,6 +56,10 @@ jobs:
       - name: Decode keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/watchmov-release.keystore
 
+      # Firebase (push): o repo é público, então o google-services.json vem de secret.
+      - name: Decode google-services.json
+        run: echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > android/app/google-services.json
+
       - name: Install dependencies
         run: npm ci
 

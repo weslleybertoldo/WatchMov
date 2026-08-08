@@ -9,9 +9,16 @@ interface MediaCardProps {
   rank?: number; // numeração Top 10
 }
 
+// Ainda não lançou (data futura) → tag "Em breve": avisa que não dá pra assistir.
+export function isUpcoming(date?: string): boolean {
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  return date > new Date().toISOString().slice(0, 10);
+}
+
 export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
   const [loaded, setLoaded] = useState(false);
+  const upcoming = isUpcoming(media.date);
   return (
     <button
       onClick={onClick}
@@ -20,6 +27,11 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
       {rank !== undefined && (
         <span className="absolute -left-1 top-0 z-10 text-4xl font-black text-primary/80 drop-shadow [-webkit-text-stroke:1px_hsl(var(--background))]">
           {rank}
+        </span>
+      )}
+      {upcoming && (
+        <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-black/70 text-white/90 backdrop-blur-sm">
+          Em breve
         </span>
       )}
       <div className={`rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>

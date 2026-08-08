@@ -70,6 +70,7 @@ export interface MediaSummary {
   rating?: number;
   votes?: number;
   year?: string;
+  date?: string;     // data completa YYYY-MM-DD (pra saber se ainda não lançou)
   type: TmdbMediaType;
   subtitle?: string; // legenda extra no card (ex.: "Eps 5 | Temporada 4")
   progress?: { pct: number; label: string }; // Continuar assistindo: barra + tempo (pos/dur)
@@ -124,6 +125,7 @@ function toSummary(r: RawListItem, type: TmdbMediaType): MediaSummary {
     rating: r.vote_average || undefined,
     votes: r.vote_count || undefined,
     year: date ? date.slice(0, 4) : undefined,
+    date: date || undefined,
     type,
     genreIds: r.genre_ids,
   };
