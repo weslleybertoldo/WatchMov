@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, X as XIcon, Bell, BellOff } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
-import { useDownloads, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf } from '@/lib/downloads';
+import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf } from '@/lib/downloads';
 import { getEntry, streamKey } from '@/lib/streamCache';
+import type { DownloadItem } from '@/lib/downloader';
 import { toast } from 'sonner';
 import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
 import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
@@ -26,6 +27,42 @@ interface StoreLike {
   updateItem: (id: string, updates: Partial<WatchItem>) => void;
   incrementEpisode: (itemId: string, seasonId: string) => void;
   setEpisodeWatched: (itemId: string, seasonNumber: number, episode: number, watched: boolean) => void;
+}
+
+// Estado do download DESTE episódio, no canto do card:
+//  • baixando  → nuvem AMARELA com anel de progresso fechando em volta
+//  • concluído → nuvem branca (igual aos demais)
+//  • falhou/parado → exclamação VERMELHA piscando
+// Sem download nenhum, não desenha nada.
+function EpDownloadBadge({ downloaded, item }: { downloaded: boolean; item?: DownloadItem }) {
+  const state = item?.state;
+  const baixando = !downloaded && (state === 'downloading' || state === 'queued' || state === 'restarting');
+  const erro = !downloaded && (state === 'failed' || state === 'stopped');
+  if (!downloaded && !baixando && !erro) return null;
+
+  if (erro) {
+    return (
+      <span className="absolute bottom-1 right-1 z-10 animate-pulse" title={item?.reason || 'Falha no download'}>
+        <AlertCircle className="w-4 h-4 text-red-500 drop-shadow" />
+      </span>
+    );
+  }
+  if (baixando) {
+    // Anel: 0-100% no perímetro. Sem % conhecido (fila), gira devagar como "aguardando".
+    const pct = item && item.percent >= 0 ? item.percent : null;
+    const R = 9, C = 2 * Math.PI * R;
+    return (
+      <span className="absolute bottom-1 right-1 z-10 w-[22px] h-[22px] flex items-center justify-center">
+        <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${pct == null ? 'animate-spin' : ''}`}>
+          <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
+          <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
+            strokeDasharray={C} strokeDashoffset={C * (1 - (pct ?? 25) / 100)} />
+        </svg>
+        <DownloadCloud className="w-3 h-3 text-yellow-400" />
+      </span>
+    );
+  }
+  return <DownloadCloud className="absolute bottom-1 right-1 z-10 w-4 h-4 text-white drop-shadow" />;
 }
 
 interface MediaDetailProps {
@@ -52,6 +89,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const [selSeason, setSelSeason] = useState(1);
   const [loading, setLoading] = useState(true);
   const dls = useDownloads();
+  const { items: dlItems } = useDownloadList();   // estado/progresso por episódio
   const notifyOn = useNotify(media.tmdbId);
   const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
   const [selEps, setSelEps] = useState<Set<number>>(new Set());
@@ -420,6 +458,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                       // Progresso do episódio (mesma fonte da aba Download) — só a barra.
                       const prog = watchProgressOf(epKey(media.tmdbId, s.number, ep));
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
+                      const dlItem = dlItems.get(epKey(media.tmdbId, s.number, ep));
                       const picked = selEps.has(ep);
                       return (
                         <button
@@ -459,7 +498,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                               {picked && <Check className="w-3 h-3 text-primary-foreground" />}
                             </span>
                           )}
-                          {downloaded && <DownloadCloud className="absolute bottom-1 right-1 z-10 w-4 h-4 text-white drop-shadow" />}
+                          <EpDownloadBadge downloaded={downloaded} item={dlItem} />
                         </button>
                       );
                     })}
