@@ -293,6 +293,21 @@ public class PlayerActivity extends Activity {
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        // Avisos do espelhamento (procurando TVs, enviando, proxy, erros) numa faixa
+        // FIXA NO TOPO — antes eram Toasts, que tapavam o vídeo e sumiam rápido.
+        // Fica acima do "Reproduzindo na TV" e funciona mesmo com o overlay escondido.
+        castMsgTv = new TextView(this);
+        castMsgTv.setTextColor(Color.WHITE);
+        castMsgTv.setTextSize(13);
+        castMsgTv.setGravity(Gravity.CENTER);
+        castMsgTv.setPadding(24, 14, 24, 14);
+        castMsgTv.setBackgroundColor(Color.parseColor("#CC000000"));
+        castMsgTv.setVisibility(View.GONE);
+        FrameLayout.LayoutParams msgLp = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
+        msgLp.topMargin = 90;   // abaixo da barra superior (Voltar/Servidor/…)
+        root.addView(castMsgTv, msgLp);
+
         setContentView(root);
 
         // Inicializa o Cast cedo: registra o provider do Google Cast no MediaRouter
@@ -420,9 +435,17 @@ public class PlayerActivity extends Activity {
 
         // Veio do "Próximo episódio" com a TV conectada: reenvia a NOVA mídia pro mesmo
         // dispositivo (sem desconectar) e segue espelhando.
-        if (castFollowNext && activeCastMode != CAST_NONE) {
+        if (castFollowNext) {
             castFollowNext = false;
-            recastCurrent();
+            if (activeCastMode != CAST_NONE) {
+                recastCurrent();
+            } else {
+                // Diagnóstico: veio do "Próximo" mas o estado do cast se perdeu no
+                // caminho (é o que faz o usuário ter de reconectar) → registra pra ler.
+                NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_SEM_SESSAO",
+                    "[recast] castFollowNext=true mas activeCastMode=NONE (estado do cast perdido ao trocar de episódio)",
+                    getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
+            }
         }
         // Retoma o espelhamento se voltamos pro MESMO título e há cast ativo (o vídeo
         // segue na TV): reabre o overlay/controles sem re-castar (pausa o local de novo).
@@ -721,6 +744,18 @@ public class PlayerActivity extends Activity {
     private FrameLayout castOverlay;
     private TextView castStatusTv, castTimeTv;
     private Button castPlayBtn;
+    private TextView castMsgTv;                 // faixa de avisos do cast (topo da tela)
+    private final Runnable hideCastMsg = () -> { if (castMsgTv != null) castMsgTv.setVisibility(View.GONE); };
+
+    // Aviso do espelhamento no TOPO (substitui os Toasts). ms<=0 = fica fixo.
+    private void castMsg(String text, long ms) {
+        if (castMsgTv == null) { android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show(); return; }
+        castMsgTv.setText(text);
+        castMsgTv.setVisibility(View.VISIBLE);
+        progressHandler.removeCallbacks(hideCastMsg);
+        if (ms > 0) progressHandler.postDelayed(hideCastMsg, ms);
+    }
+
     private android.widget.SeekBar castSeek;
     private boolean castSeeking = false;
 
@@ -741,10 +776,8 @@ public class PlayerActivity extends Activity {
         if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
         // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
         String ip = localIp();
-        android.widget.Toast.makeText(this,
-            ip != null ? ("Proxy: http://" + ip + ":" + ProxyServer.PORT + "  — teste /ping de outro aparelho no Wi-Fi")
-                       : "Sem IP de Wi-Fi detectado (o celular está no Wi-Fi?).",
-            android.widget.Toast.LENGTH_LONG).show();
+        castMsg(ip != null ? ("Proxy: http://" + ip + ":" + ProxyServer.PORT)
+                           : "Sem IP de Wi-Fi detectado (o celular está no Wi-Fi?).", 6000);
         if (castOverlay != null) castOverlay.setVisibility(View.VISIBLE);
         if (view != null) view.hideController();
         updatePlayIcon(true);
@@ -766,16 +799,26 @@ public class PlayerActivity extends Activity {
             startCasting(CAST_DLNA, ctrl);                 // overlay + pausa o local já
             if (castStatusTv != null) castStatusTv.setText("Enviando próximo episódio pra TV…");
             new Thread(() -> {
+                // A TV costuma recusar logo após o Stop do episódio anterior
+                // ("Transition not available"): espera e TENTA DE NOVO. NÃO derruba a
+                // conexão em falha — o usuário não deve precisar reconectar.
                 String err = null;
-                try { DlnaCastPlugin.castSync(ctrl, castUrl, t); }
-                catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                for (int i = 0; i < 3; i++) {
+                    try { Thread.sleep(i == 0 ? 900 : 2000); } catch (InterruptedException ignored) {}
+                    try { DlnaCastPlugin.castSync(ctrl, castUrl, t); err = null; break; }
+                    catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                }
                 final String fe = err;
                 runOnUiThread(() -> {
                     if (fe == null) {
                         if (castStatusTv != null) castStatusTv.setText("Reproduzindo na TV (DLNA)");
                     } else {
-                        android.widget.Toast.makeText(this, "Não consegui enviar o próximo episódio: " + fe, android.widget.Toast.LENGTH_LONG).show();
-                        stopCasting(true);                  // caiu → volta a tocar local
+                        // Mantém o espelhamento ativo (a TV segue pareada) e registra o
+                        // motivo real pra diagnóstico — o usuário pode tocar de novo.
+                        if (castStatusTv != null) castStatusTv.setText("A TV recusou o próximo episódio — toque em Próximo de novo");
+                        castMsg("TV recusou o episódio: " + fe + " — toque em Próximo de novo", 8000);
+                        NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_DLNA_FALHOU",
+                            "[recast] " + fe, getIntent().getStringExtra(EXTRA_MIME), mReferer, tt);
                     }
                 });
             }).start();
@@ -802,6 +845,8 @@ public class PlayerActivity extends Activity {
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
+        progressHandler.removeCallbacks(hideCastMsg);
+        if (castMsgTv != null) castMsgTv.setVisibility(View.GONE);   // some com a faixa
         if (player != null) player.setVolume(1f); // restaura o áudio local
         if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
     }
@@ -912,7 +957,7 @@ public class PlayerActivity extends Activity {
             .build();
         final androidx.mediarouter.media.MediaRouter.Callback cb = new androidx.mediarouter.media.MediaRouter.Callback() {};
         router.addCallback(selector, cb, androidx.mediarouter.media.MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN);
-        android.widget.Toast.makeText(this, "Procurando Chromecast na rede…", android.widget.Toast.LENGTH_SHORT).show();
+        castMsg("Procurando Chromecast na rede…", 0);
 
         progressHandler.postDelayed(() -> {
             final List<androidx.mediarouter.media.MediaRouter.RouteInfo> routes = new ArrayList<>();
@@ -929,7 +974,7 @@ public class PlayerActivity extends Activity {
             new AlertDialog.Builder(this).setTitle("Chromecast").setItems(names, (d, i) -> {
                 registerCastListener(castContext);
                 castConnected = false;
-                android.widget.Toast.makeText(this, "Conectando a " + routes.get(i).getName() + "…", android.widget.Toast.LENGTH_SHORT).show();
+                castMsg("Conectando a " + routes.get(i).getName() + "…", 0);
                 routes.get(i).select();
                 // Se em 25s não abrir sessão, provavelmente a TV não tem Cast integrado
                 // (ou a conexão Cast falhou — vale tentar de novo).
@@ -952,7 +997,7 @@ public class PlayerActivity extends Activity {
                 android.widget.Toast.makeText(PlayerActivity.this, "Falha ao conectar no Chromecast (código " + err + ").", android.widget.Toast.LENGTH_LONG).show();
             }
             @Override public void onSessionStarting(com.google.android.gms.cast.framework.CastSession s) {
-                android.widget.Toast.makeText(PlayerActivity.this, "Estabelecendo sessão Cast…", android.widget.Toast.LENGTH_SHORT).show();
+                castMsg("Estabelecendo sessão Cast…", 0);
             }
             @Override public void onSessionEnding(com.google.android.gms.cast.framework.CastSession s) {}
             @Override public void onSessionEnded(com.google.android.gms.cast.framework.CastSession s, int e) { castConnected = false; updateCastButton(false); stopCasting(true); }
@@ -989,7 +1034,7 @@ public class PlayerActivity extends Activity {
         final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
         final String castCt = castContentType(currentUrl);
         final long startPos = player != null ? player.getCurrentPosition() : 0;
-        android.widget.Toast.makeText(this, "Enviando vídeo pro Chromecast…", android.widget.Toast.LENGTH_SHORT).show();
+        castMsg("Enviando vídeo pro Chromecast…", 0);
         // Detecta TS vs fMP4 (.m4s / #EXT-X-MAP) num thread — o Default Media Receiver
         // dá tela preta se o hlsVideoSegmentFormat estiver errado. Depois carrega na UI.
         new Thread(() -> {
@@ -1012,7 +1057,7 @@ public class PlayerActivity extends Activity {
                     .setMediaInfo(mib.build()).setAutoplay(true).setCurrentTime(startPos).build();
                 rmc.load(req).setResultCallback(result -> {
                     if (result.getStatus().isSuccess()) {
-                        android.widget.Toast.makeText(this, "Tocando no Chromecast — o app vira controle.", android.widget.Toast.LENGTH_LONG).show();
+                        castMsg("Tocando no Chromecast — o app vira controle.", 5000);
                         startCasting(CAST_CC, null);
                     } else {
                         android.widget.Toast.makeText(this, "Chromecast conectou mas recusou o vídeo (código " + result.getStatus().getStatusCode() + "). Formato pode não ser suportado.", android.widget.Toast.LENGTH_LONG).show();
@@ -1070,7 +1115,7 @@ public class PlayerActivity extends Activity {
     // ---- DLNA / UPnP (fallback) ----
     // Espelhar na TV: descobre DLNA → escolhe → manda a URL atual (a TV toca).
     private void castViaDlna() {
-        android.widget.Toast.makeText(this, "Procurando TVs na rede…", android.widget.Toast.LENGTH_SHORT).show();
+        castMsg("Procurando TVs na rede…", 0);
         new Thread(() -> {
             final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 6000);
             runOnUiThread(() -> {
@@ -1086,7 +1131,7 @@ public class PlayerActivity extends Activity {
                 new AlertDialog.Builder(this).setTitle("Enviar para a TV").setItems(names, (d, i) -> {
                     final DlnaCastPlugin.Device dev = devs.get(i);
                     final long castFromMs = player != null ? player.getCurrentPosition() : 0; // continua de onde estava
-                    android.widget.Toast.makeText(this, "Enviando para " + dev.name + "…", android.widget.Toast.LENGTH_SHORT).show();
+                    castMsg("Enviando para " + dev.name + "…", 0);
                     new Thread(() -> {
                         String err = null;
                         // A TV não alcança a URL do CDN (punycode/HLS) → "resource not found".
@@ -1102,7 +1147,7 @@ public class PlayerActivity extends Activity {
                         catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                         final String ferr = err;
                         runOnUiThread(() -> {
-                            android.widget.Toast.makeText(this, ferr == null ? "Tocando na TV — o app vira controle" : ferr, android.widget.Toast.LENGTH_LONG).show();
+                            castMsg(ferr == null ? "Tocando na TV — o app vira controle" : ferr, ferr == null ? 4000 : 8000);
                             if (ferr == null) startCasting(CAST_DLNA, dev.controlUrl);
                         });
                     }).start();
