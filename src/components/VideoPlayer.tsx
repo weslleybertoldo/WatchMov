@@ -71,6 +71,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
   const playedRef = useRef(false);   // evita reabrir o ExoPlayer em loop
+  // Espelho do stream atual: o listener de progresso precisa do valor NA HORA do
+  // evento (a closure do state fica velha) pra descartar o progresso do ep anterior.
+  const ownStreamRef = useRef<SniffResult | null>(null);
+  useEffect(() => { ownStreamRef.current = ownStream; });
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
   const [subsOpen, setSubsOpen] = useState(false);
@@ -298,7 +302,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!open || directMode || !isNative()) return;
     let handle: { remove: () => void } | null = null;
-    onPlayerProgress?.(({ positionMs, durationMs }) => {
+    onPlayerProgress?.(({ url, positionMs, durationMs }) => {
+      // Só salva se o progresso for DESTE episódio: ao avançar, o player ainda
+      // reporta a posição do ep anterior por alguns instantes enquanto o React já
+      // trocou season/episode — sem esse guard, o ep novo abria em 30/47min.
+      const cur = ownStreamRef.current?.url;
+      if (cur && url && streamKey(url) !== streamKey(cur)) return;
       if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode, durationMs);
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
