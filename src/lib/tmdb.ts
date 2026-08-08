@@ -45,6 +45,7 @@ export interface TmdbDetails {
   rating?: number; // nota 0-10
   votes?: number;  // quantidade de avaliações
   originalLanguage?: string; // idioma original em PT-BR (ex: "Inglês")
+  releaseDate?: string; // data completa YYYY-MM-DD (lançamento / 1ª exibição)
   // movie
   runtime?: number; // minutos
   // tv
@@ -141,6 +142,23 @@ function dedupeWithPoster(items: MediaSummary[]): MediaSummary[] {
 export async function trendingWeek(type: TmdbMediaType): Promise<MediaSummary[]> {
   const d = await tmdbFetch<{ results: RawListItem[] }>(`/trending/${type}/week`);
   return dedupeWithPoster((d.results || []).map(r => toSummary(r, type))).slice(0, 10);
+}
+
+// Populares HOJE (hero) — trending do dia, filmes + séries, só com backdrop.
+export async function trendingToday(): Promise<MediaSummary[]> {
+  const [mv, tv] = await Promise.all([
+    tmdbFetch<{ results: RawListItem[] }>(`/trending/movie/day`).catch(() => ({ results: [] as RawListItem[] })),
+    tmdbFetch<{ results: RawListItem[] }>(`/trending/tv/day`).catch(() => ({ results: [] as RawListItem[] })),
+  ]);
+  const movies = (mv.results || []).map(r => toSummary(r, 'movie'));
+  const series = (tv.results || []).map(r => toSummary(r, 'tv'));
+  // intercala filme/série e exige backdrop (imagem larga do hero)
+  const out: MediaSummary[] = [];
+  for (let i = 0; i < Math.max(movies.length, series.length); i++) {
+    if (movies[i]) out.push(movies[i]);
+    if (series[i]) out.push(series[i]);
+  }
+  return out.filter(m => m.backdropUrl).slice(0, 8);
 }
 
 // Recentes: filmes em cartaz / séries no ar
@@ -356,6 +374,8 @@ interface RawDetails {
   name?: string;
   poster_path?: string | null;
   overview?: string;
+  release_date?: string; // movie
+  first_air_date?: string; // tv
   runtime?: number;
   episode_run_time?: number[];
   vote_average?: number;
@@ -381,6 +401,7 @@ export async function getDetails(tmdbId: number, type: TmdbMediaType): Promise<T
     rating: d.vote_average || undefined,
     votes: d.vote_count || undefined,
     originalLanguage: LANG_PT[d.original_language || ''] || (d.original_language ? d.original_language.toUpperCase() : undefined),
+    releaseDate: d.release_date || d.first_air_date || undefined,
   };
 
   if (type === 'movie') {
