@@ -242,11 +242,13 @@ public class PlayerActivity extends Activity {
         castTimeTv.setPadding(0, 12, 0, 24);
         LinearLayout castRow = new LinearLayout(this);
         castRow.setOrientation(LinearLayout.HORIZONTAL); castRow.setGravity(Gravity.CENTER);
-        Button rew60 = pill("−60s", v -> remoteSeekBy(-60000));
-        Button rew10 = pill("−10s", v -> remoteSeekBy(-10000));
-        castPlayBtn = pill("⏸", v -> remotePlayPause());
-        Button ff10 = pill("+10s", v -> remoteSeekBy(10000));
-        Button ff60 = pill("+60s", v -> remoteSeekBy(60000));
+        // castMsg em cada toque: se a faixa do topo NÃO aparecer, o toque não chegou
+        // ao botão (problema de UI); se aparecer e a TV não reagir, é o comando UPnP.
+        Button rew60 = pill("−60s", v -> { castMsg("−60s…", 1500); remoteSeekBy(-60000); });
+        Button rew10 = pill("−10s", v -> { castMsg("−10s…", 1500); remoteSeekBy(-10000); });
+        castPlayBtn = pill("⏸", v -> { castMsg(dlnaPaused ? "Continuar…" : "Pausar…", 1500); remotePlayPause(); });
+        Button ff10 = pill("+10s", v -> { castMsg("+10s…", 1500); remoteSeekBy(10000); });
+        Button ff60 = pill("+60s", v -> { castMsg("+60s…", 1500); remoteSeekBy(60000); });
         for (Button b : new Button[]{ rew60, rew10, castPlayBtn, ff10, ff60 }) {
             b.setTextSize(20); b.setPadding(28, 22, 28, 22);  // botões maiores
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -267,6 +269,7 @@ public class PlayerActivity extends Activity {
         nextCast.setVisibility(hasNext ? View.VISIBLE : View.GONE);
 
         Button stopCast = pill("Parar espelhamento", v -> {
+            castMsg("Parando espelhamento…", 2500);
             if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
             else stopCasting(true);
         });
@@ -858,7 +861,10 @@ public class PlayerActivity extends Activity {
         final long tvPos = lastRemotePosMs;
         if (castMode == CAST_DLNA && dlnaCtrl != null) {
             final String c = dlnaCtrl;
-            new Thread(() -> { try { DlnaCastPlugin.controlSync(c, "Stop"); } catch (Exception ignored) {} }).start();
+            new Thread(() -> {
+                try { DlnaCastPlugin.controlSync(c, "Stop"); }
+                catch (Exception e) { final String m = String.valueOf(e.getMessage()); runOnUiThread(() -> castMsg("TV recusou parar: " + m, 6000)); }
+            }).start();
         }
         castGen++; // encerra a sessão — o poll em voo não reagenda
         castMode = CAST_NONE; dlnaCtrl = null;
@@ -881,7 +887,10 @@ public class PlayerActivity extends Activity {
         } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
             final String c = dlnaCtrl; final boolean pause = !dlnaPaused; dlnaPaused = pause;
             updatePlayIcon(!pause);
-            new Thread(() -> { try { DlnaCastPlugin.controlSync(c, pause ? "Pause" : "Play"); } catch (Exception ignored) {} }).start();
+            new Thread(() -> {
+                try { DlnaCastPlugin.controlSync(c, pause ? "Pause" : "Play"); }
+                catch (Exception e) { final String m = String.valueOf(e.getMessage()); runOnUiThread(() -> castMsg("TV recusou " + (pause ? "pausar" : "continuar") + ": " + m, 6000)); }
+            }).start();
         }
     }
 
@@ -893,7 +902,10 @@ public class PlayerActivity extends Activity {
             r.seek(new com.google.android.gms.cast.MediaSeekOptions.Builder().setPosition(target).build());
         } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
             final String c = dlnaCtrl; final long target = Math.max(0, lastRemotePosMs + deltaMs);
-            new Thread(() -> { try { DlnaCastPlugin.seekSync(c, target); } catch (Exception ignored) {} }).start();
+            new Thread(() -> {
+                try { DlnaCastPlugin.seekSync(c, target); }
+                catch (Exception e) { final String m = String.valueOf(e.getMessage()); runOnUiThread(() -> castMsg("TV recusou avançar/voltar: " + m, 6000)); }
+            }).start();
         }
     }
 
