@@ -776,8 +776,9 @@ public class PlayerActivity extends Activity {
         if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
         // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
         String ip = localIp();
-        castMsg(ip != null ? ("Proxy: http://" + ip + ":" + ProxyServer.PORT)
-                           : "Sem IP de Wi-Fi detectado (o celular está no Wi-Fi?).", 6000);
+        // Sem IP de Wi-Fi a TV não alcança o celular → aviso ACIONÁVEL. O endereço do
+        // proxy era diagnóstico interno (não diz nada pro usuário) → removido.
+        if (ip == null) castMsg("Conecte o celular no mesmo Wi-Fi da TV", 8000);
         if (castOverlay != null) castOverlay.setVisibility(View.VISIBLE);
         if (view != null) view.hideController();
         updatePlayIcon(true);
