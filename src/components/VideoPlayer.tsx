@@ -9,7 +9,7 @@ import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
 import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
-import { playNative, loadNextNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
+import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
@@ -200,6 +200,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
     if (directMode || !isNative()) return;
+    // Veio do "Próximo episódio": este ep começa do ZERO. Limpa a posição salva nos
+    // DOIS stores (streamCache + SharedPreferences do player) — as versões antigas
+    // gravavam o tempo do ep anterior na chave deste, e a TV abria em 0:50:19.
+    if (awaitingNextRef.current) {
+      setStreamPosition(0, tmdbId, type, season, episode);
+      clearResumeNative(`${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`);
+    }
     const entry = getEntry(tmdbId, type, season, episode);
     // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
     let toPlay: SniffResult | null = null;

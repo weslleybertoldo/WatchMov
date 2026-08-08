@@ -6,6 +6,7 @@ interface PlayResult { positionMs: number; url?: string; next?: boolean; server?
 interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
   loadNext(opts: Partial<PlayOpts>): Promise<{ ok: boolean }>;
+  clearResume(opts: { key: string }): Promise<void>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
@@ -63,6 +64,13 @@ export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> 
   } catch {
     return false;
   }
+}
+
+// Apaga a posição salva NATIVA de um episódio (o player guarda em SharedPreferences
+// além do streamCache). Usado ao avançar: o ep seguinte começa do zero.
+export async function clearResumeNative(key: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try { await NativePlayer.clearResume({ key }); } catch { /* ignore */ }
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link

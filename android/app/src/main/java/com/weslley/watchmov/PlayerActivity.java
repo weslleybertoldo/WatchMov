@@ -64,7 +64,7 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_WATCHED = "watched";
     public static final String EXTRA_OFFLINE = "offline";
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
-    private static final String RESUME_PREFS = "watchmov_resume";
+    public static final String RESUME_PREFS = "watchmov_resume";
     public static final String RESULT_POSITION = "positionMs";
     public static final String RESULT_URL = "url";
     public static final String RESULT_NEXT = "next";
@@ -1374,8 +1374,12 @@ public class PlayerActivity extends Activity {
             }
             saveResume();                       // posição final do ep anterior
             resumeKey = key;                    // a partir daqui salva na chave do NOVO ep
-            long saved = (resumeKey != null && resumePrefs != null) ? resumePrefs.getLong(resumeKey, 0) : 0;
-            final long start = saved > 3000 ? saved : Math.max(startMs, 0);
+            // AVANÇAR = COMEÇAR DO ZERO. Não herda posição salva do ep seguinte: a TV
+            // abria o ep novo em 0:50:19 (o tempo do anterior, gravado na chave errada
+            // pelas versões antigas). Retomar de onde parou continua valendo quando o
+            // usuário ABRE o episódio pela lista — só o "Próximo" começa do início.
+            if (resumeKey != null && resumePrefs != null) resumePrefs.edit().remove(resumeKey).apply();
+            final long start = 0;
             mReferer = referer;
             applyRefererHeaders(referer);
             mMime = mime; mTitle = title;

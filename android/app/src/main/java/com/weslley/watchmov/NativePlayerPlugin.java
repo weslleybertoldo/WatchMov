@@ -86,6 +86,18 @@ public class NativePlayerPlugin extends Plugin {
         call.resolve(new JSObject().put("ok", true));
     }
 
+    // Apaga a posição salva de um episódio (chave tmdbId:type:season:ep). Usado ao
+    // AVANÇAR: o ep seguinte tem que começar do zero, e versões antigas deixaram o
+    // tempo do ep anterior gravado na chave do seguinte (a TV abria em 0:50:19).
+    @PluginMethod
+    public void clearResume(final PluginCall call) {
+        String key = call.getString("key");
+        if (key == null || key.isEmpty()) { call.resolve(); return; }
+        getContext().getSharedPreferences(PlayerActivity.RESUME_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().remove(key).apply();
+        call.resolve();
+    }
+
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
     public static void reportQuality(String url, int height) {
         if (instance == null || url == null || height <= 0) return;
