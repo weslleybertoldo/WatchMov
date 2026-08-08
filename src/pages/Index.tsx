@@ -47,6 +47,21 @@ const TV_ROW_IDS = TV_GENRES.map(g => g.id);
 
 // Loader de linha de gênero SEM repetição: cada título aparece só na sua categoria
 // predominante (1º gênero dele que tem linha) — evita Superman em Ação+Aventura+Ficção.
+// Mesma ideia para as linhas da aba Animes, que NÃO tinham dedup: como o discover
+// exige o gênero 16 (animação), todo anime cai em "Animação" e ainda aparecia em
+// Comédia e Drama ao mesmo tempo. Aqui a "predominante" é a PRIMEIRA linha (na ordem
+// das linhas) cujo gênero o título tem — "Animação", por ficar no fim, vira o fallback
+// de quem não se encaixa em nenhuma outra.
+const ANIME_ROW_IDS = ANIME_ROWS.map(r => r.id).filter((id): id is number => id != null);
+const animeRowLoader = (rowId: number | null) => async () => {
+  const items = await discoverAnime(1, rowId);
+  if (rowId == null) return items;            // "Populares" mostra tudo
+  return items.filter(m => {
+    const primary = ANIME_ROW_IDS.find(id => (m.genreIds || []).includes(id));
+    return primary === undefined || primary === rowId;
+  });
+};
+
 const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => async () => {
   const items = await discoverByGenre(type, genreId);
   return items.filter(m => {
@@ -265,7 +280,7 @@ export default function Index() {
           <div className="space-y-6">
             {ANIME_ROWS.map(r => (
               <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
-                loader={() => discoverAnime(1, r.id)} onOpen={openMedia}
+                loader={animeRowLoader(r.id)} onOpen={openMedia}
                 onSeeAll={() => setCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
             ))}
           </div>
