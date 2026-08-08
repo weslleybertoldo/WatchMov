@@ -48,7 +48,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StreamSnifferPlugin.class);
         registerPlugin(NativePlayerPlugin.class);
         registerPlugin(DlnaCastPlugin.class);
-        registerPlugin(ResolverPlugin.class);
         registerPlugin(ExternalCastPlugin.class);
         super.onCreate(savedInstanceState);
 
