@@ -71,10 +71,12 @@ public class ProxyServer extends NanoHTTPD {
         return "http://127.0.0.1:" + PORT + "/s?u=" + enc(url) + "&r=" + enc(referer);
     }
 
-    // URL na rede (TV via DLNA) — usa o IP do celular na LAN.
+    // URL na rede (TV via DLNA/Chromecast) — usa o IP do celular na LAN. ap=pt: no
+    // cast, força SÓ o áudio português no master (TVs DLNA ignoram faixa alternativa
+    // do HLS → tocavam inglês; removendo as outras, sobra PT). Native (local) não usa.
     public static String lan(String url, String referer, String ip) {
         ensure();
-        return "http://" + ip + ":" + PORT + "/s?u=" + enc(url) + "&r=" + enc(referer);
+        return "http://" + ip + ":" + PORT + "/s?u=" + enc(url) + "&r=" + enc(referer) + "&ap=pt";
     }
 
     // CORS: o Chromecast (CAF) busca o HLS via XHR e EXIGE esses headers no
@@ -178,7 +180,8 @@ public class ProxyServer extends NanoHTTPD {
                 lastDiag = lastDiag + "up=" + up.code() + " ct=" + ct + " len=" + raw.length + " m3u=" + isM3u + " host=" + up.request().url().host() + " head=[" + head + "]";
                 if (isM3u) {
                     String body = new String(raw, java.nio.charset.StandardCharsets.UTF_8);
-                    return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
+                    boolean prefPt = "pt".equals(session.getParms().get("ap"));
+                    return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r, prefPt)));
                 }
                 // NÃO era playlist (segmento binário) → serve os bytes CRUS (binário-safe).
                 Response.Status st2 = up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK;
@@ -211,15 +214,19 @@ public class ProxyServer extends NanoHTTPD {
     private static final java.util.regex.Pattern PT_AUDIO = java.util.regex.Pattern.compile(
         "TYPE=AUDIO[^\\n]*(LANGUAGE=\"(pt|por|pt-br)|NAME=\"[^\"]*(portug|português|brasil|dub))", java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    private String rewrite(String body, String baseUrl, String referer) {
+    private String rewrite(String body, String baseUrl, String referer, boolean stripToPt) {
         // Se houver faixa de áudio em PORTUGUÊS, marca ela como DEFAULT (e as outras
-        // NÃO) → a TV (DLNA/Chromecast) pega PT em vez do inglês (a TV toca o DEFAULT).
+        // NÃO) → a TV pega PT em vez do inglês. No cast (stripToPt), REMOVE as faixas
+        // não-PT do master (TVs DLNA ignoram alt-audio → tocavam inglês; sem as outras,
+        // sobra PT). Native não usa stripToPt (mantém o seletor de áudio).
         boolean hasPt = PT_AUDIO.matcher(body).find();
         StringBuilder out = new StringBuilder();
         for (String line : body.split("\n")) {
             String t = line.trim();
             if (t.isEmpty()) { out.append(line).append("\n"); continue; }
             if (t.startsWith("#")) {
+                boolean isAudio = t.toUpperCase().contains("EXT-X-MEDIA") && t.toUpperCase().contains("TYPE=AUDIO");
+                if (hasPt && isAudio && stripToPt && !PT_AUDIO.matcher(t).find()) continue; // remove faixa não-PT no cast
                 int idx = t.indexOf("URI=\"");
                 if (idx >= 0) {
                     int start = idx + 5, endq = t.indexOf('"', start);
@@ -228,9 +235,7 @@ public class ProxyServer extends NanoHTTPD {
                         line = t.substring(0, start) + proxied(uri, baseUrl, referer) + t.substring(endq);
                     }
                 }
-                if (hasPt && t.toUpperCase().contains("EXT-X-MEDIA") && t.toUpperCase().contains("TYPE=AUDIO")) {
-                    line = setAudioDefault(line);
-                }
+                if (hasPt && isAudio) line = setAudioDefault(line);
                 out.append(line).append("\n");
             } else {
                 out.append(proxied(t, baseUrl, referer)).append("\n");
