@@ -21,6 +21,9 @@ import okhttp3.Request;
 public class ProxyServer extends NanoHTTPD {
 
     public static final int PORT = 8099;
+    // Diagnóstico da ÚLTIMA busca de playlist (surfaça no wm_playback_errors via
+    // PlayerActivity.onPlayerError) — pra achar por que SuperFlix falha no device.
+    public static volatile String lastDiag = "";
     private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
     private static ProxyServer instance;
     private final OkHttpClient http = new OkHttpClient.Builder()
@@ -135,6 +138,7 @@ public class ProxyServer extends NanoHTTPD {
             // em vez de tocar o MP4 falso / crashar o parser (NPE). Vale p/ manifesto e
             // segmentos.
             if (isAbuseHost(up.request().url().host())) {
+                lastDiag = "abuse_redirect host=" + up.request().url().host();
                 up.close();
                 return cors(newFixedLengthResponse(BLOCKED_451, "text/plain", "blocked_abuse_redirect"));
             }
@@ -153,6 +157,8 @@ public class ProxyServer extends NanoHTTPD {
                 // OkHttp não descomprime. Detecta o magic 1f8b e descomprime na mão,
                 // senão o ExoPlayer recebe bytes gzip → "não começa com #EXTM3U".
                 String body = new String(gunzipIfNeeded(up.body().bytes()), java.nio.charset.StandardCharsets.UTF_8);
+                String head = (body.length() > 40 ? body.substring(0, 40) : body).replaceAll("\\s+", " ");
+                lastDiag = "up=" + up.code() + " ct=" + ct + " len=" + body.length() + " m3u=" + body.contains("#EXTM3U") + " host=" + up.request().url().host() + " head=[" + head + "]";
                 if (body.contains("#EXTM3U")) {
                     return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
                 }
@@ -173,6 +179,7 @@ public class ProxyServer extends NanoHTTPD {
             resp.addHeader("Accept-Ranges", "bytes");
             return cors(resp);
         } catch (Exception e) {
+            lastDiag = "EXC: " + e;
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "proxy_err");
         }
     }
