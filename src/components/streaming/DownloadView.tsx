@@ -192,10 +192,12 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const series = groups.filter(g => g.type === 'tv');
   const empty = groups.length === 0;
 
-  if (openSeries != null) {
-    const g = series.find(s => s.tmdbId === openSeries);
-    if (!g) { setOpenSeries(null); return null; }
-    return <SeriesEpisodes g={g} items={items} onBack={() => setOpenSeries(null)} />;
+  // A série aberta pode sumir (último episódio excluído). NÃO chamar setState no
+  // render (React reclama e pode entrar em loop): mostra a lista de novo, com um
+  // aviso, e o próprio clique em Voltar limpa o estado.
+  const openedSeries = openSeries != null ? series.find(s => s.tmdbId === openSeries) : undefined;
+  if (openedSeries) {
+    return <SeriesEpisodes g={openedSeries} items={items} onBack={() => setOpenSeries(null)} />;
   }
 
   const openItem = (g: TitleGroup) => {
