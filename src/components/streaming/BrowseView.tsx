@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
-  MediaSummary, discoverFilter, type BrowseKind,
-  MOVIE_GENRES, TV_GENRES, ANIME_GENRES, BROWSE_YEARS, BROWSE_RATINGS,
+  MediaSummary, discoverFilter, type BrowseKind, type BrowseHighlight,
+  MOVIE_GENRES, TV_GENRES, ANIME_GENRES, BROWSE_YEARS, BROWSE_RATINGS, BROWSE_HIGHLIGHTS,
 } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ interface BrowseState {
   genreIds: number[];
   years: number[];
   minRating: number | null;
+  highlight: BrowseHighlight | null;
   items: MediaSummary[];
   page: number;
   done: boolean;
@@ -79,6 +80,7 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
   const [genreIds, setGenreIds] = useState<number[]>(c?.genreIds ?? []);
   const [years, setYears] = useState<number[]>(c?.years ?? []);
   const [minRating, setMinRating] = useState<number | null>(c?.minRating ?? null);
+  const [highlight, setHighlight] = useState<BrowseHighlight | null>(c?.highlight ?? null);
 
   const [items, setItems] = useState<MediaSummary[]>(c?.items ?? []);
   const [page, setPage] = useState(c?.page ?? 1);
@@ -91,7 +93,7 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
   const load = useCallback(async (p: number, reset: boolean) => {
     setLoading(true);
     try {
-      const res = await discoverFilter({ kind, genreIds, years, minRating, page: p });
+      const res = await discoverFilter({ kind, genreIds, years, minRating, highlight, page: p });
       setItems(prev => {
         const base = reset ? [] : prev;
         const seen = new Set(base.map(i => `${i.type}-${i.tmdbId}`));
@@ -104,7 +106,7 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [kind, genreIds, years, minRating]);
+  }, [kind, genreIds, years, minRating, highlight]);
 
   // Recarrega do zero quando tipo/filtros mudam. No 1º mount com cache, mantém.
   useEffect(() => {
@@ -119,8 +121,8 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
 
   // Persiste o estado para sobreviver à remontagem.
   useEffect(() => {
-    browseCache = { kind, genreIds, years, minRating, items, page, done };
-  }, [kind, genreIds, years, minRating, items, page, done]);
+    browseCache = { kind, genreIds, years, minRating, highlight, items, page, done };
+  }, [kind, genreIds, years, minRating, highlight, items, page, done]);
 
   const loadMore = () => {
     const next = page + 1;
@@ -157,16 +159,26 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2">
+        <select
+          className={`h-9 rounded-lg border px-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary ${
+            highlight ? 'bg-primary/15 text-primary border-primary/40' : 'bg-muted/60 text-foreground border-border'
+          }`}
+          value={highlight ?? ''} onChange={e => setHighlight((e.target.value || null) as BrowseHighlight | null)}>
+          <option value="">Destaques</option>
+          {BROWSE_HIGHLIGHTS.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
+        </select>
         <MultiSelect label="Categorias" selected={genreIds}
           options={genres.map(g => ({ value: g.id, label: g.name }))}
           onToggle={v => toggle(genreIds, setGenreIds, v)} />
-        <MultiSelect label="Anos" selected={years}
+        <MultiSelect label="Ano" selected={years}
           options={BROWSE_YEARS.map(y => ({ value: y, label: String(y) }))}
           onToggle={v => toggle(years, setYears, v)} />
         <select
-          className="h-9 rounded-lg bg-muted/60 border border-border px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          className={`h-9 rounded-lg border px-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary ${
+            minRating ? 'bg-primary/15 text-primary border-primary/40' : 'bg-muted/60 text-foreground border-border'
+          }`}
           value={minRating ?? ''} onChange={e => setMinRating(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">Qualquer nota</option>
+          <option value="">Nota</option>
           {BROWSE_RATINGS.map(r => <option key={r.value} value={r.value}>Nota {r.label}</option>)}
         </select>
       </div>
