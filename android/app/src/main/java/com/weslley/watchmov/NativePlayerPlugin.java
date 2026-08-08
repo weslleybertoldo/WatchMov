@@ -99,6 +99,17 @@ public class NativePlayerPlugin extends Plugin {
         call.resolve();
     }
 
+    // O que está espelhando AGORA (sobrevive ao fechar o player). O app mostra isso
+    // no topo e usa a key (tmdbId:type:season:ep) pra reabrir o mesmo episódio.
+    @PluginMethod
+    public void castStatus(final PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("active", PlayerActivity.isCasting());
+        r.put("key", PlayerActivity.castKey());
+        r.put("title", PlayerActivity.castTitle());
+        call.resolve(r);
+    }
+
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
     public static void reportQuality(String url, int height) {
         if (instance == null || url == null || height <= 0) return;

@@ -32,9 +32,10 @@ interface MediaDetailProps {
   store: StoreLike;
   onBack: () => void;
   onOpen?: (m: MediaSummary) => void;   // abrir um relacionado
+  autoPlay?: null | { season: number; episode: number };  // atalho "espelhando na TV"
 }
 
-export default function MediaDetail({ media, store, onBack, onOpen }: MediaDetailProps) {
+export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: MediaDetailProps) {
   const storeType: 'movie' | 'series' = media.type === 'tv' ? 'series' : 'movie';
   const isSeries = storeType === 'series';
 
@@ -142,6 +143,20 @@ export default function MediaDetail({ media, store, onBack, onOpen }: MediaDetai
     markWatched(it); // entra em "Continuar assistindo"; NÃO marca assistido (só faltando 1 min ou manual)
     setPlayer({ season: seasonNum, episode: ep });
   };
+  // Veio do atalho "espelhando na TV": abre direto o episódio/filme que está lá (1x).
+  const autoPlayRef = useRef(false);
+  useEffect(() => {
+    if (autoPlayRef.current || !details) return;
+    autoPlayRef.current = true;
+    if (isSeries && autoPlay && autoPlay.episode > 0) {
+      setSelSeason(autoPlay.season);
+      playEpisode(autoPlay.season, autoPlay.episode);
+    } else if (!isSeries && autoPlay) {
+      playMovie();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [details, autoPlay, isSeries]);
+
   const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
     await ensureLib();
     setStremioOpen(false);
