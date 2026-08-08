@@ -613,6 +613,11 @@ public class PlayerActivity extends Activity {
         // os segmentos (mesmo caminho que o cast já usa OK). MP4 toca direto.
         // Offline: baixamos via proxy (chaves de cache = URLs proxied) → toca sempre pelo
         // proxy pra bater no cache. Online: HLS via proxy, MP4 direto.
+        // Instrumentação: com que tempo o player LOCAL abriu e em que chave — pra
+        // separar "a TV pulou" de "o app mandou a posição errada".
+        NativePlayerPlugin.reportError(url, 0, 0, "PLAYER_START",
+            "[play] startMs=" + startMs + " key=" + resumeKey + " offline=" + offline
+            + " silent=" + castSilentStart, mimeType, mReferer, mTitle);
         String playUri = (offline || MimeTypes.APPLICATION_M3U8.equals(mimeType)) ? ProxyServer.local(url, mReferer) : url;
         MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
         player.setMediaItem(item);
@@ -822,6 +827,9 @@ public class PlayerActivity extends Activity {
     private long recastAtMs = 0;               // instante do recast (p/ diagnosticar queda)
     private boolean recastDropReported = false;
     private int recastRetries = 0;             // 1 reenvio automático por episódio (sem loop)
+    private long recastTargetMs = 0;           // posição que PEDIMOS no último recast
+    private volatile boolean recastPending = false;  // recast em voo: a TV ainda reporta a mídia VELHA
+    private boolean posVelhaReportada = false; // registra 1x por troca que a TV devolveu a posição antiga
     private String dlnaCtrl;
     private boolean dlnaPaused = false;
     private long lastRemotePosMs = 0, lastRemoteDurMs = 0;
@@ -882,10 +890,22 @@ public class PlayerActivity extends Activity {
     // TV começava do ZERO mesmo com o celular em 47:59. Agora insiste até a posição
     // reportada bater com o alvo e, se não bater, registra o motivo.
     // Roda em background (faz sleeps) — chamar de dentro de uma thread.
-    private void seekWithRetry(final String ctrl, final long targetMs) {
+    private void seekWithRetry(final String ctrl, final long targetMs, final String origem) {
+        // Sessão/mídia deste seek. Se trocar de episódio no meio, este laço TEM que
+        // morrer: ele insiste ~10s e estava arrastando o episódio NOVO de volta pro
+        // tempo do anterior (o vídeo "brigava" entre 00:00 e o tempo herdado).
+        final int gen = castGen;
+        NativePlayerPlugin.reportError(currentUrl, 0, 0, "SEEK_TV",
+            "[seek] origem=" + origem + " alvo=" + targetMs + "ms gen=" + gen, mMime, mReferer, mTitle);
         String lastErr = null;
         for (int i = 0; i < 6; i++) {
             try { Thread.sleep(i == 0 ? 1200 : 1800); } catch (InterruptedException ignored) {}
+            if (gen != castGen) {   // trocou de episódio/sessão → este seek é do ep anterior
+                NativePlayerPlugin.reportError(currentUrl, 0, 0, "SEEK_TV_CANCELADO",
+                    "[seek] origem=" + origem + " alvo=" + targetMs + "ms abortado (gen " + gen + "→" + castGen + ")",
+                    mMime, mReferer, mTitle);
+                return;
+            }
             try { DlnaCastPlugin.seekSync(ctrl, targetMs); lastErr = null; }
             catch (Exception e) { lastErr = e.getMessage() != null ? e.getMessage() : e.toString(); continue; }
             try {
@@ -897,7 +917,7 @@ public class PlayerActivity extends Activity {
         runOnUiThread(() -> {
             castMsg("A TV não aceitou continuar de onde parou — use a barra pra ajustar", 7000);
             NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_SEEK_FALHOU",
-                "[seek] alvo=" + targetMs + "ms erro=" + fe, mMime, mReferer, mTitle);
+                "[seek] origem=" + origem + " alvo=" + targetMs + "ms erro=" + fe, mMime, mReferer, mTitle);
         });
     }
 
@@ -921,6 +941,13 @@ public class PlayerActivity extends Activity {
             lastRemotePosMs = 0; lastRemoteDurMs = 0;
             recastAtMs = 0;
             recastDropReported = false;
+            recastTargetMs = startFromMs;
+            // Enquanto o recast está em voo a TV ainda responde pela mídia ANTERIOR:
+            // aceitar essa posição fazia o watchdog reenviar o episódio novo NO TEMPO
+            // DO ANTERIOR (o vídeo "brigava": ia pro 0 e voltava pro tempo herdado).
+            recastPending = true;
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_ENVIADO",
+                "[recast] alvo=" + startFromMs + "ms retries=" + recastRetries, mMime, mReferer, mTitle);
             if (castStatusTv != null) castStatusTv.setText("Enviando próximo episódio pra TV…");
             new Thread(() -> {
                 // A TV costuma recusar logo após o Stop do episódio anterior
@@ -934,7 +961,8 @@ public class PlayerActivity extends Activity {
                     try { DlnaCastPlugin.castSync(ctrl, castUrl, t, false); err = null; break; }
                     catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                 }
-                if (err == null && startFromMs > 3000) seekWithRetry(ctrl, startFromMs);
+                if (err == null && startFromMs > 3000) seekWithRetry(ctrl, startFromMs, "recast");
+                recastPending = false;
                 final String fe = err;
                 runOnUiThread(() -> {
                     if (fe == null) {
@@ -1061,7 +1089,15 @@ public class PlayerActivity extends Activity {
                     final long[] f = pd; final String fst = st;
                     runOnUiThread(() -> {
                         if (castMode != CAST_DLNA || gen != castGen) return; // sessão trocou/encerrou
-                        if (f != null && (f[0] > 0 || f[1] > 0)) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
+                        if (recastPending) {
+                            // Posição que a TV devolve aqui é da mídia ANTERIOR — descarta.
+                            if (f != null && f[0] > 0 && !posVelhaReportada) {
+                                posVelhaReportada = true;
+                                NativePlayerPlugin.reportError(currentUrl, 0, 0, "POS_TV_VELHA",
+                                    "[recast] TV ainda reportando " + f[0] + "ms (mídia anterior) — ignorado",
+                                    mMime, mReferer, mTitle);
+                            }
+                        } else if (f != null && (f[0] > 0 || f[1] > 0)) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
                         // Só PAUSED_PLAYBACK é pausa real. PLAYING e TRANSITIONING (a TV
                         // ainda carregando) contam como tocando — senão o ícone virava ▶
                         // no início enquanto a TV só estava abrindo o stream.
@@ -1084,7 +1120,9 @@ public class PlayerActivity extends Activity {
                             if (recastRetries < 1) {
                                 recastRetries++;
                                 castMsg("A TV parou o episódio — reenviando…", 5000);
-                                recastCurrent(lastRemotePosMs);
+                                // Reenvia no ALVO que pedimos (0 na troca de episódio) —
+                                // usar lastRemotePosMs levava o ep novo pro tempo do anterior.
+                                recastCurrent(recastTargetMs);
                                 return;   // startCasting já reagendou o poll — não duplicar
                             }
                             castMsg("A TV parou o episódio — toque em Próximo/Espelhar de novo", 8000);
@@ -1312,7 +1350,7 @@ public class PlayerActivity extends Activity {
                         // Continua na posição atual do reprodutor (ex.: 30min → abre em
                         // 30min). COM retry+confirmação: o Seek logo após o Play é
                         // recusado enquanto a TV carrega — sem insistir, ela tocava do 0.
-                        if (ferr == null && castFromMs > 3000) seekWithRetry(dev.controlUrl, castFromMs);
+                        if (ferr == null && castFromMs > 3000) seekWithRetry(dev.controlUrl, castFromMs, "inicial");
                     }).start();
                 }).show();
             });
@@ -1442,6 +1480,7 @@ public class PlayerActivity extends Activity {
             // Zera o tempo do remoto: o overlay mostrava o tempo do ep ANTERIOR (a TV
             // devolve 0/0 enquanto carrega e o poll só sobrescreve com valor > 0).
             lastRemotePosMs = 0; lastRemoteDurMs = 0; recastRetries = 0;
+            recastTargetMs = 0; posVelhaReportada = false;
             if (castTimeTv != null) castTimeTv.setText(fmtClock(0) + " / " + fmtClock(0));
             updateCastSeek();
             // Espelhando: o local NÃO toca (os dois puxariam o mesmo HLS pelo mesmo
