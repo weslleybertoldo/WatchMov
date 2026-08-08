@@ -11,6 +11,7 @@ import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
 import { resolveEmbed } from '@/lib/resolver';
+import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -53,6 +54,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
+  const [extApps, setExtApps] = useState<ExternalApp[]>([]);   // players externos instalados (WVC/VLC/MX)
   const [sourceOpen, setSourceOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -244,6 +246,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, directMode, tmdbId, imdbId, type, season, episode]);
 
+  // Players externos instalados (pra oferecer no diálogo de cast).
+  useEffect(() => {
+    if (!open || !isNative()) return;
+    listExternalApps().then(setExtApps).catch(() => {});
+  }, [open]);
+
   // Escolhe um link → vira o "último aberto" (reabre nele) e toca no ExoPlayer.
   const chooseStream = (r: SniffResult) => {
     setPickerOpen(false); setPreferIframe(false);
@@ -414,6 +422,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       try { await new w.PresentationRequest([src!]).start(); toast.success('Transmitindo para a TV'); return; } catch { /* fallback */ }
     }
     setCastOpen(true);
+  };
+
+  // Player externo (WVC/VLC/MX): manda o link CAPTURADO (ou direto) + Referer.
+  const castExt = async (app: ExternalApp) => {
+    const s = ownStream || capturedList[0] || null;
+    const url = s?.url || videoSrc || null;
+    if (!url) { toast.error('Sem link direto ainda', { description: 'Dê play no servidor uma vez pra capturar o vídeo; depois abra no app externo.' }); return; }
+    const mime = url.includes('.m3u8') || url.includes('/m3/') || url.includes('master') ? 'application/x-mpegURL' : url.includes('.mpd') ? 'application/dash+xml' : 'video/*';
+    const ok = await castToExternal({ pkg: app.pkg, url, title, referer: s?.referer, ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', mime, subs: subVtt ? [subVtt] : undefined });
+    if (ok) { setCastOpen(false); toast.success(`Enviado pro ${app.name}`); } else { toast.error(`Não consegui abrir no ${app.name}`); }
   };
 
   const copyLink = async () => {
@@ -660,6 +678,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Smartphone className="w-3.5 h-3.5" /> Espelhamento de tela (TV LG, Samsung etc.)</p>
               <p className="text-xs text-muted-foreground">No celular, abra <b>Espelhamento de tela</b> / <b>Smart View</b> e selecione sua TV LG. Depois volte aqui e dê play.</p>
             </div>
+            {extApps.length > 0 && (
+              <div className="border-t border-border pt-3 space-y-2">
+                <p className="text-xs text-muted-foreground">Abrir em app externo (casta pra TV melhor que DLNA):</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {extApps.map(a => (
+                    <Button key={a.id} variant="secondary" size="sm" onClick={() => castExt(a)}>{a.name}</Button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="border-t border-border pt-3 space-y-2">
               <p className="text-xs text-muted-foreground">Ou abra direto no navegador da TV LG (webOS):</p>
               <div className="flex justify-center"><img src={qrUrl} alt="QR do link" className="rounded-lg bg-white p-1" width={160} height={160} /></div>
