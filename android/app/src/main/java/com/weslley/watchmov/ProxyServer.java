@@ -167,16 +167,25 @@ public class ProxyServer extends NanoHTTPD {
                 || lu.contains("/master") || lu.contains("playlist") || lu.contains(".m3u");
             if (maybePlaylist && up.body() != null) {
                 // Alguns CDNs (SuperFlix) mandam o m3u8 gzip SEM Content-Encoding → o
-                // OkHttp não descomprime. Detecta o magic 1f8b e descomprime na mão,
-                // senão o ExoPlayer recebe bytes gzip → "não começa com #EXTM3U".
-                String body = new String(gunzipIfNeeded(up.body().bytes()), java.nio.charset.StandardCharsets.UTF_8);
-                String head = (body.length() > 40 ? body.substring(0, 40) : body).replaceAll("\\s+", " ");
-                lastDiag = lastDiag + "up=" + up.code() + " ct=" + ct + " len=" + body.length() + " m3u=" + body.contains("#EXTM3U") + " host=" + up.request().url().host() + " head=[" + head + "]";
-                if (body.contains("#EXTM3U")) {
+                // OkHttp não descomprime. Detecta o magic 1f8b e descomprime na mão.
+                byte[] raw = gunzipIfNeeded(up.body().bytes());
+                // Confirma playlist por CONTEÚDO (#EXTM3U). ⚠️ Só o TEXTO vira String; o
+                // resto (SEGMENTO binário disfarçado de .txt//m3/) sai CRU — String UTF-8
+                // corrompia os bytes → "not a Transport Stream"/"no extractor" no player.
+                String sniff = new String(raw, 0, Math.min(raw.length, 512), java.nio.charset.StandardCharsets.UTF_8);
+                boolean isM3u = sniff.contains("#EXTM3U");
+                String head = (sniff.length() > 40 ? sniff.substring(0, 40) : sniff).replaceAll("\\s+", " ");
+                lastDiag = lastDiag + "up=" + up.code() + " ct=" + ct + " len=" + raw.length + " m3u=" + isM3u + " host=" + up.request().url().host() + " head=[" + head + "]";
+                if (isM3u) {
+                    String body = new String(raw, java.nio.charset.StandardCharsets.UTF_8);
                     return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
                 }
-                // Não era playlist: devolve o texto como veio (corpo já lido).
-                return cors(newFixedLengthResponse(up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK, ct, body));
+                // NÃO era playlist (segmento binário) → serve os bytes CRUS (binário-safe).
+                Response.Status st2 = up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK;
+                Response bin = newFixedLengthResponse(st2, ct, new java.io.ByteArrayInputStream(raw), raw.length);
+                String cr = up.header("Content-Range"); if (cr != null) bin.addHeader("Content-Range", cr);
+                bin.addHeader("Accept-Ranges", "bytes");
+                return cors(bin);
             }
 
             long len = up.body() != null ? up.body().contentLength() : -1;
