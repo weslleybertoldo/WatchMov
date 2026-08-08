@@ -24,9 +24,10 @@ let pendingNextInPlayer = false;
 // só quando resolver server-side (proxy residencial) ou trusted-gesture on-device.
 const RESOLVER_ONDEVICE_ENABLED = false;
 
-// Faixa ISOLADA (só vídeo /m3/ ou só áudio /md/) vs MASTER (playlist completa
-// áudio+vídeo). Usado pra rotular/agrupar os links e escopar o auto-avanço.
-const isTrackOnly = (u: string) => /\/m3\/|\/md\//i.test(u || '');
+// VARIANTE/FAIXA (playlist de 1 rendition ou faixa isolada: /m3/ vídeo, /md/ áudio,
+// index-fN-vN-aN) vs COMPLETO/MASTER (multivariante master.* ou arquivo full .mp4).
+// Usado p/ rotular, agrupar em abas e escopar o auto-avanço/handoff.
+const isTrackOnly = (u: string) => /\/m3\/|\/md\/|index-f\d|-v\d-a\d/i.test(u || '');
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
