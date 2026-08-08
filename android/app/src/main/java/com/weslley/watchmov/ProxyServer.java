@@ -107,17 +107,30 @@ public class ProxyServer extends NanoHTTPD {
         if (u == null || u.isEmpty()) return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "no url");
         try {
             Request.Builder rb = new Request.Builder().url(u).header("User-Agent", UA);
+            // Header set do Chrome (alguns anti-bot conferem Accept/sec-fetch/sec-ch-ua).
+            rb.header("Accept", "*/*");
+            rb.header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+            rb.header("sec-ch-ua", "\"Chromium\";v=\"120\", \"Not:A-Brand\";v=\"99\"");
+            rb.header("sec-ch-ua-mobile", "?1");
+            rb.header("sec-ch-ua-platform", "\"Android\"");
+            rb.header("Sec-Fetch-Dest", "empty");
+            rb.header("Sec-Fetch-Mode", "cors");
+            rb.header("Sec-Fetch-Site", "cross-site");
             if (r != null && !r.isEmpty()) {
                 rb.header("Referer", r);
                 try { URL ru = new URL(r); rb.header("Origin", ru.getProtocol() + "://" + ru.getHost()); } catch (Exception ignored) {}
             }
             // Cookies do WebView (mesma sessão que capturou): vários CDNs (SuperFlix)
             // devolvem HTML "security error" (anti-bot) sem o cookie de sessão. O proxy
-            // roda no mesmo processo → lê o CookieManager e reenvia.
+            // roda no mesmo processo → lê o CookieManager e reenvia. ⚠️ getCookie NÃO
+            // retorna cookies httpOnly (só o browser os envia) — se o gate for httpOnly,
+            // OkHttp nunca consegue (→ só via WebView same-origin fetch, tipo WVC).
+            int cookieLen = 0;
             try {
                 String cookie = android.webkit.CookieManager.getInstance().getCookie(u);
-                if (cookie != null && !cookie.isEmpty()) rb.header("Cookie", cookie);
+                if (cookie != null && !cookie.isEmpty()) { rb.header("Cookie", cookie); cookieLen = cookie.length(); }
             } catch (Exception ignored) {}
+            lastDiag = "cookieLen=" + cookieLen + " ";
             // Playlist (manifesto): busca IDENTITY (sem gzip) e SEM Range — igual ao
             // fetch do navegador/curl que retorna #EXTM3U limpo. Evita o edge-case
             // gzip+Range em que o ExoPlayer recebe bytes gzip → "não começa com
@@ -158,7 +171,7 @@ public class ProxyServer extends NanoHTTPD {
                 // senão o ExoPlayer recebe bytes gzip → "não começa com #EXTM3U".
                 String body = new String(gunzipIfNeeded(up.body().bytes()), java.nio.charset.StandardCharsets.UTF_8);
                 String head = (body.length() > 40 ? body.substring(0, 40) : body).replaceAll("\\s+", " ");
-                lastDiag = "up=" + up.code() + " ct=" + ct + " len=" + body.length() + " m3u=" + body.contains("#EXTM3U") + " host=" + up.request().url().host() + " head=[" + head + "]";
+                lastDiag = lastDiag + "up=" + up.code() + " ct=" + ct + " len=" + body.length() + " m3u=" + body.contains("#EXTM3U") + " host=" + up.request().url().host() + " head=[" + head + "]";
                 if (body.contains("#EXTM3U")) {
                     return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r)));
                 }
