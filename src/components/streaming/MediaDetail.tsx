@@ -29,6 +29,22 @@ interface StoreLike {
   setEpisodeWatched: (itemId: string, seasonNumber: number, episode: number, watched: boolean) => void;
 }
 
+// Anel de progresso do download (amarelo). Sem % conhecido — fila — gira devagar.
+// Usado no card do episódio e no botão "Baixar" do filme.
+function ProgressRing({ percent, inline }: { percent: number | null; inline?: boolean }) {
+  const R = 9, C = 2 * Math.PI * R;
+  return (
+    <span className={`relative inline-flex items-center justify-center w-[22px] h-[22px] ${inline ? '' : 'mr-1'}`}>
+      <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${percent == null ? 'animate-spin' : ''}`}>
+        <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
+        <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={C * (1 - (percent ?? 25) / 100)} />
+      </svg>
+      <DownloadCloud className="w-3 h-3 text-yellow-400" />
+    </span>
+  );
+}
+
 // Estado do download DESTE episódio, no canto do card:
 //  • baixando  → nuvem AMARELA com anel de progresso fechando em volta
 //  • concluído → nuvem branca (igual aos demais)
@@ -48,17 +64,10 @@ function EpDownloadBadge({ downloaded, item }: { downloaded: boolean; item?: Dow
     );
   }
   if (baixando) {
-    // Anel: 0-100% no perímetro. Sem % conhecido (fila), gira devagar como "aguardando".
     const pct = item && item.percent >= 0 ? item.percent : null;
-    const R = 9, C = 2 * Math.PI * R;
     return (
       <span className="absolute bottom-1 right-1 z-10 w-[22px] h-[22px] flex items-center justify-center">
-        <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${pct == null ? 'animate-spin' : ''}`}>
-          <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
-          <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
-            strokeDasharray={C} strokeDashoffset={C * (1 - (pct ?? 25) / 100)} />
-        </svg>
-        <DownloadCloud className="w-3 h-3 text-yellow-400" />
+        <ProgressRing percent={pct} inline />
       </span>
     );
   }
@@ -269,6 +278,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   // ── Download offline (Media3): usa a MASTER que o player capturou/escolheu (só dá
   // pra baixar o que já foi aberto uma vez — não há resolve headless). ──
   const movieDownloaded = !isSeries && dls.has(movieKey(media.tmdbId));
+  const movieDl = !isSeries ? dlItems.get(movieKey(media.tmdbId)) : undefined;
+  const movieBaixando = !movieDownloaded && (movieDl?.state === 'downloading' || movieDl?.state === 'queued' || movieDl?.state === 'restarting');
+  const movieFalhou = !movieDownloaded && (movieDl?.state === 'failed' || movieDl?.state === 'stopped');
   const streamFor = (s: number | undefined, ep: number | undefined) => {
     const e = getEntry(media.tmdbId, media.type, s, ep);
     if (!e?.chosenUrl) return null;
@@ -277,6 +289,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   };
   const toggleMovieDownload = async () => {
     await ensureLib();
+    if (movieBaixando) { toast.info('Baixando…', { description: 'Acompanhe aqui ou na aba Download.' }); return; }
     if (movieDownloaded) { setDownloaded([movieKey(media.tmdbId)], false); return; }
     const s = streamFor(undefined, undefined);
     if (!s) { toast.error('Abra o filme uma vez pra baixar', { description: 'O download usa o link que o player captura ao reproduzir.' }); return; }
@@ -411,8 +424,20 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
               <Download className="w-4 h-4 mr-1" /> {selecting ? 'Cancelar' : 'Baixar eps'}
             </Button>
           ) : (
-            <Button variant={movieDownloaded ? 'default' : 'outline'} onClick={toggleMovieDownload} title={movieDownloaded ? 'Baixado' : 'Baixar filme'}>
-              {movieDownloaded ? <DownloadCloud className="w-4 h-4 mr-1" /> : <Download className="w-4 h-4 mr-1" />} {movieDownloaded ? 'Baixado' : 'Baixar'}
+            // O botão É o indicador: baixando mostra o anel amarelo com o %, falha
+            // mostra a exclamação vermelha piscando (tocar tenta de novo).
+            <Button variant={movieDownloaded ? 'default' : 'outline'} onClick={toggleMovieDownload}
+              title={movieFalhou ? (movieDl?.reason || 'Falhou — toque pra tentar de novo') : movieBaixando ? 'Baixando' : movieDownloaded ? 'Baixado' : 'Baixar filme'}>
+              {movieBaixando ? (
+                <><ProgressRing percent={movieDl && movieDl.percent >= 0 ? movieDl.percent : null} />
+                  {movieDl && movieDl.percent >= 0 ? `Baixando ${movieDl.percent}%` : 'Na fila…'}</>
+              ) : movieFalhou ? (
+                <><AlertCircle className="w-4 h-4 mr-1 text-red-500 animate-pulse" /> Falhou</>
+              ) : movieDownloaded ? (
+                <><DownloadCloud className="w-4 h-4 mr-1" /> Baixado</>
+              ) : (
+                <><Download className="w-4 h-4 mr-1" /> Baixar</>
+              )}
             </Button>
           )}
         </div>
