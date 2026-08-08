@@ -10,6 +10,7 @@ import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/str
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
+import { resolveEmbed } from '@/lib/resolver';
 import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -60,6 +61,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [pickerOpen, setPickerOpen] = useState(false);                   // lista pra escolher
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
+  const [resolving, setResolving] = useState(false);                     // resolvendo on-device
   const playedRef = useRef(false);   // evita reabrir o ExoPlayer em loop
 
   // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
@@ -196,6 +198,44 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
   }, [open, embedUrl, directMode, tmdbId, type, season, episode]);
+
+  // (B2) RESOLVEDOR ON-DEVICE (estilo Smart Play): ao abrir (nativo, sem escolha
+  // prévia em cache), resolve os provedores num WebView OCULTO — embedplayapi 1º
+  // (o que funciona) e, se falhar, os demais em paralelo. O 1º que resolver toca
+  // no player nativo; os outros viram "Servidor 2/3…". Nenhum resolveu → iframe.
+  useEffect(() => {
+    if (!open || directMode || !isNative()) return;
+    const entry = getEntry(tmdbId, type, season, episode);
+    if (entry?.chosenUrl || entry?.lastMode === 'server') return; // respeita cache/escolha do usuário
+    let alive = true;
+    let played = false;
+    setResolving(true);
+    const push = (r: { url: string; referer?: string; mime?: string }) => {
+      if (!alive) return;
+      const s: SniffResult = { url: r.url, referer: r.referer, mime: r.mime };
+      setCapturedList(prev => prev.some(x => streamKey(x.url) === streamKey(r.url)) ? prev : [...prev, s]);
+      addStreams([s], tmdbId, type, season, episode);
+      if (!played) { played = true; setResolving(false); setChosen(r.url, tmdbId, type, season, episode); setOwnStream(s); }
+    };
+    (async () => {
+      const provs = available;                       // embedplayapi já é o 1º
+      const [first, ...rest] = provs;
+      const firstUrl = first?.build(target);
+      const r0 = firstUrl ? await resolveEmbed(firstUrl, 14000) : null;
+      if (!alive) return;
+      if (r0?.url) push(r0);
+      const restJobs = rest.map(async (q) => {
+        const u = q.build(target); if (!u) return;
+        const rr = await resolveEmbed(u, 14000);
+        if (alive && rr?.url) push(rr);
+      });
+      if (r0?.url) { Promise.all(restJobs); }         // já tocando → demais em background
+      else { await Promise.all(restJobs); }           // 1º falhou → corre os demais
+      if (alive && !played) { setResolving(false); setPreferIframe(true); } // nenhum → iframe
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, directMode, tmdbId, imdbId, type, season, episode]);
 
   // Escolhe um link → vira o "último aberto" (reabre nele) e toca no ExoPlayer.
   const chooseStream = (r: SniffResult) => {
@@ -511,6 +551,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>Trocar link</Button>
               <Button size="sm" variant="ghost" className="text-white/70" onClick={goServer}>Servidor</Button>
             </div>
+          </div>
+        ) : (isNative() && !directMode && !preferIframe && resolving) ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
+            <Loader2 className="w-7 h-7 animate-spin text-primary" />
+            <p className="text-white">Buscando servidores…</p>
+            <p className="text-white/50 text-xs">Achando a melhor fonte pra tocar no seu player.</p>
+            <Button size="sm" variant="ghost" className="text-white/70" onClick={goServer}>Abrir no servidor</Button>
           </div>
         ) : !src ? (
           <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
