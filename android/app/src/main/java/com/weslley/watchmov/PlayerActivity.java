@@ -568,7 +568,7 @@ public class PlayerActivity extends Activity {
     // /md/ = faixa de áudio. Sozinhas dão "sem som"/"só áudio" — não mandar.
     private static boolean isTrackOnly(String u) {
         String l = u.toLowerCase();
-        return l.contains("/m3/") || l.contains("/md/");
+        return l.contains("/m3/") || l.contains("/md/") || l.contains("index-f") || l.matches(".*-v\\d-a\\d.*");
     }
 
     // Handoff pro player externo. Manda a(s) MASTER (playlist completa áudio+vídeo);

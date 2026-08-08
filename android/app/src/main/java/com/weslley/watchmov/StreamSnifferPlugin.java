@@ -84,6 +84,10 @@ public class StreamSnifferPlugin extends Plugin {
         if (url == null || isBlockedHost(url)) return false;
         String u = url.toLowerCase();
         String path = noQuery(u);
+        // Segmentos/init NÃO são links tocáveis sozinhos → não captura (poluíam a lista
+        // com dezenas de seg-/init/.m4s/.ts que o ExoPlayer já busca sozinho do master).
+        if (path.contains("seg-") || path.contains("/seg") || path.contains("init-")
+            || path.contains("/init.") || path.contains("chunk") || path.endsWith(".ts") || path.endsWith(".m4s")) return false;
         if (path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".mp4")
             || path.endsWith(".mkv") || path.endsWith(".webm") || path.endsWith(".m4v")
             || path.endsWith(".mov") || path.endsWith(".avi") || path.endsWith(".flv")) return true;
