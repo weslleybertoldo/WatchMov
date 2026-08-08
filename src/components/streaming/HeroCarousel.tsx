@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { trendingToday, type MediaSummary } from '@/lib/tmdb';
 
@@ -7,6 +7,9 @@ import { trendingToday, type MediaSummary } from '@/lib/tmdb';
 export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => void }) {
   const [items, setItems] = useState<MediaSummary[]>([]);
   const [i, setI] = useState(0);
+  const startX = useRef<number | null>(null);
+  const swiped = useRef(false);                 // distingue arraste de toque (não abre no swipe)
+  const go = (dir: number) => setI(p => (p + dir + items.length) % items.length);
 
   useEffect(() => {
     let alive = true;
@@ -26,7 +29,18 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
   const bg = m.backdropUrl || m.posterUrl;
 
   return (
-    <div className="relative -mx-4 -mt-2 mb-2 aspect-video max-h-[46vh] overflow-hidden cursor-pointer animate-fade-in" onClick={() => onOpen(m)}>
+    <div
+      className="relative -mx-4 -mt-2 mb-2 aspect-video max-h-[46vh] overflow-hidden cursor-pointer animate-fade-in"
+      style={{ touchAction: 'pan-y' }}
+      onTouchStart={(e) => { startX.current = e.touches[0].clientX; swiped.current = false; }}
+      onTouchMove={(e) => { if (startX.current != null && Math.abs(e.touches[0].clientX - startX.current) > 10) swiped.current = true; }}
+      onTouchEnd={(e) => {
+        if (startX.current == null || items.length < 2) { startX.current = null; return; }
+        const dx = e.changedTouches[0].clientX - startX.current;
+        startX.current = null;
+        if (Math.abs(dx) > 40) { swiped.current = true; go(dx < 0 ? 1 : -1); }
+      }}
+      onClick={() => { if (swiped.current) { swiped.current = false; return; } onOpen(m); }}>
       {bg && <img key={bg} src={bg} alt={m.title} className="w-full h-full object-cover animate-fade-in" />}
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
       <div className="absolute bottom-0 inset-x-0 p-4 flex flex-col items-center text-center gap-1.5">
