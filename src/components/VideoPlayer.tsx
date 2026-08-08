@@ -11,7 +11,7 @@ import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
-import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, movieKey, epKey } from '@/lib/downloads';
+import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -145,6 +145,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       : (season != null && episode != null ? epKey(tmdbId, season, episode) : null));
   const dlItem = useDownloadItem(dlKey);
   const dlDone = dlItem?.state === 'completed';
+  // O download é do EPISÓDIO (1 por chave), mas foi feito a partir de UM link — só
+  // esse mostra o progresso; os outros seguem oferecendo "baixar".
+  const dlUrl = dlKey ? getDownloadMeta()[dlKey]?.url : undefined;
+  const isDlLink = (u: string) => !!dlUrl && streamKey(dlUrl) === streamKey(u);
   const available = PROVIDERS.filter(p => p.build(target));
   // Lembra a fonte escolhida por título (tmdbId+type). Não muda o padrão global.
   const srcKey = `watchmov_src_${tmdbId ?? imdbId}_${type}`;
@@ -662,15 +666,20 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                           </div>
                           {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </button>
-                        {!track && dlKey && isNative() && (
-                          <button onClick={(e) => { e.stopPropagation(); toggleDownload(s); }} className="shrink-0 w-9 h-9 flex items-center justify-center rounded hover:bg-background/60"
-                            title={dlDone ? 'Baixado — toque pra remover' : 'Baixar (offline)'}>
-                            {dlDone ? <Trash2 className="w-4 h-4 text-green-400" />
-                              : dlItem?.state === 'downloading' ? <span className="text-[10px] font-semibold text-primary">{dlItem.percent >= 0 ? `${dlItem.percent}%` : '…'}</span>
-                              : dlItem && dlItem.state !== 'removed' ? <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                              : <Download className="w-4 h-4 text-muted-foreground" />}
-                          </button>
-                        )}
+                        {!track && dlKey && isNative() && (() => {
+                          const mine = isDlLink(s.url);          // este link é o do download?
+                          const busy = !!dlItem && dlItem.state !== 'removed';
+                          if (busy && !mine) return null;         // outro link já está baixando
+                          return (
+                            <button onClick={(e) => { e.stopPropagation(); toggleDownload(s); }} className="shrink-0 w-9 h-9 flex items-center justify-center rounded hover:bg-background/60"
+                              title={dlDone ? 'Baixado — toque pra remover' : 'Baixar (offline)'}>
+                              {dlDone ? <Trash2 className="w-4 h-4 text-green-400" />
+                                : dlItem?.state === 'downloading' ? <span className="text-[10px] font-semibold text-primary">{dlItem.percent >= 0 ? `${dlItem.percent}%` : '…'}</span>
+                                : busy ? <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                : <Download className="w-4 h-4 text-muted-foreground" />}
+                            </button>
+                          );
+                        })()}
                       </div>
                     );
                   })}
