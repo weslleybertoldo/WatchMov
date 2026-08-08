@@ -42,9 +42,10 @@ function Progress({ item }: { item?: DownloadItem }) {
   );
 }
 
-function Poster({ meta, item, onClick, editing, badge, watched }: {
+function Poster({ meta, item, onClick, editing, badge, watched, progress, subtitle }: {
   meta: { title: string; posterUrl?: string }; item?: DownloadItem;
   onClick: () => void; editing: boolean; badge?: string; watched?: boolean;
+  progress?: { percent: number; label: string } | null; subtitle?: string;
 }) {
   return (
     <button onClick={onClick} className="relative block text-left">
@@ -71,6 +72,16 @@ function Poster({ meta, item, onClick, editing, badge, watched }: {
         <Progress item={item} />
       </div>
       <p className="text-xs mt-1 line-clamp-1">{meta.title}</p>
+      {subtitle && <p className="text-[10px] text-green-400 truncate">{subtitle}</p>}
+      {/* Barra + tempo assistido/total — mesmo formato do "Continuar assistindo". */}
+      {progress && (
+        <div className="mt-1">
+          <div className="h-1 rounded-full bg-muted overflow-hidden">
+            <div className="h-full bg-primary" style={{ width: `${progress.percent}%` }} />
+          </div>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">{progress.label}</p>
+        </div>
+      )}
     </button>
   );
 }
@@ -116,8 +127,11 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
               {!editing && wp?.watched && (
                 <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-green-500/90 flex items-center justify-center" title="Assistido"><Check className="w-3 h-3 text-white" /></span>
               )}
-              {!editing && wp && !wp.watched && wp.percent > 0 && (
-                <span className="absolute bottom-0 inset-x-0 h-0.5 bg-white/15"><span className="block h-full bg-primary" style={{ width: `${wp.percent}%` }} /></span>
+              {!editing && wp && !wp.watched && (
+                <>
+                  <span className="absolute bottom-3 inset-x-1 h-0.5 rounded bg-white/15"><span className="block h-full bg-primary rounded" style={{ width: `${wp.percent}%` }} /></span>
+                  <span className="absolute bottom-0.5 inset-x-0 text-[8px] text-muted-foreground text-center truncate px-0.5">{wp.label}</span>
+                </>
               )}
             </button>
           );
@@ -149,8 +163,17 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
           const watched = g.type === 'movie'
             ? !!watchProgressOf(movieKey(g.tmdbId))?.watched
             : g.episodes.length > 0 && g.episodes.every(e => watchProgressOf(e.key)?.watched);
+          // Barra + tempo (igual "Continuar assistindo"): filme = o próprio; série =
+          // o episódio em andamento (último começado e não terminado).
+          let progress = g.type === 'movie' ? watchProgressOf(movieKey(g.tmdbId)) : null;
+          let subtitle: string | undefined;
+          if (g.type === 'tv') {
+            const cur = [...g.episodes].reverse().find(e => { const p = watchProgressOf(e.key); return p && !p.watched; });
+            if (cur) { progress = watchProgressOf(cur.key); subtitle = `EP ${cur.ep} | Temporada ${cur.season}`; }
+          }
           return (
             <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge} watched={watched}
+              progress={progress} subtitle={subtitle}
               onClick={() => editing ? onDelete(g) : onOpen(g)} />
           );
         })}

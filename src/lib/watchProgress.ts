@@ -27,7 +27,7 @@ export function totalEpisodesWatched(item: WatchItem): number {
 }
 
 // Tempo → relógio: "9:54" ou "1:46:05".
-function fmtClock(ms: number): string {
+export function fmtClock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
