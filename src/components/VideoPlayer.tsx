@@ -24,6 +24,10 @@ let pendingNextInPlayer = false;
 // só quando resolver server-side (proxy residencial) ou trusted-gesture on-device.
 const RESOLVER_ONDEVICE_ENABLED = false;
 
+// Faixa ISOLADA (só vídeo /m3/ ou só áudio /md/) vs MASTER (playlist completa
+// áudio+vídeo). Usado pra rotular/agrupar os links e escopar o auto-avanço.
+const isTrackOnly = (u: string) => /\/m3\/|\/md\//i.test(u || '');
+
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
 
@@ -67,6 +71,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // nativo e fica no cache (reabre direto + retoma de onde parou).
   const [capturedList, setCapturedList] = useState<SniffResult[]>([]);   // vídeos detectados
   const [pickerOpen, setPickerOpen] = useState(false);                   // lista pra escolher
+  const [pickerTab, setPickerTab] = useState<'master' | 'faixa'>('master'); // aba do picker
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
   const [resolving, setResolving] = useState(false);                     // resolvendo on-device
@@ -276,10 +281,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!nativeOwn || !ownStream || playedRef.current) return;
     playedRef.current = true;
     const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
+    // Auto-avanço ESCOPADO: se escolheu um MASTER, só avança entre masters; se
+    // escolheu uma faixa, só entre faixas (não mistura completo com só-áudio/só-vídeo).
+    const group = capturedList.filter(s => isTrackOnly(s.url) === isTrackOnly(ownStream.url));
     playNative({
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
-      urls: capturedList.map(s => s.url), mimes: capturedList.map(s => s.mime ?? ''),
-      qualities: capturedList.map(s => s.quality ?? ''), hasNext: !!onNext,
+      urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
+      qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
     }).then(res => {
       if (!res) return;
@@ -651,18 +659,41 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             </button>
             {capturedList.length === 0 ? (
               <p className="text-xs text-muted-foreground p-4 text-center">Nenhum link ainda. Dê play no servidor e aguarde — os links aparecem aqui.</p>
-            ) : capturedList.map((s, i) => {
-              const chosen = ownStream?.url === s.url;
+            ) : (() => {
+              const masters = capturedList.filter(s => !isTrackOnly(s.url));
+              const tracks = capturedList.filter(s => isTrackOnly(s.url));
+              const hasBoth = masters.length > 0 && tracks.length > 0;
+              const shown = !hasBoth ? capturedList : (pickerTab === 'master' ? masters : tracks);
               return (
-                <button key={s.url} onClick={() => chooseStream(s)} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">Link {i + 1} <span className="text-[10px] text-muted-foreground">({s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4'})</span>{(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
-                  </div>
-                  {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
-                </button>
+                <>
+                  {hasBoth && (
+                    <div className="flex border-b border-border sticky top-[41px] bg-card z-10">
+                      <button onClick={() => setPickerTab('master')} className={`flex-1 py-2 text-xs font-medium ${pickerTab === 'master' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground'}`}>Completos ({masters.length})</button>
+                      <button onClick={() => setPickerTab('faixa')} className={`flex-1 py-2 text-xs font-medium ${pickerTab === 'faixa' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground'}`}>Faixas ({tracks.length})</button>
+                    </div>
+                  )}
+                  {shown.map((s) => {
+                    const gi = capturedList.indexOf(s) + 1;
+                    const chosen = ownStream?.url === s.url;
+                    const kind = s.mime?.includes('mpegurl') ? 'HLS' : s.mime?.includes('dash') ? 'DASH' : 'MP4';
+                    const track = isTrackOnly(s.url);
+                    return (
+                      <button key={s.url} onClick={() => chooseStream(s)} className="w-full flex items-center gap-2 text-left px-3 py-2.5 hover:bg-secondary border-b border-border/40">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-foreground">
+                            Link {gi} <span className="text-[10px] text-muted-foreground">({kind})</span>
+                            <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{track ? 'FAIXA' : 'MASTER'}</span>
+                            {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
+                        </div>
+                        {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </>
               );
-            })}
+            })()}
           </div>
         </div>
       )}
