@@ -342,8 +342,11 @@ public class PlayerActivity extends Activity {
                     : null;
                 int httpCode = (error.getCause() instanceof androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)
                     ? ((androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) error.getCause()).responseCode : 0;
+                // Anexa o diagnóstico do proxy (o que o upstream REALMENTE devolveu) —
+                // pra achar a causa do SuperFlix no device via wm_playback_errors.
+                String causeFull = (causeTxt == null ? "" : causeTxt) + " || proxy{" + ProxyServer.lastDiag + "}";
                 NativePlayerPlugin.reportError(currentUrl, error.errorCode, httpCode, error.getErrorCodeName(),
-                    causeTxt, getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
+                    causeFull, getIntent().getStringExtra(EXTRA_MIME), mReferer, getIntent().getStringExtra(EXTRA_TITLE));
                 // AUTO-AVANÇA: o link falhou (inclui muro 451, googlevideo 403, 500, etc.)
                 // → tenta sozinho o PRÓXIMO link ainda não tentado. NÃO vai pro Servidor
                 // automaticamente. Se acabarem os links, fica no player com aviso (o user
