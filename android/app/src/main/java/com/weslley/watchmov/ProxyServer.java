@@ -199,7 +199,13 @@ public class ProxyServer extends NanoHTTPD {
 
     // Reescreve a playlist HLS: cada URL (segmento/variante/chave) passa a apontar
     // pro proxy (caminho relativo → o cliente resolve contra o host que pediu).
+    private static final java.util.regex.Pattern PT_AUDIO = java.util.regex.Pattern.compile(
+        "TYPE=AUDIO[^\\n]*(LANGUAGE=\"(pt|por|pt-br)|NAME=\"[^\"]*(portug|português|brasil|dub))", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     private String rewrite(String body, String baseUrl, String referer) {
+        // Se houver faixa de áudio em PORTUGUÊS, marca ela como DEFAULT (e as outras
+        // NÃO) → a TV (DLNA/Chromecast) pega PT em vez do inglês (a TV toca o DEFAULT).
+        boolean hasPt = PT_AUDIO.matcher(body).find();
         StringBuilder out = new StringBuilder();
         for (String line : body.split("\n")) {
             String t = line.trim();
@@ -213,12 +219,29 @@ public class ProxyServer extends NanoHTTPD {
                         line = t.substring(0, start) + proxied(uri, baseUrl, referer) + t.substring(endq);
                     }
                 }
+                if (hasPt && t.toUpperCase().contains("EXT-X-MEDIA") && t.toUpperCase().contains("TYPE=AUDIO")) {
+                    line = setAudioDefault(line);
+                }
                 out.append(line).append("\n");
             } else {
                 out.append(proxied(t, baseUrl, referer)).append("\n");
             }
         }
         return out.toString();
+    }
+
+    // Força DEFAULT=YES na faixa de áudio PT e DEFAULT=NO nas demais (a TV segue o
+    // DEFAULT no cast). Só chamado quando existe faixa PT no master.
+    private static String setAudioDefault(String line) {
+        boolean isPt = PT_AUDIO.matcher(line).find();
+        String def = isPt ? "YES" : "NO";
+        if (line.matches("(?i).*DEFAULT=(YES|NO).*")) line = line.replaceAll("(?i)DEFAULT=(YES|NO)", "DEFAULT=" + def);
+        else line = line + ",DEFAULT=" + def;
+        if (isPt) {
+            if (line.matches("(?i).*AUTOSELECT=(YES|NO).*")) line = line.replaceAll("(?i)AUTOSELECT=(YES|NO)", "AUTOSELECT=YES");
+            else line = line + ",AUTOSELECT=YES";
+        }
+        return line;
     }
 
     private String proxied(String ref, String baseUrl, String referer) {
