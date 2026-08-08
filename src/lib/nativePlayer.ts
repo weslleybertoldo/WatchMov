@@ -5,6 +5,8 @@ interface PlayResult { positionMs: number; url?: string; next?: boolean; server?
 
 interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
+  loadNext(opts: Partial<PlayOpts>): Promise<{ ok: boolean }>;
+  addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerWatched', cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle>;
@@ -41,6 +43,26 @@ export function onPlayerWatched(cb: (d: { watched: boolean }) => void): Promise<
 export function onPlayerError(cb: (d: PlayerErrorEvent) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerError', cb);
+}
+
+// "Próximo episódio" tocado DENTRO do player nativo: ele não fecha mais: pede o
+// link do próximo ep e espera o loadNextNative. Se ninguém responder em ~9s, ele
+// cai sozinho no fluxo antigo (fecha devolvendo next).
+export function onPlayerNext(cb: () => void): Promise<PluginListenerHandle> | null {
+  if (!Capacitor.isNativePlatform()) return null;
+  return NativePlayer.addListener('playerNext', cb);
+}
+
+// Entrega o próximo episódio pro player que JÁ ESTÁ ABERTO (mantém o espelhamento
+// na TV vivo). Sem url = "não achei link" → o player usa o fluxo antigo.
+export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const r = await NativePlayer.loadNext(opts);
+    return !!r?.ok;
+  } catch {
+    return false;
+  }
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link
