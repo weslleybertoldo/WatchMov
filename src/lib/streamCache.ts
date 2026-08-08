@@ -104,14 +104,27 @@ export function latestPosition(tmdbId?: number): { season: number; episode: numb
   let best: { season: number; episode: number; positionMs: number; durationMs?: number; ts: number } | null = null;
   for (const [k, e] of Object.entries(d)) {
     const [tid, , s, ep] = k.split(':');
-    if (tid !== String(tmdbId) || !e.positionMs || Date.now() - e.ts > TTL_MS) continue;
+    if (tid !== String(tmdbId) || !e.positionMs) continue;   // posição não expira (só os links)
     if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, durationMs: e.durationMs, ts: e.ts };
   }
   return best ? { season: best.season, episode: best.episode, positionMs: best.positionMs, durationMs: best.durationMs } : null;
 }
 
+// Posição SEM TTL: o link expira em 12h, mas "onde parei" não pode sumir (o
+// vídeo baixado continua lá). Fonte única lida pela home e pela aba Download.
+export function getPosition(tmdbId?: number, type?: string, season?: number, episode?: number): { positionMs: number; durationMs?: number } | null {
+  const e = read()[keyFor(tmdbId, type, season, episode)];
+  if (!e?.positionMs) return null;
+  return { positionMs: e.positionMs, durationMs: e.durationMs };
+}
+
 export function setStreamPosition(positionMs: number, tmdbId?: number, type?: string, season?: number, episode?: number, durationMs?: number) {
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  // CRIA a entrada se ainda não existe: assistir pela aba Download (que não passa
+  // pela captura/addStreams) precisa salvar o progresso do mesmo jeito, senão o
+  // "Continuar assistindo" não reflete o que foi visto ali.
+  if (!d[k]) d[k] = { streams: [], ts: Date.now() };
   const e = d[k];
+  e.ts = Date.now();          // renova: enquanto assiste, a entrada não expira
   if (e) { e.positionMs = positionMs; if (durationMs && durationMs > 0) e.durationMs = durationMs; write(d); }
 }

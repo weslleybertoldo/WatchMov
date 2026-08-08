@@ -1,8 +1,8 @@
 import { useEffect, useReducer } from 'react';
 import { Downloader, downloadsNative, type DownloadItem } from './downloader';
-import { getEntry, setStreamPosition } from './streamCache';
+import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
-import { playNative } from './nativePlayer';
+import { playNative, onPlayerProgress } from './nativePlayer';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -112,8 +112,8 @@ function knownKeys(): Set<string> {
 export function watchProgressOf(key: string): { percent: number; watched: boolean; label: string } | null {
   const meta = getDownloadMeta()[key];
   if (!meta) return null;
-  const e = getEntry(meta.tmdbId, meta.type, meta.season, meta.ep);
-  if (!e?.positionMs) return null;
+  const e = getPosition(meta.tmdbId, meta.type, meta.season, meta.ep);
+  if (!e) return null;
   if (!e.durationMs) return { percent: 0, watched: false, label: fmtClock(e.positionMs) };
   const percent = Math.min(100, Math.round((e.positionMs / e.durationMs) * 100));
   return { percent, watched: percent >= 92, label: `${fmtClock(e.positionMs)} / ${fmtClock(e.durationMs)}` };
@@ -186,12 +186,25 @@ export function clearDownloadsFor(tmdbId: number, isMovie: boolean) {
 export async function playDownloaded(key: string) {
   const meta = getDownloadMeta()[key];   // inclui itens reconstruídos do nativo
   if (!meta || !meta.url) return;
-  const startMs = getEntry(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
-  const res = await playNative({
-    url: meta.url, referer: meta.referer, mime: meta.mime, title: meta.title,
-    startMs, offline: true, key,
-  });
-  if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+  // MESMA chave de resume do VideoPlayer (`tmdbId:type:season:ep`) → o progresso é
+  // um só: retoma de onde parou na home e o que assistir aqui reflete lá.
+  const resumeKey = `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`;
+  const startMs = getPosition(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
+  // Salva a posição a cada ~5s (igual ao fluxo normal): se o app morrer, não perde.
+  let handle: { remove: () => void } | null = null;
+  onPlayerProgress?.(({ positionMs, durationMs }) => {
+    if (positionMs > 0) setStreamPosition(positionMs, meta.tmdbId, meta.type, meta.season, meta.ep, durationMs);
+  })?.then(h => { handle = h; }).catch(() => {});
+  try {
+    const res = await playNative({
+      url: meta.url, referer: meta.referer, mime: meta.mime, title: meta.title,
+      startMs, offline: true, key: resumeKey,
+    });
+    if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+  } finally {
+    handle?.remove();
+    notify();   // atualiza a barra da aba na volta
+  }
 }
 
 // Hook reativo: Set de concluídos.
