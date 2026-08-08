@@ -74,20 +74,8 @@ export const PROVIDERS: Provider[] = [
     },
   },
   {
-    id: 'myembed',
-    name: 'Fonte 5 (MyEmbed PT-BR)',
-    // EmbedMovies/MyEmbed: player BR. Aceita IMDB ou TMDB id.
-    build: (t) => {
-      const id = t.tmdbId ?? t.imdbId;
-      if (!id) return null;
-      return t.type === 'movie'
-        ? `https://myembed.biz/filme/${id}`
-        : `https://myembed.biz/serie/${id}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
     id: 'playerflix',
-    name: 'Fonte 6 (PlayerFlix — via servidor)',
+    name: 'Fonte 5 (PlayerFlix — via servidor)',
     // Só toca embedado (anti-hotlink) → abre no modo Servidor (iframe), não no
     // player nativo. Resolve TMDB id. /filme/{tmdb}; /serie/{tmdb}/{s}/{e}.
     build: (t) => {
@@ -105,6 +93,5 @@ export const PROVIDER_HOSTS = [
   'https://embedplayapi.top',
   'https://superflixapi.cyou',
   'https://megaembedapi.site',
-  'https://myembed.biz',
   'https://playerflixapi.com',
 ];
