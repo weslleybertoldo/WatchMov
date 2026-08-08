@@ -398,12 +398,16 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: 
               const watched = liveSeason ? episodesWatched(liveSeason) : [];
               return (
                 <>
-                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {/* Grid 16:9 com o frame do episódio (still da TMDB). Sem imagem,
+                      cai no visual antigo: só o número no fundo neutro. */}
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                     {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
                       const seen = watched.includes(ep);
                       // Data de exibição do episódio: futura = "Em breve" (não dá pra
                       // assistir ainda), últimos 30 dias = "Novo". Sem data, nada.
-                      const air = seasonEps.find(e => e.number === ep)?.airDate;
+                      const info = seasonEps.find(e => e.number === ep);
+                      const air = info?.airDate;
+                      const still = info?.stillUrl;
                       const emBreve = isUpcoming(air);
                       const novo = !emBreve && isNew(air);
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
@@ -412,9 +416,13 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay }: 
                         <button
                           key={ep}
                           onClick={() => (selecting ? (downloaded ? undefined : toggleSelEp(ep)) : playEpisode(s.number, ep))}
-                          className={`relative aspect-square rounded-lg flex items-center justify-center text-sm font-medium border transition ${selecting && downloaded ? 'border-green-400/40 bg-green-400/5 text-muted-foreground opacity-70' : selecting && picked ? 'border-primary bg-primary/20 text-primary' : seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
+                          className={`relative aspect-video overflow-hidden rounded-lg flex items-center justify-center text-sm font-medium border transition ${selecting && downloaded ? 'border-green-400/40 bg-green-400/5 text-muted-foreground opacity-70' : selecting && picked ? 'border-primary bg-primary/20 text-primary' : seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
                         >
-                          {ep}
+                          {still && (
+                            <img src={still} alt={`Episódio ${ep}`} loading="lazy"
+                              className={`absolute inset-0 w-full h-full object-cover ${emBreve ? 'opacity-40' : 'opacity-70'}`} />
+                          )}
+                          <span className={`relative z-10 ${still ? 'px-1.5 rounded bg-black/60 text-white' : ''}`}>{ep}</span>
                           {!selecting && emBreve && (
                             <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-black/70 text-white/90">Em breve</span>
                           )}
