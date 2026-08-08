@@ -160,6 +160,22 @@ public class DownloaderPlugin extends Plugin {
         } catch (Exception e) { call.reject("falha ao remover: " + e); }
     }
 
+    // Espaço do aparelho onde os downloads ficam (pra aba Download mostrar "livre").
+    @PluginMethod
+    public void storage(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.os.StatFs fs = new android.os.StatFs(
+                DownloadUtil.downloadDirFor(getContext()).getAbsolutePath());
+            ret.put("freeBytes", fs.getAvailableBytes());
+            ret.put("totalBytes", fs.getTotalBytes());
+        } catch (Exception e) {
+            ret.put("freeBytes", 0);
+            ret.put("totalBytes", 0);
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void list(PluginCall call) {
         JSArray arr = new JSArray();

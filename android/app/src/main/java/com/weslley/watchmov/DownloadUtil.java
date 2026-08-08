@@ -117,6 +117,11 @@ public final class DownloadUtil {
         return databaseProvider;
     }
 
+    // Diretório onde os downloads ocupam espaço (pra medir o livre no aparelho).
+    public static synchronized File downloadDirFor(Context ctx) {
+        return getDownloadDir(ctx.getApplicationContext());
+    }
+
     private static synchronized File getDownloadDir(Context app) {
         if (downloadDir == null) {
             downloadDir = app.getExternalFilesDir(null);

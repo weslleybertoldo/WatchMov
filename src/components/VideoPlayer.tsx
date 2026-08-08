@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2 } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2, MoreVertical } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import Hls from 'hls.js';
 import { toast } from 'sonner';
@@ -56,6 +56,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [castOpen, setCastOpen] = useState(false);
   const [extApps, setExtApps] = useState<ExternalApp[]>([]);   // players externos instalados (WVC/VLC/MX)
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);   // menu ⋮ (tela cheia / espelhar)
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -313,6 +314,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const opts = {
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
       offline: !!(dlKey && isDownloaded(dlKey) && streamKey(ownStream.url) === streamKey(getEntry(tmdbId, type, season, episode)?.chosenUrl || '')),
+      downloaded: !!(dlKey && isDownloaded(dlKey)),   // indicador no topo (⤓ em destaque)
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
       qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
@@ -594,12 +596,27 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <SkipForward className="w-5 h-5" />
             </Button>
           )}
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'} onClick={toggleFullscreen}>
-            {fullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-          </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Espelhar para TV" onClick={tryCast}>
-            <Tv className="w-5 h-5" />
-          </Button>
+          {/* Tela cheia e espelhar saíram da barra (estava cheia demais) e viraram
+              um menu ⋮ — as duas ações continuam a um toque de distância. */}
+          <div className="relative">
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Mais opções" onClick={() => setMoreOpen(o => !o)}>
+              <MoreVertical className="w-5 h-5" />
+            </Button>
+            {moreOpen && (
+              <>
+                <button aria-hidden className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} />
+                <div className="absolute right-0 top-11 z-30 bg-card border border-border rounded-lg py-1 w-52 shadow-xl">
+                  <button onClick={() => { setMoreOpen(false); toggleFullscreen(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary">
+                    {fullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                    {fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+                  </button>
+                  <button onClick={() => { setMoreOpen(false); tryCast(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary">
+                    <Tv className="w-4 h-4" /> Espelhar para TV
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           {fullscreen && (
             <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Ocultar controles" onClick={() => setControlsVisible(false)}>
               <ChevronUp className="w-5 h-5" />

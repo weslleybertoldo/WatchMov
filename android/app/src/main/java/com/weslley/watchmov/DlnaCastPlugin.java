@@ -131,6 +131,15 @@ public class DlnaCastPlugin extends Plugin {
     }
 
     public static void castSync(String controlUrl, String url, String title) throws Exception {
+        castSync(controlUrl, url, title, true);
+    }
+
+    /**
+     * stopFirst=false: TENTA trocar a mídia sem parar a TV (é o "Próximo episódio" —
+     * o Stop é o que faz a TV piscar/"desconectar"). Se ela recusar o
+     * SetAVTransportURI ("Transition not available"), aí sim manda Stop e repete.
+     */
+    public static void castSync(String controlUrl, String url, String title, boolean stopFirst) throws Exception {
         // protocolInfo + DLNA.ORG_FLAGS: a maioria das TVs (LG/Samsung) EXIGE o <res>
         // com protocolInfo no DIDL, senão ignora o SetAVTransportURI (parece "nada
         // aconteceu"). http-get:*:video/mp4 = streaming HTTP progressivo. OP=01 =
@@ -147,12 +156,25 @@ public class DlnaCastPlugin extends Plugin {
             + "<dc:title>" + esc(title) + "</dc:title>"
             + "<res protocolInfo=\"" + proto + "\">" + esc(url) + "</res>"
             + "<upnp:class>object.item.videoItem</upnp:class></item></DIDL-Lite>";
-        // Stop antes: se a TV já está tocando (cast anterior), o SetAVTransportURI é
-        // recusado com "Transition not available" (701). Stop reseta o transporte.
+        final String setUri = envelope("SetAVTransportURI",
+            "<InstanceID>0</InstanceID><CurrentURI>" + esc(url) + "</CurrentURI><CurrentURIMetaData>" + esc(didl) + "</CurrentURIMetaData>");
+        // Stop antes: se a TV já está tocando (cast anterior), o SetAVTransportURI pode
+        // ser recusado com "Transition not available" (701). Stop reseta o transporte.
         // Best-effort — se já estiver parada, o erro do Stop é ignorado.
-        try { soap(controlUrl, "Stop", envelope("Stop", "<InstanceID>0</InstanceID>")); } catch (Exception ignored) {}
-        soap(controlUrl, "SetAVTransportURI", envelope("SetAVTransportURI",
-            "<InstanceID>0</InstanceID><CurrentURI>" + esc(url) + "</CurrentURI><CurrentURIMetaData>" + esc(didl) + "</CurrentURIMetaData>"));
+        // Na TROCA DE EPISÓDIO (stopFirst=false) o Stop é justamente o que faz a TV
+        // "cair": tenta direto e só para a TV se ela REALMENTE recusar.
+        if (stopFirst) {
+            try { soap(controlUrl, "Stop", envelope("Stop", "<InstanceID>0</InstanceID>")); } catch (Exception ignored) {}
+            soap(controlUrl, "SetAVTransportURI", setUri);
+        } else {
+            try {
+                soap(controlUrl, "SetAVTransportURI", setUri);
+            } catch (Exception recusou) {
+                try { soap(controlUrl, "Stop", envelope("Stop", "<InstanceID>0</InstanceID>")); } catch (Exception ignored) {}
+                try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+                soap(controlUrl, "SetAVTransportURI", setUri);
+            }
+        }
         soap(controlUrl, "Play", envelope("Play", "<InstanceID>0</InstanceID><Speed>1</Speed>"));
     }
 

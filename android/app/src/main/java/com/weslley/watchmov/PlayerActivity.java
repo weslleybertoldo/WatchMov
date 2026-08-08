@@ -63,6 +63,7 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_HAS_NEXT = "hasNext";
     public static final String EXTRA_WATCHED = "watched";
     public static final String EXTRA_OFFLINE = "offline";
+    public static final String EXTRA_DOWNLOADED = "downloaded";   // ep tem download concluído
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
     public static final String RESUME_PREFS = "watchmov_resume";
     public static final String RESULT_POSITION = "positionMs";
@@ -98,6 +99,10 @@ public class PlayerActivity extends Activity {
     private String[] qualities;
     private String mReferer;
     private boolean offline = false;              // item baixado → toca do cache (CacheDataSource)
+    private boolean downloaded = false;           // ep tem download concluído (só indicador)
+    private Button dlBtn;                         // "⤓" no topo: destaque = baixado
+    private TextView sourceTv;                    // "Baixado"/"Servidor" na barra de baixo
+    private Button castWatchedBtn;                // "concluído" no overlay do espelhamento
     private boolean hasNext = false;
     private boolean watched = false;              // estado atual do "assistido"
     private boolean userUnwatched = false;        // desmarcou manual → não auto-marcar de novo
@@ -163,6 +168,7 @@ public class PlayerActivity extends Activity {
         hasNext = getIntent().getBooleanExtra(EXTRA_HAS_NEXT, false);
         watched = getIntent().getBooleanExtra(EXTRA_WATCHED, false);
         offline = getIntent().getBooleanExtra(EXTRA_OFFLINE, false);
+        downloaded = getIntent().getBooleanExtra(EXTRA_DOWNLOADED, false) || offline;
         resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
         long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
@@ -183,6 +189,7 @@ public class PlayerActivity extends Activity {
         wmTitleTv = view.findViewById(R.id.wm_title);
         wmTitleTv.setText(mTitle);
 
+        sourceTv = view.findViewById(R.id.wm_source);
         watchedBtn = view.findViewById(R.id.wm_watched);
         watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
         watchedBtn.setOnClickListener(v -> toggleWatched());
@@ -199,6 +206,9 @@ public class PlayerActivity extends Activity {
         Button back = pill("‹ Voltar", v -> finishWithResult(false, false));
         Button server = pill("▣ Servidor", v -> finishWithResult(false, true));
         Button links = pill("Links", v -> showLinks());
+        // Indicador (não é botão de ação): destaque = este episódio está baixado.
+        dlBtn = pill("⤓", v -> android.widget.Toast.makeText(this,
+            downloaded ? "Episódio baixado no aparelho" : "Episódio não baixado", android.widget.Toast.LENGTH_SHORT).show());
         qualityBtn = pill("Auto", v -> showQuality());
         Button fwd60 = pill("+60s", v -> { if (player != null) player.seekTo(player.getCurrentPosition() + 60000); });
         nextBtn = pill("Próximo ⏭", v -> requestNext(false));
@@ -224,6 +234,7 @@ public class PlayerActivity extends Activity {
         View spacer = new View(this);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
         bar.addView(server);
+        bar.addView(dlBtn);
         bar.addView(fwd60);
         bar.addView(nextBtn);
         nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
@@ -282,6 +293,14 @@ public class PlayerActivity extends Activity {
         nextCastBtn = pill("Próximo episódio ▶|", v -> requestNext(true));
         nextCastBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
 
+        // Marcar concluído SEM sair do espelhamento (mesmo efeito do ✓ do reprodutor).
+        // Não mexe na posição do player local — só na marcação.
+        castWatchedBtn = pill("✓ Marcar como concluído", v -> {
+            userUnwatched = watched;            // desmarcou na mão → não auto-marcar de novo
+            setWatched(!watched);
+            castMsg(watched ? "Marcado como concluído" : "Desmarcado", 2500);
+        });
+
         Button stopCast = pill("Parar espelhamento", v -> {
             castMsg("Parando espelhamento…", 2500);
             if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
@@ -306,7 +325,11 @@ public class PlayerActivity extends Activity {
         stopLp.gravity = Gravity.CENTER_HORIZONTAL; stopLp.topMargin = 56;
         stopCast.setLayoutParams(stopLp);
         castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp);
-        castCol.addView(castRowScroll); castCol.addView(nextCastBtn); castCol.addView(stopCast);
+        LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        doneLp.gravity = Gravity.CENTER_HORIZONTAL; doneLp.topMargin = 16;
+        castWatchedBtn.setLayoutParams(doneLp);
+        castCol.addView(castRowScroll); castCol.addView(nextCastBtn);
+        castCol.addView(castWatchedBtn); castCol.addView(stopCast);
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -326,6 +349,8 @@ public class PlayerActivity extends Activity {
         root.addView(castMsgTv, msgLp);
 
         setContentView(root);
+        updateSourceUi();
+        updateWatchedUi();
 
         // Inicializa o Cast cedo: registra o provider do Google Cast no MediaRouter
         // ainda no onCreate, senão selecionar a rota conecta no MediaRouter mas NÃO
@@ -503,7 +528,26 @@ public class PlayerActivity extends Activity {
         if (watched == w) return;
         watched = w;
         if (watchedBtn != null) watchedBtn.setColorFilter(w ? Color.parseColor("#4ADE80") : Color.WHITE);
+        updateWatchedUi();
         NativePlayerPlugin.reportWatched(w);
+    }
+
+    private void updateWatchedUi() {
+        if (castWatchedBtn == null) return;
+        castWatchedBtn.setText(watched ? "✓ Concluído" : "✓ Marcar como concluído");
+        castWatchedBtn.setTextColor(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
+    }
+
+    // De onde o vídeo vem AGORA (barra de baixo) e se o episódio está baixado (topo).
+    private void updateSourceUi() {
+        if (sourceTv != null) {
+            sourceTv.setText(offline ? "Baixado" : "Servidor");
+            sourceTv.setTextColor(offline ? Color.parseColor("#4ADE80") : Color.parseColor("#B0FFFFFF"));
+        }
+        if (dlBtn != null) {
+            dlBtn.setText(downloaded ? "⤓ Baixado" : "⤓");
+            dlBtn.setTextColor(downloaded ? Color.parseColor("#4ADE80") : Color.parseColor("#66FFFFFF"));
+        }
     }
 
     private void saveResume() {
@@ -885,7 +929,9 @@ public class PlayerActivity extends Activity {
                 String err = null;
                 for (int i = 0; i < 3; i++) {
                     try { Thread.sleep(i == 0 ? 900 : 2000); } catch (InterruptedException ignored) {}
-                    try { DlnaCastPlugin.castSync(ctrl, castUrl, t); err = null; break; }
+                    // stopFirst=false: troca a mídia SEM parar a TV (o Stop é o que a
+                    // fazia "cair e reconectar"); só para se ela recusar a troca.
+                    try { DlnaCastPlugin.castSync(ctrl, castUrl, t, false); err = null; break; }
                     catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                 }
                 if (err == null && startFromMs > 3000) seekWithRetry(ctrl, startFromMs);
@@ -1362,7 +1408,8 @@ public class PlayerActivity extends Activity {
     public void loadNextInPlace(final String url, final String referer, final String mime,
                                 final String title, final String[] nUrls, final String[] nMimes,
                                 final String[] nQualities, final boolean nHasNext, final String key,
-                                final long startMs, final boolean nOffline, final boolean nWatched) {
+                                final long startMs, final boolean nOffline, final boolean nWatched,
+                                final boolean nDownloaded) {
         runOnUiThread(() -> {
             progressHandler.removeCallbacks(nextTimeout);
             if (!awaitingNext) return;
@@ -1384,8 +1431,9 @@ public class PlayerActivity extends Activity {
             applyRefererHeaders(referer);
             mMime = mime; mTitle = title;
             urls = nUrls; mimes = nMimes; qualities = nQualities;
-            hasNext = nHasNext; offline = nOffline;
+            hasNext = nHasNext; offline = nOffline; downloaded = nDownloaded || nOffline;
             watched = nWatched; userUnwatched = false;
+            updateSourceUi(); updateWatchedUi();
             triedUrls.clear(); errorHandled = false;
             if (wmTitleTv != null) wmTitleTv.setText(title);
             if (watchedBtn != null) watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
