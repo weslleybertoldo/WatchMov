@@ -340,6 +340,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const group = capturedList.filter(s => isTrackOnly(s.url) === isTrackOnly(ownStream.url));
     const opts = {
       url: ownStream.url, referer: ownStream.referer, mime: ownStream.mime, title, startMs,
+      // Headers REAIS da captura → o proxy reenvia verbatim (CDNs que gateiam por
+      // Origin/token respondiam 403 ao replay só-com-Referer).
+      headers: ownStream.headers,
       offline: !!(dlKey && isDownloaded(dlKey) && streamKey(ownStream.url) === streamKey(getEntry(tmdbId, type, season, episode)?.chosenUrl || '')),
       downloaded: !!(dlKey && isDownloaded(dlKey)),   // indicador no topo (⤓ em destaque)
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),

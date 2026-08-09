@@ -1,6 +1,6 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
-interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean }
+interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string> }
 interface PlayResult { positionMs: number; url?: string; next?: boolean; server?: boolean; recapture?: boolean; watched?: boolean }
 
 interface NativePlayerPlugin {
