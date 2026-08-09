@@ -1,6 +1,8 @@
 import { registerPlugin, Capacitor } from '@capacitor/core';
 import { useEffect, useReducer } from 'react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
+import { addNotice } from '@/lib/appNotices';
 
 // Opção "baixar já em MP4" (plugin Mp4Download). Grava um arquivo real em
 // Movies/WatchMov enquanto baixa — qualquer app abre (Web Video Cast, VLC,
@@ -53,7 +55,9 @@ function listen() {
     notify();
     const id = `mp4-${e.key}`;
     if (e.state === 'queued') {
-      toast.loading('Na fila…', { id, description: 'Começa assim que a conversão atual terminar.' });
+      // Toast COM saída (o loading ficava preso na tela); o registro fica no sino.
+      toast.info('Na fila…', { id, duration: 4000, description: 'Começa assim que a conversão atual terminar.' });
+      addNotice({ kind: 'mp4', title: 'Conversão na fila', body: 'Começa assim que a atual terminar.' });
       return;
     }
     if (e.state === 'converting') {
@@ -68,15 +72,32 @@ function listen() {
       });
     } else if (e.state === 'done') {
       toast.success('MP4 pronto', {
-        id, description: `${e.name || 'vídeo'} em Movies/WatchMov — abra no Web Video Cast pra mandar na TV.`,
+        id, duration: 6000,
+        description: `${e.name || 'vídeo'} em Movies/WatchMov — abra no Web Video Cast pra mandar na TV.`,
       });
+      addNotice({ kind: 'mp4', title: `${(e.name || 'Vídeo').replace('.mp4', '')} foi convertido`,
+        body: 'Está em Movies/WatchMov — dá pra abrir no Web Video Cast ou VLC.' });
     } else if (e.state === 'failed') {
-      toast.error('Não consegui baixar em MP4', { id, description: e.error || 'erro' });
+      toast.error('Não consegui baixar em MP4', { id, duration: 8000, description: e.error || 'erro' });
+      addNotice({ kind: 'mp4', error: true, title: 'A conversão falhou', body: e.error || 'erro' });
+      // Vai pro painel de bugs mesmo com o player fechado (o log do player só
+      // registra enquanto ele está montado — foi por isso que o 1º erro se perdeu).
+      supabase.from('wm_playback_errors').insert({
+        title: e.name ?? e.key,
+        error_name: 'EXPORT_MP4',
+        error_cause: e.error ?? null,
+        app_version: __APP_VERSION__,
+        platform: 'android',
+      }).then(({ error }) => { if (error) console.warn('[bugs] log export falhou', error.message); });
     } else {
       toast.dismiss(id);
     }
   }).catch(() => {});
 }
+
+// Liga o acompanhamento (toasts + central) já no boot: a conversão pode começar
+// pelo botão do player nativo, sem nenhuma tela do JS montada.
+export function startMp4Listener() { listen(); }
 
 export async function downloadAsMp4(key: string, o: { url: string; referer?: string; mime?: string; title?: string }) {
   if (!mp4Native()) return;

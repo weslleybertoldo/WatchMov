@@ -377,6 +377,9 @@ public final class ExportUtil {
                 main.post(() -> {
                     cleanup();
                     if (c != null) c.done(uri, name);
+                    // Converter demora — o usuário raramente fica olhando a tela.
+                    DownloadUtil.notifyReady(ctx, name.replace(".mp4", ""),
+                        "foi convertido — já dá pra abrir no Web Video Cast");
                     pump();     // próximo da fila
                 });
             } catch (Throwable t) {

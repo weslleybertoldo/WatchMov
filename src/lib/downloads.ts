@@ -3,6 +3,7 @@ import { Downloader, downloadsNative, type DownloadItem } from './downloader';
 import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress } from './nativePlayer';
+import { addNotice } from './appNotices';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -14,6 +15,13 @@ const notify = () => listeners.forEach(l => l());
 const items = new Map<string, DownloadItem>();
 let inited = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+// "Seus Amigos e Vizinhos — T2E5" a partir da chave + título gravado no download.
+function labelOf(key: string, title?: string): string {
+  const p = key.split(':');
+  const base = title && title.trim() ? title.trim() : 'Seu vídeo';
+  return p[0] === 'e' && p.length >= 4 ? `${base} — T${p[2]}E${p[3]}` : base;
+}
 
 export const movieKey = (tmdbId: number) => `m:${tmdbId}`;
 export const epKey = (tmdbId: number, season: number, ep: number) => `e:${tmdbId}:${season}:${ep}`;
@@ -94,8 +102,20 @@ function ensureInit() {
     notify(); syncPolling();
   }).catch(() => {});
   Downloader.addListener('downloadChanged', (d) => {
+    const antes = items.get(d.key)?.state;
     if (d.state === 'removed') items.delete(d.key);
     else items.set(d.key, d);   // mantém 'failed' visível (com reason)
+    // Registra na central (aba Downloads) só na TRANSIÇÃO pra concluído/falhou —
+    // o listener repete o mesmo estado várias vezes.
+    if (antes !== d.state) {
+      if (d.state === 'completed') {
+        addNotice({ kind: 'download', title: `${labelOf(d.key, d.title)} já está disponível em Downloads`,
+          body: 'Toque na aba Download pra assistir offline.' });
+      } else if (d.state === 'failed') {
+        addNotice({ kind: 'download', error: true, title: `Falhou o download de ${labelOf(d.key, d.title)}`,
+          body: d.reason || 'erro' });
+      }
+    }
     notify(); syncPolling();
   }).catch(() => {});
 }

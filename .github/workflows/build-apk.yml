@@ -42,12 +42,11 @@ jobs:
       - name: Inject version into build.gradle
         run: |
           V="${{ steps.version.outputs.current }}"
-          IFS='.' read -r MA MI PA <<< "$V"
-          MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
-          # versionCode = inteiro crescente (MAJOR*10000 + MINOR*100 + PATCH).
-          # 10# força base decimal: sem isso "08"/"09" viram octal inválido no bash
-          # (ex. v3.08/3.09 quebravam → APK com versionCode inválido → "pacote inválido").
-          CODE=$((10#$MA * 10000 + 10#$MI * 100 + 10#$PA))
+          # versionCode DESACOPLADO do nome: cresce a cada build (nº do run), então o
+          # nome da versão pode ser renumerado à vontade (3.102 → 3.2) sem o Android
+          # tratar como downgrade e recusar a instalação por cima.
+          # Base 50000 > qualquer code já publicado pela fórmula antiga (máx. 40200).
+          CODE=$((50000 + ${{ github.run_number }}))
           sed -i "s/versionCode [0-9]\+/versionCode $CODE/" android/app/build.gradle
           sed -i "s/versionName \"[^\"]*\"/versionName \"$V\"/" android/app/build.gradle
           echo "versionCode=$CODE versionName=$V"

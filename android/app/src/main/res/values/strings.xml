@@ -5,4 +5,5 @@
     <string name="package_name">com.weslley.watchmov</string>
     <string name="custom_url_scheme">com.weslley.watchmov</string>
     <string name="download_channel_name">Downloads</string>
+    <string name="download_done_channel_name">Downloads concluídos</string>
 </resources>
