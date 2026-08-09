@@ -253,6 +253,9 @@ public final class ExportUtil {
                                     String mime, String title, Cb callback) {
         final Context ctx = context.getApplicationContext();
         if (url == null || url.isEmpty()) { callback.failed("sem link"); return; }
+        // Faixa isolada (/m3/ só vídeo, /md/ só áudio) sozinha não vira um MP4 tocável
+        // e ainda confunde o muxer. Só a MASTER (áudio+vídeo) pode ser baixada direto.
+        if (isTrackOnly(url)) { callback.failed("esse link é uma faixa isolada — baixe o link \"Completo\" (MASTER)"); return; }
         ProxyServer.ensure();
         String src = url.contains("/s?u=") ? url : ProxyServer.local(url, referer);
         if (!src.contains("&ap=")) src = src + "&ap=pt";
@@ -265,6 +268,13 @@ public final class ExportUtil {
             : (mime == null || mime.isEmpty() ? MimeTypes.APPLICATION_M3U8 : mime);
         // Baixando da rede não dá pra saber o tamanho final → o anel gira sem %.
         enqueue(new Job(ctx, key, safeName(title, key) + ".mp4", src, m, false, 0, callback));
+    }
+
+    /** Faixa isolada: /m3/ (só vídeo), /md/ (só áudio) — mesma regra do handoff externo. */
+    private static boolean isTrackOnly(String url) {
+        if (url == null) return false;
+        String l = url.toLowerCase();
+        return l.contains("/m3/") || l.contains("/md/") || l.matches(".*index-f\\d.*") || l.matches(".*-v\\d-a\\d.*");
     }
 
     /** É HLS? (mesma leitura de URL que o ProxyServer e o handoff externo usam.) */
@@ -306,16 +316,21 @@ public final class ExportUtil {
                         @Override public void onCompleted(Composition c, ExportResult r) { publishAsync(ctx); }
                         @Override public void onError(Composition c, ExportResult r, ExportException e) { onExportError(e); }
                     });
-                if (fromCache) {
-                    // MESMO caminho de leitura do player offline: o CacheDataSource lê os
-                    // segmentos do SimpleCache pela chave normalizada e só cai no
-                    // proxy/rede em cache-miss.
-                    b.setAssetLoaderFactory(new ExoPlayerAssetLoader.Factory(
-                        ctx,
-                        new DefaultDecoderFactory(ctx),
-                        Clock.DEFAULT,
-                        new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(ctx))));
-                }
+                // SEMPRE ler via ExoPlayerAssetLoader (pipeline HLS completo do ExoPlayer),
+                // nas DUAS pontas. O default AssetLoader do Transformer alimentava o muxer
+                // com bytes crus da rede — e o EmbedPlay entrega faixas separadas
+                // (/m3/,/md/) + muro anti-hotlink (segmento dummy/451). Isso estourava o
+                // muxer NATIVO (SIGSEGV, fora do onError) → o app fechava. O ExoPlayer
+                // valida a playlist/segmentos e transforma o 451 em erro tratável (onError).
+                //   fromCache=true  → CacheDataSource (título já baixado, sem rede)
+                //   fromCache=false → HTTP (a URL já é o proxy local, que resolve
+                //                     anti-bot/gzip e devolve 451 no muro)
+                androidx.media3.datasource.DataSource.Factory dsf = fromCache
+                    ? DownloadUtil.getPlaybackCacheFactory(ctx)
+                    : new androidx.media3.datasource.DefaultHttpDataSource.Factory();
+                b.setAssetLoaderFactory(new ExoPlayerAssetLoader.Factory(
+                    ctx, new DefaultDecoderFactory(ctx), Clock.DEFAULT,
+                    new DefaultMediaSourceFactory(dsf)));
                 transformer = b.build();
                 transformer.start(item, out);
                 // Primeiro plano: sem isso o Android mata o processo quando o app sai
