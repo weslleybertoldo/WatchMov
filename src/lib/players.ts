@@ -116,6 +116,28 @@ export const PROVIDERS: Provider[] = [
         : `https://visioncine.xyz/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
     },
   },
+  // Achados no agregador onlinefilmer.net (Pobreflix) — esquema por IMDB confirmado
+  // p/ filme; série é palpite.
+  {
+    id: 'fshd',
+    name: 'Fonte 9 (FS/HD — testar)',
+    build: (t) => {                                   // IMDB id
+      if (!t.imdbId) return null;
+      return t.type === 'movie'
+        ? `https://fshd.link/filme/${t.imdbId}`
+        : `https://fshd.link/serie/${t.imdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
+    id: 'vsembed',
+    name: 'Fonte 10 (VSEmbed — testar)',
+    build: (t) => {                                   // IMDB id, querystring
+      if (!t.imdbId) return null;
+      return t.type === 'movie'
+        ? `https://vsembed.ru/embed/movie?imdb=${t.imdbId}`
+        : `https://vsembed.ru/embed/tv?imdb=${t.imdbId}&sea=${s(t)}&epi=${e(t)}`;
+    },
+  },
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -129,4 +151,6 @@ export const PROVIDER_HOSTS = [
   'https://roxano.top',
   'https://mostraflix.top',
   'https://visioncine.xyz',
+  'https://fshd.link',
+  'https://vsembed.ru',
 ];
