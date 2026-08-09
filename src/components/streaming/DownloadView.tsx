@@ -194,6 +194,7 @@ function Poster({ meta, item, onClick, editing, badge, watched, progress, subtit
 function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string, DownloadItem>; onBack: () => void }) {
   const [editing, setEditing] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [cancelKey, setCancelKey] = useState<string | null>(null);   // download a cancelar
   const toggle = (k: string) => setSel(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const removeSel = () => { sel.forEach(k => removeDownload(k)); setSel(new Set()); setEditing(false); };
   return (
@@ -212,6 +213,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
           const item = items.get(e.key);
           const picked = sel.has(e.key);
           const done = item?.state === 'completed';
+          const baixando = !!item && item.state !== 'completed' && item.state !== 'removed';
           const wp = watchProgressOf(e.key);
           return (
             // <div role="button">, não <button>: precisa aceitar o botão de converter
@@ -219,7 +221,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
             // grid, o div mantém o tamanho da célula — foi trocar isso por um wrapper
             // que a tela colapsou na v3.98.
             <div key={e.key} role="button" tabIndex={0}
-              onClick={() => editing ? toggle(e.key) : (done ? playDownloaded(e.key) : undefined)}
+              onClick={() => editing ? toggle(e.key) : done ? playDownloaded(e.key) : baixando ? setCancelKey(e.key) : undefined}
               className={`relative aspect-square overflow-hidden rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition cursor-pointer
                 ${picked ? 'border-destructive bg-destructive/15 text-destructive'
                   : done ? 'border-green-400/40 bg-green-400/5 text-foreground'
@@ -264,6 +266,25 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
           <Trash2 className="w-4 h-4" /> Excluir{sel.size > 0 ? ` (${sel.size})` : ''}
         </Button>
       )}
+
+      {/* Tocar num episódio que ainda está baixando = cancelar. Ele some da lista,
+          porque sem o download completo não há nada pra assistir. */}
+      <AlertDialog open={!!cancelKey} onOpenChange={o => { if (!o) setCancelKey(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancelar o download?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O episódio sai da lista e o que já baixou é descartado. Dá pra baixar de novo depois.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Continuar baixando</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (cancelKey) removeDownload(cancelKey); setCancelKey(null); }}>
+              Sim, cancelar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -323,6 +344,7 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const { meta, items } = useDownloadList();
   const [editing, setEditing] = useState(false);
   const [openSeries, setOpenSeries] = useState<number | null>(null);
+  const [cancelKey, setCancelKey] = useState<string | null>(null);   // filme baixando
 
   // Voltar (botão ou gesto) DENTRO dos episódios fecha só a sub-tela — antes ele
   // caía direto no handler do Index, que fechava a aba inteira e devolvia o
@@ -362,7 +384,9 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const openItem = (g: TitleGroup) => {
     if (g.type === 'tv') { setOpenSeries(g.tmdbId); return; }
     const item = items.get(movieKey(g.tmdbId));
-    if (item?.state === 'completed') playDownloaded(movieKey(g.tmdbId));
+    if (item?.state === 'completed') { playDownloaded(movieKey(g.tmdbId)); return; }
+    // Filme ainda baixando: tocar pergunta se cancela (mesma regra dos episódios).
+    if (item && item.state !== 'removed') setCancelKey(movieKey(g.tmdbId));
   };
   const deleteItem = (g: TitleGroup) => clearDownloadsFor(g.tmdbId, g.type === 'movie');
 
@@ -387,6 +411,23 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
           {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres no aparelho</>}
         </p>
       )}
+
+      <AlertDialog open={!!cancelKey} onOpenChange={o => { if (!o) setCancelKey(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancelar o download?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O filme sai da lista e o que já baixou é descartado. Dá pra baixar de novo depois.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Continuar baixando</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (cancelKey) removeDownload(cancelKey); setCancelKey(null); }}>
+              Sim, cancelar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {empty ? (
         <p className="text-sm text-muted-foreground py-8 text-center">
