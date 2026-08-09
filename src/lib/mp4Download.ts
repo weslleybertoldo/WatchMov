@@ -26,7 +26,7 @@ interface Mp4DownloadPlugin {
   convert(o: { key: string; title?: string }): Promise<void>;
   list(): Promise<{ keys: string[]; running?: string; queued?: string[]; entries?: { key: string; name?: string; size?: number }[] }>;
   cancel(o?: { key?: string }): Promise<void>;
-  status(o: { key: string }): Promise<{ done: boolean; uri?: string; running: boolean }>;
+  status(o: { key: string; title?: string }): Promise<{ done: boolean; uri?: string; running: boolean; size?: number }>;
   openWith(o: { key: string; title?: string }): Promise<void>;
   remove(o: { key: string }): Promise<void>;
   addListener(event: 'mp4Changed', cb: (e: Mp4Event) => void): Promise<{ remove: () => void }>;
@@ -131,9 +131,28 @@ export async function downloadAsMp4(key: string, o: { url: string; referer?: str
   }
 }
 
-export async function mp4Status(key: string) {
+export async function mp4Status(key: string, title?: string) {
   if (!mp4Native()) return { done: false, running: false };
-  try { return await Mp4Download.status({ key }); } catch { return { done: false, running: false }; }
+  try { return await Mp4Download.status({ key, title }); } catch { return { done: false, running: false }; }
+}
+
+/**
+ * Reconcilia os títulos conhecidos com os arquivos em Movies/WatchMov: se o
+ * registro do MP4 se perdeu (limpeza de dados, exclusão parcial, reinstalação), o
+ * nativo reencontra pelo nome e volta a marcar o episódio como baixado.
+ */
+export async function reconcileMp4(entradas: { key: string; title: string }[]) {
+  if (!mp4Native() || entradas.length === 0) return;
+  listen();
+  let mudou = false;
+  for (const e of entradas) {
+    if (items.get(e.key)?.state === 'done') continue;
+    try {
+      const r = await Mp4Download.status({ key: e.key, title: e.title });
+      if (r.done) { items.set(e.key, { key: e.key, state: 'done', percent: 100, uri: r.uri, size: r.size }); mudou = true; }
+    } catch { /* segue */ }
+  }
+  if (mudou) notify();
 }
 
 export async function openMp4(key: string, title?: string) {
@@ -186,9 +205,9 @@ export function mp4DoneKeys(): Set<string> {
 }
 
 /** Onde está o MP4 dessa chave (content:// do MediaStore), pra reproduzir. */
-export async function mp4UriOf(key: string): Promise<string | null> {
+export async function mp4UriOf(key: string, title?: string): Promise<string | null> {
   if (!mp4Native()) return null;
-  try { const r = await Mp4Download.status({ key }); return r.done ? (r.uri ?? null) : null; } catch { return null; }
+  try { const r = await Mp4Download.status({ key, title }); return r.done ? (r.uri ?? null) : null; } catch { return null; }
 }
 
 /** Avisa a UI quando a lista de MP4 muda (a aba Download escuta pra atualizar). */

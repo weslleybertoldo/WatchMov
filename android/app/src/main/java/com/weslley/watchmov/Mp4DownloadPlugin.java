@@ -165,6 +165,8 @@ public class Mp4DownloadPlugin extends Plugin {
     public void status(PluginCall call) {
         String key = call.getString("key", "");
         Uri uri = ExportUtil.exported(getContext(), key);
+        // Sem registro? Procura o arquivo pelo nome e reconecta (ver findInStore).
+        if (uri == null) uri = ExportUtil.findInStore(getContext(), key, call.getString("title", ""));
         JSObject ret = new JSObject();
         ret.put("done", uri != null);
         if (uri != null) { ret.put("uri", uri.toString()); ret.put("size", ExportUtil.exportedSize(getContext(), key)); }

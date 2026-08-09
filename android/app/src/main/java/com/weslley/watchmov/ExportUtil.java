@@ -123,11 +123,21 @@ public final class ExportUtil {
         if (v == null) return null;
         int sep = v.indexOf('|');
         Uri uri = Uri.parse(sep >= 0 ? v.substring(0, sep) : v);
-        try (InputStream in = ctx.getContentResolver().openInputStream(uri)) {
-            if (in != null) return uri;
-        } catch (Exception ignored) {}
-        prefs(ctx).edit().remove(key).apply();
-        return null;
+        // ⚠️ CAUSA RAIZ de "o app esqueceu o MP4": aqui antes bastava um
+        // openInputStream falhar pra APAGAR o registro. Qualquer erro passageiro
+        // (MediaStore ainda subindo no boot, permissão momentânea, arquivo em uso)
+        // fazia o app perder o arquivo pra sempre, mesmo intacto no aparelho.
+        // Agora: só esquece quando o MediaStore confirma que a linha SUMIU.
+        try (android.database.Cursor c = ctx.getContentResolver().query(
+                uri, new String[]{ MediaStore.Video.Media._ID }, null, null, null)) {
+            if (c != null && c.moveToFirst()) return uri;      // existe
+            if (c != null) { prefs(ctx).edit().remove(key).apply(); return null; }  // apagado de verdade
+        } catch (SecurityException se) {
+            return uri;      // sem permissão agora ≠ arquivo inexistente: mantém o registro
+        } catch (Exception ignored) {
+            return uri;      // erro passageiro: mantém
+        }
+        return uri;
     }
 
     /** Chaves que já têm MP4 (pra aba Download marcar o formato de cada item). */
@@ -153,6 +163,34 @@ public final class ExportUtil {
         if (v == null) return null;
         int sep = v.indexOf('|');
         return sep >= 0 ? v.substring(sep + 1) : null;
+    }
+
+    /**
+     * Procura o MP4 dessa chave em Movies/WatchMov PELO NOME e re-registra.
+     *
+     * O registro (SharedPreferences) pode se perder — limpeza de dados, exclusão que
+     * apagou o índice mas não o arquivo, reinstalação — e aí o app passava a achar
+     * que o episódio não estava baixado, mesmo com o arquivo intacto no aparelho.
+     * Precisa do título porque o nome é "<título> - T1E8.mp4".
+     */
+    public static Uri findInStore(Context ctx, String key, String title) {
+        if (key == null || title == null || title.isEmpty()) return null;
+        String nome = safeName(title, key) + ".mp4";
+        try {
+            Uri col = Build.VERSION.SDK_INT >= 29
+                ? MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+            try (android.database.Cursor c = ctx.getContentResolver().query(col,
+                    new String[]{ MediaStore.Video.Media._ID },
+                    MediaStore.Video.Media.DISPLAY_NAME + "=?", new String[]{ nome }, null)) {
+                if (c != null && c.moveToFirst()) {
+                    Uri uri = android.content.ContentUris.withAppendedId(col, c.getLong(0));
+                    prefs(ctx).edit().putString(key, uri.toString() + "|" + nome).apply();
+                    return uri;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
     }
 
     public static boolean isRunning() { return runningKey != null; }

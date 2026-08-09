@@ -4,7 +4,7 @@ import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress } from './nativePlayer';
 import { upsertNotice } from './appNotices';
-import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4 } from './mp4Download';
+import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4, reconcileMp4 } from './mp4Download';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -119,6 +119,9 @@ function ensureInit() {
     notify(); syncPolling();
   }).catch(() => {});
   onMp4Change(notify);   // MP4 pronto/removido também mexe no que está "baixado"
+  // Reconecta arquivos cujo registro se perdeu (ver reconcileMp4).
+  const conhecidos = Object.entries(readMeta()).map(([key, m]) => ({ key, title: m.title }));
+  reconcileMp4(conhecidos.filter(e => !!e.title));
   Downloader.addListener('downloadChanged', (d) => {
     const antes = items.get(d.key)?.state;
     if (d.state === 'removed') items.delete(d.key);
@@ -226,6 +229,11 @@ export function clearDownloadsFor(tmdbId: number, isMovie: boolean) {
   for (const k of [...knownKeys()]) if (k.startsWith(p)) removeDownload(k);
 }
 
+// Título como foi usado no nome do arquivo ("Witch Hat Atelier — T1 E8").
+function tituloDoArquivo(meta: DownloadMeta): string {
+  return meta.title || '';
+}
+
 // Metadata mínima a partir da chave — sem título/poster, mas o suficiente pra
 // reproduzir e salvar a posição.
 function metaFromKey(key: string): DownloadMeta | null {
@@ -245,7 +253,7 @@ export async function playDownloaded(key: string): Promise<boolean> {
   if (!meta) return false;
   // Baixado em MP4 (sem cache do Media3): toca o arquivo direto do MediaStore.
   if (items.get(key)?.state !== 'completed') {
-    const uri = await mp4UriOf(key);
+    const uri = await mp4UriOf(key, tituloDoArquivo(meta));
     if (uri) {
       const start = getPosition(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
       const res = await playNative({
