@@ -40,8 +40,39 @@ public class MainActivity extends BridgeActivity {
             || host.endsWith(".googleusercontent.com");
     }
 
+    // Captador de crash: grava a stack em Movies/WatchMov/watchmov-crash.txt ANTES do
+    // app morrer. Pega exceção Java não-tratada em QUALQUER thread (FGS, RemoteViews,
+    // etc.). SIGSEGV nativo NÃO cai aqui — se o app fecha e o arquivo NÃO aparece, o
+    // crash é nativo (ex. muxer do Transformer). Diagnóstico sem precisar de PC/logcat.
+    private void installCrashCatcher() {
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, ex) -> {
+            try {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                ex.printStackTrace(new java.io.PrintWriter(sw));
+                String txt = "thread=" + thread.getName() + "\n" + sw + "\n";
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "watchmov-crash.txt");
+                v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+                if (android.os.Build.VERSION.SDK_INT >= 29)
+                    v.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_MOVIES + "/WatchMov");
+                android.net.Uri col = android.os.Build.VERSION.SDK_INT >= 29
+                    ? android.provider.MediaStore.Downloads.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : android.provider.MediaStore.Files.getContentUri("external");
+                android.net.Uri uri = getContentResolver().insert(col, v);
+                if (uri != null) {
+                    try (java.io.OutputStream os = getContentResolver().openOutputStream(uri)) {
+                        if (os != null) { os.write(txt.getBytes()); os.flush(); }
+                    }
+                }
+            } catch (Throwable ignored) {}
+            if (prev != null) prev.uncaughtException(thread, ex);
+        });
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        installCrashCatcher();
         registerPlugin(ApkInstallerPlugin.class);
         registerPlugin(ScreenCastPlugin.class);
         registerPlugin(ImmersivePlugin.class);
