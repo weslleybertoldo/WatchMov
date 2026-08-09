@@ -10,6 +10,7 @@ import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
 import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
+import { useMp4All } from '@/lib/mp4Download';
 import { getEntry, streamKey } from '@/lib/streamCache';
 import type { DownloadItem } from '@/lib/downloader';
 import { toast } from 'sonner';
@@ -99,6 +100,16 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const [loading, setLoading] = useState(true);
   const dls = useDownloads();
   const { items: dlItems } = useDownloadList();   // estado/progresso por episódio
+  // Download em MP4 não passa pelo DownloadManager: sem isto, o episódio ficava sem
+  // nuvem nem anel enquanto baixava (o arquivo só "existia" ao terminar).
+  const mp4Lista = useMp4All();
+  const mp4Como = (k: string): DownloadItem | undefined => {
+    const m = mp4Lista.find(x => x.key === k);
+    if (!m || m.state === 'done') return undefined;
+    if (m.state === 'downloading' || m.state === 'converting') return { key: k, state: 'downloading', percent: m.percent };
+    if (m.state === 'queued') return { key: k, state: 'queued', percent: -1 };
+    return undefined;
+  };
   const notifyOn = useNotify(media.tmdbId);
   const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
   const [selEps, setSelEps] = useState<Set<number>>(new Set());
@@ -508,7 +519,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                       // Progresso do episódio (mesma fonte da aba Download) — só a barra.
                       const prog = watchProgressOf(epKey(media.tmdbId, s.number, ep));
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
-                      const dlItem = dlItems.get(epKey(media.tmdbId, s.number, ep));
+                      const dlItem = dlItems.get(epKey(media.tmdbId, s.number, ep)) ?? mp4Como(epKey(media.tmdbId, s.number, ep));
                       const picked = selEps.has(ep);
                       return (
                         <button
