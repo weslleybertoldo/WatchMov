@@ -81,6 +81,50 @@ public class Mp4DownloadPlugin extends Plugin {
         call.resolve();
     }
 
+    // Todas as chaves que já viraram MP4 + a que está convertendo agora.
+    @PluginMethod
+    public void list(PluginCall call) {
+        com.getcapacitor.JSArray arr = new com.getcapacitor.JSArray();
+        for (String k : ExportUtil.exportedKeys(getContext())) arr.put(k);
+        JSObject ret = new JSObject();
+        ret.put("keys", arr);
+        if (ExportUtil.runningKey() != null) ret.put("running", ExportUtil.runningKey());
+        call.resolve(ret);
+    }
+
+    // Converte um título JÁ BAIXADO (cache do Media3) pra MP4 — mesmo caminho do
+    // botão do player, disponível também na aba Download.
+    @PluginMethod
+    public void convert(PluginCall call) {
+        final String key = call.getString("key");
+        if (key == null) { call.reject("key obrigatória"); return; }
+        if (Build.VERSION.SDK_INT < 29 && getPermissionState("storage") != PermissionState.GRANTED) {
+            requestPermissionForAlias("storage", call, "storagePermConvert");
+            return;
+        }
+        doConvert(call, key);
+    }
+
+    @PermissionCallback
+    private void storagePermConvert(PluginCall call) {
+        if (getPermissionState("storage") != PermissionState.GRANTED) {
+            call.reject("sem permissão pra gravar em Movies");
+            return;
+        }
+        doConvert(call, call.getString("key"));
+    }
+
+    private void doConvert(PluginCall call, final String key) {
+        Uri ready = ExportUtil.exported(getContext(), key);
+        if (ready != null) { emit(key, "done", 100, null, ready.toString(), null); call.resolve(); return; }
+        ExportUtil.start(getContext(), key, call.getString("title", ""), new ExportUtil.Cb() {
+            @Override public void progress(int p) { emit(key, "converting", p, null, null, null); }
+            @Override public void done(Uri uri, String name) { emit(key, "done", 100, name, uri.toString(), null); }
+            @Override public void failed(String why) { emit(key, "failed", 0, null, null, why); }
+        });
+        call.resolve();
+    }
+
     @PluginMethod
     public void cancel(PluginCall call) {
         String running = ExportUtil.runningKey();
