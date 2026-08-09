@@ -2,7 +2,7 @@ import { registerPlugin, Capacitor } from '@capacitor/core';
 import { useEffect, useReducer } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
-import { addNotice } from '@/lib/appNotices';
+import { upsertNotice } from '@/lib/appNotices';
 
 // Opção "baixar já em MP4" (plugin Mp4Download). Grava um arquivo real em
 // Movies/WatchMov enquanto baixa — qualquer app abre (Web Video Cast, VLC,
@@ -50,36 +50,47 @@ function listen() {
     notify();
   }).catch(() => {});
   Mp4Download.addListener('mp4Changed', e => {
+    const antes = items.get(e.key)?.state;
     if (e.state === 'canceled' || e.state === 'removed' || e.state === 'failed') items.delete(e.key);
     else items.set(e.key, e);
     notify();
     const id = `mp4-${e.key}`;
+    if (e.state === 'canceled') { upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: 'Conversão cancelada', body: 'O download continua no aparelho.' }); toast.dismiss(id); return; }
     if (e.state === 'queued') {
       // Toast COM saída (o loading ficava preso na tela); o registro fica no sino.
       toast.info('Na fila…', { id, duration: 4000, description: 'Começa assim que a conversão atual terminar.' });
-      addNotice({ kind: 'mp4', title: 'Conversão na fila', body: 'Começa assim que a atual terminar.' });
+      upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: 'Conversão na fila', body: 'Começa assim que a atual terminar.' });
       return;
     }
     if (e.state === 'converting') {
-      toast.loading(e.percent >= 0 ? `Convertendo pra MP4… ${e.percent}%` : 'Convertendo pra MP4…', {
-        id, description: 'Pode fechar o app — continua na notificação.',
-      });
+      // Aviso SÓ ao começar, com saída. O acompanhamento ao vivo fica no sino
+      // (aba Conversões) e na notificação do Android — um toast que nunca some
+      // tapa a tela inteira enquanto a conversão dura.
+      if (antes !== 'converting') {
+        toast.info('Convertendo pra MP4…', { id, duration: 4000, description: 'Acompanhe no sino ou na notificação. Pode fechar o app.' });
+        upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: `Convertendo ${(e.name || 'vídeo').replace('.mp4', '')}`, body: 'Acompanhe o progresso aqui.' });
+      }
       return;
     }
     if (e.state === 'downloading') {
-      toast.loading(e.percent >= 0 ? `Baixando em MP4… ${e.percent}%` : 'Baixando em MP4…', {
-        id, description: 'Segue na notificação; se parar no meio, recomeça do zero.',
-      });
+      if (antes !== 'downloading') {
+        toast.info('Baixando em MP4…', { id, duration: 4000, description: 'Acompanhe no sino ou na notificação; se parar no meio, recomeça do zero.' });
+        upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: `Baixando ${(e.name || 'vídeo').replace('.mp4', '')} em MP4`, body: 'Acompanhe o progresso aqui.' });
+      }
     } else if (e.state === 'done') {
       toast.success('MP4 pronto', {
         id, duration: 6000,
         description: `${e.name || 'vídeo'} em Movies/WatchMov — abra no Web Video Cast pra mandar na TV.`,
       });
-      addNotice({ kind: 'mp4', title: `${(e.name || 'Vídeo').replace('.mp4', '')} foi convertido`,
+      // Substitui o aviso de progresso desta mesma tarefa.
+      upsertNotice(`mp4:${e.key}`, { kind: 'mp4',
+        title: `${antes === 'downloading' ? 'Download' : 'Conversão'} de ${(e.name || 'vídeo').replace('.mp4', '')} concluído (MP4)`,
         body: 'Está em Movies/WatchMov — dá pra abrir no Web Video Cast ou VLC.' });
     } else if (e.state === 'failed') {
       toast.error('Não consegui baixar em MP4', { id, duration: 8000, description: e.error || 'erro' });
-      addNotice({ kind: 'mp4', error: true, title: 'A conversão falhou', body: e.error || 'erro' });
+      upsertNotice(`mp4:${e.key}`, { kind: 'mp4', error: true,
+        title: `${antes === 'downloading' ? 'O download em MP4' : 'A conversão'} de ${(e.name || 'vídeo').replace('.mp4', '')} falhou`,
+        body: e.error || 'erro' });
       // Vai pro painel de bugs mesmo com o player fechado (o log do player só
       // registra enquanto ele está montado — foi por isso que o 1º erro se perdeu).
       supabase.from('wm_playback_errors').insert({
@@ -144,6 +155,13 @@ export async function convertToMp4(key: string, title?: string) {
     items.delete(key); notify();
     toast.error('Não consegui converter', { description: (e as Error)?.message || 'erro' });
   }
+}
+
+// Hook reativo com TUDO: a aba Conversões do sino lista o que está em andamento.
+export function useMp4All(): Mp4Event[] {
+  const [, force] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => { listen(); subs.add(force); return () => { subs.delete(force); }; }, []);
+  return [...items.values()];
 }
 
 // Hook reativo por chave: undefined = só cache (.exo); 'done' = tem MP4.
