@@ -243,6 +243,9 @@ public final class ExportUtil {
                 }
                 transformer = b.build();
                 transformer.start(item, out);
+                // Primeiro plano: sem isso o Android mata o processo quando o app sai
+                // da tela e a conversão morre no meio.
+                ConvertService.update(ctx, name.replace(".mp4", ""), -1);
                 if (cb != null) cb.progress(-1);
                 main.postDelayed(ExportUtil::poll, 800);
             } catch (Throwable th) {
@@ -265,6 +268,7 @@ public final class ExportUtil {
                 if (len > 0) pct = (int) Math.min(99, len * 100 / runningExpected);
             }
             if (cb != null) cb.progress(pct);
+            if (lastCtx != null) ConvertService.update(lastCtx, runningName == null ? "" : runningName.replace(".mp4", ""), pct);
         } catch (Throwable ignored) {}
         main.postDelayed(ExportUtil::poll, 800);
     }
@@ -354,6 +358,8 @@ public final class ExportUtil {
     }
 
     private static void cleanup() {
+        // Fila vazia = nada mais a converter → tira a notificação de primeiro plano.
+        if (queue.isEmpty() && lastCtx != null) ConvertService.stop(lastCtx);
         runningKey = null;
         runningName = null;
         runningExpected = 0;
