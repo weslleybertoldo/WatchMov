@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 
 export interface Mp4Event {
   key: string;
-  state: 'downloading' | 'converting' | 'done' | 'failed' | 'canceled' | 'removed';
+  state: 'downloading' | 'converting' | 'queued' | 'done' | 'failed' | 'canceled' | 'removed';
   percent: number;   // -1 enquanto não dá pra estimar
   name?: string;
   uri?: string;
@@ -19,8 +19,8 @@ export interface Mp4Event {
 interface Mp4DownloadPlugin {
   start(o: { key: string; url: string; referer?: string; mime?: string; title?: string }): Promise<void>;
   convert(o: { key: string; title?: string }): Promise<void>;
-  list(): Promise<{ keys: string[]; running?: string }>;
-  cancel(): Promise<void>;
+  list(): Promise<{ keys: string[]; running?: string; queued?: string[] }>;
+  cancel(o?: { key?: string }): Promise<void>;
   status(o: { key: string }): Promise<{ done: boolean; uri?: string; running: boolean }>;
   openWith(o: { key: string; title?: string }): Promise<void>;
   remove(o: { key: string }): Promise<void>;
@@ -41,8 +41,9 @@ const notify = () => subs.forEach(f => f());
 function listen() {
   if (listening || !mp4Native()) return;
   listening = true;
-  Mp4Download.list().then(({ keys, running }) => {
+  Mp4Download.list().then(({ keys, running, queued }) => {
     keys.forEach(k => items.set(k, { key: k, state: 'done', percent: 100 }));
+    (queued || []).forEach(k => items.set(k, { key: k, state: 'queued', percent: -1 }));
     if (running) items.set(running, { key: running, state: 'converting', percent: -1 });
     notify();
   }).catch(() => {});
@@ -51,6 +52,10 @@ function listen() {
     else items.set(e.key, e);
     notify();
     const id = `mp4-${e.key}`;
+    if (e.state === 'queued') {
+      toast.loading('Na fila…', { id, description: 'Começa assim que a conversão atual terminar.' });
+      return;
+    }
     if (e.state === 'converting') {
       toast.loading(e.percent >= 0 ? `Convertendo pra MP4… ${e.percent}%` : 'Convertendo pra MP4…', {
         id, description: 'Deixe o app aberto.',

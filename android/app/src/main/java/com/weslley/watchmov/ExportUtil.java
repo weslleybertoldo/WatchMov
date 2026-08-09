@@ -54,6 +54,43 @@ public final class ExportUtil {
         void progress(int percent);          // -1 = ainda sem estimativa
         void done(Uri uri, String name);
         void failed(String why);
+        default void queued(int position) {} // esperando a vez (conversão é serial)
+    }
+
+    /** Pedido esperando a vez — converter é I/O+CPU pesado, então roda um por vez. */
+    private static final class Job {
+        final Context ctx; final String key, name, src, mime; final boolean fromCache;
+        final long expectedBytes; final Cb cb;
+        Job(Context ctx, String key, String name, String src, String mime, boolean fromCache, long expectedBytes, Cb cb) {
+            this.ctx = ctx; this.key = key; this.name = name; this.src = src;
+            this.mime = mime; this.fromCache = fromCache; this.expectedBytes = expectedBytes; this.cb = cb;
+        }
+    }
+
+    private static final java.util.ArrayDeque<Job> queue = new java.util.ArrayDeque<>();
+
+    /** Chaves esperando na fila (a UI mostra "na fila" em vez de recusar). */
+    public static java.util.List<String> queuedKeys() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (Job j : queue) out.add(j.key);
+        return out;
+    }
+
+    // Põe na fila; se nada estiver rodando, começa na hora.
+    private static void enqueue(Job job) {
+        for (Job j : queue) if (j.key.equals(job.key)) { job.cb.queued(queue.size()); return; }
+        if (job.key.equals(runningKey)) { job.cb.progress(-1); return; }
+        queue.addLast(job);
+        if (runningKey == null) pump();
+        else job.cb.queued(queue.size());
+    }
+
+    // Puxa o próximo da fila (chamado ao terminar, falhar ou cancelar).
+    private static void pump() {
+        if (runningKey != null) return;
+        Job j = queue.pollFirst();
+        if (j == null) return;
+        run(j.ctx, j.key, j.name, j.src, j.mime, j.fromCache, j.expectedBytes, j.cb);
     }
 
     private static final String PREFS = "wm_exports";      // key -> "<uri>|<nome>"
@@ -63,6 +100,7 @@ public final class ExportUtil {
     private static Transformer transformer;    // um export por vez (I/O pesado)
     private static String runningKey;
     private static String runningName;
+    private static long runningExpected;   // bytes esperados (base do % quando o Transformer não estima)
     private static File tmpFile;
     private static Cb cb;
     // Última execução (pro retry sem ap=pt e pro relato de erro no painel de bugs).
@@ -112,7 +150,6 @@ public final class ExportUtil {
 
     public static void start(Context context, String key, String title, Cb callback) {
         final Context ctx = context.getApplicationContext();
-        if (runningKey != null) { callback.failed("já tem uma exportação em andamento"); return; }
         Download d;
         try {
             d = DownloadUtil.getDownloadManager(ctx).getDownloadIndex().getDownload(key);
@@ -144,7 +181,8 @@ public final class ExportUtil {
         String src = d.request.uri.toString();
         if (!src.contains("&ap=")) src = src + "&ap=pt";
         String mime = d.request.mimeType != null ? d.request.mimeType : MimeTypes.APPLICATION_M3U8;
-        run(ctx, key, name, src, mime, true, callback);
+        // bytes do cache = referência do progresso (o Transformer não sabe estimar HLS)
+        enqueue(new Job(ctx, key, name, src, mime, true, d.getBytesDownloaded(), callback));
     }
 
     /**
@@ -155,13 +193,13 @@ public final class ExportUtil {
     public static void startFromUrl(Context context, String key, String url, String referer,
                                     String mime, String title, Cb callback) {
         final Context ctx = context.getApplicationContext();
-        if (runningKey != null) { callback.failed("já tem uma conversão em andamento"); return; }
         if (url == null || url.isEmpty()) { callback.failed("sem link"); return; }
         ProxyServer.ensure();
         String src = url.contains("/s?u=") ? url : ProxyServer.local(url, referer);
         if (!src.contains("&ap=")) src = src + "&ap=pt";
         String m = (mime == null || mime.isEmpty()) ? MimeTypes.APPLICATION_M3U8 : mime;
-        run(ctx, key, safeName(title, key) + ".mp4", src, m, false, callback);
+        // Baixando da rede não dá pra saber o tamanho final → o anel gira sem %.
+        enqueue(new Job(ctx, key, safeName(title, key) + ".mp4", src, m, false, 0, callback));
     }
 
     /**
@@ -169,14 +207,15 @@ public final class ExportUtil {
      * segmentos do SimpleCache (título já baixado); false busca na rede pelo proxy.
      */
     private static void run(Context ctx, String key, String name, String src, String mime,
-                            boolean fromCache, Cb callback) {
+                            boolean fromCache, long expectedBytes, Cb callback) {
         File dir = new File(ctx.getExternalFilesDir(null), TMP_DIR);
-        if (!dir.exists() && !dir.mkdirs()) { callback.failed("não consegui criar a pasta temporária"); return; }
+        if (!dir.exists() && !dir.mkdirs()) { callback.failed("não consegui criar a pasta temporária"); pump(); return; }
         tmpFile = new File(dir, "export.mp4");
-        if (tmpFile.exists() && !tmpFile.delete()) { tmpFile = null; callback.failed("sobrou um arquivo temporário travado"); return; }
+        if (tmpFile.exists() && !tmpFile.delete()) { tmpFile = null; callback.failed("sobrou um arquivo temporário travado"); pump(); return; }
 
         runningKey = key;
         runningName = name;
+        runningExpected = expectedBytes;
         cb = callback;
         // Guardados pro RETRY sem ap=pt (ver onError): o proxy remove as faixas de
         // áudio não-PT do master e, em alguns títulos, o que sobra não casa com o
@@ -217,17 +256,34 @@ public final class ExportUtil {
         try {
             ProgressHolder h = new ProgressHolder();
             int st = transformer.getProgress(h);
-            if (cb != null) cb.progress(st == Transformer.PROGRESS_STATE_AVAILABLE ? h.progress : -1);
+            int pct = st == Transformer.PROGRESS_STATE_AVAILABLE ? h.progress : -1;
+            // Em HLS o Transformer quase sempre responde UNAVAILABLE (não sabe a
+            // duração de antemão) — o anel ficava girando pra sempre. Então estima
+            // pelo MP4 que está sendo escrito vs o tamanho do que foi baixado.
+            if (pct < 0 && runningExpected > 0 && tmpFile != null) {
+                long len = tmpFile.length();
+                if (len > 0) pct = (int) Math.min(99, len * 100 / runningExpected);
+            }
+            if (cb != null) cb.progress(pct);
         } catch (Throwable ignored) {}
         main.postDelayed(ExportUtil::poll, 800);
     }
 
-    public static void cancel() {
+    /** Cancela a conversão atual (ou tira da fila, se ainda não começou). */
+    public static void cancel(String key) {
         main.post(() -> {
+            if (key != null && !key.equals(runningKey)) {
+                java.util.Iterator<Job> it = queue.iterator();
+                while (it.hasNext()) if (it.next().key.equals(key)) it.remove();
+                return;
+            }
             try { if (transformer != null) transformer.cancel(); } catch (Throwable ignored) {}
             cleanup();
+            pump();     // a fila continua andando
         });
     }
+
+    public static void cancel() { cancel(null); }
 
     /**
      * Falhou. Antes de desistir, tenta UMA vez sem o &ap=pt: o proxy remove as faixas
@@ -253,9 +309,10 @@ public final class ExportUtil {
         final Context ctx = lastCtx; final String key = lastKey, name = lastName, mime = lastMime;
         final String src = lastSrc.replace("&ap=pt", "");
         final boolean fromCache = lastFromCache;
+        final long expected = runningExpected;
         final Cb c = cb;
         cleanup();
-        main.post(() -> run(ctx, key, name, src, mime, fromCache, new Cb() {
+        main.post(() -> run(ctx, key, name, src, mime, fromCache, expected, new Cb() {
             @Override public void progress(int p) { if (c != null) c.progress(p); }
             @Override public void done(Uri uri, String n) { retried = false; if (c != null) c.done(uri, n); }
             @Override public void failed(String w) { retried = false; if (c != null) c.failed(w); }
@@ -293,11 +350,13 @@ public final class ExportUtil {
         Cb c = cb;
         cleanup();
         if (c != null) c.failed(why);
+        pump();     // libera a vez pro próximo da fila
     }
 
     private static void cleanup() {
         runningKey = null;
         runningName = null;
+        runningExpected = 0;
         transformer = null;
         cb = null;
         if (tmpFile != null && tmpFile.exists()) { try { tmpFile.delete(); } catch (Exception ignored) {} }
@@ -310,7 +369,7 @@ public final class ExportUtil {
         final File src = tmpFile;
         final Cb c = cb;
         transformer = null;
-        if (key == null || src == null) { cleanup(); return; }
+        if (key == null || src == null) { cleanup(); pump(); return; }
         new Thread(() -> {
             try {
                 Uri uri = publish(ctx, src, name);
@@ -318,11 +377,13 @@ public final class ExportUtil {
                 main.post(() -> {
                     cleanup();
                     if (c != null) c.done(uri, name);
+                    pump();     // próximo da fila
                 });
             } catch (Throwable t) {
                 main.post(() -> {
                     cleanup();
                     if (c != null) c.failed("não consegui salvar em Movies: " + t.getMessage());
+                    pump();
                 });
             }
         }).start();
