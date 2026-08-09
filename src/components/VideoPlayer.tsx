@@ -12,7 +12,7 @@ import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, stre
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
-import { downloadAsMp4 } from '@/lib/mp4Download';
+import { downloadAsMp4, useMp4, removeMp4 } from '@/lib/mp4Download';
 import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -160,7 +160,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     : (type === 'movie' ? movieKey(tmdbId)
       : (season != null && episode != null ? epKey(tmdbId, season, episode) : null));
   const dlItem = useDownloadItem(dlKey);
-  const dlDone = dlItem?.state === 'completed';
+  // "Baixado" vale pros dois formatos: cache do Media3 OU MP4 em Movies/WatchMov.
+  const mp4Item = useMp4(dlKey ?? '');
+  const dlDone = dlItem?.state === 'completed' || mp4Item?.state === 'done';
   // O download é do EPISÓDIO (1 por chave), mas foi feito a partir de UM link — só
   // esse mostra o progresso; os outros seguem oferecendo "baixar".
   const dlUrl = dlKey ? getDownloadMeta()[dlKey]?.url : undefined;
@@ -285,7 +287,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // "lembrada" (chosenUrl) → ao reabrir, o player toca do cache. Já baixado = remove.
   const toggleDownload = (r: SniffResult) => {
     if (!dlKey) return;
-    if (dlItem && dlItem.state !== 'removed') { removeDownload(dlKey); toast.info('Download removido'); return; }
+    if (dlDone || (dlItem && dlItem.state !== 'removed')) { removeDownload(dlKey); toast.info('Download removido'); return; }
     // Fecha a lista de links antes: os dois modais ficam na mesma camada e o
     // "Como quer baixar?" nascia ATRÁS — parecia que o toque não fez nada.
     setPickerOpen(false);

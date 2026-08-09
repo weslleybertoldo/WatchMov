@@ -4,7 +4,7 @@ import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress } from './nativePlayer';
 import { upsertNotice } from './appNotices';
-import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change } from './mp4Download';
+import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4 } from './mp4Download';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -192,6 +192,9 @@ export function removeDownload(key: string) {
   if (!downloadsNative()) { const s = webRead(); s.delete(key); webWrite(s); return; }
   items.delete(key); notify();
   Downloader.remove({ key }).catch(() => {});
+  // Excluir é excluir: sem isto o MP4 continuaria ocupando espaço em
+  // Movies/WatchMov, invisível pro app mas visível na galeria.
+  removeMp4(key);
 }
 
 // Compat: só remoção por chave (marcar baixado exige enqueueDownload com metadata).
