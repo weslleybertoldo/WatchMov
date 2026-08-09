@@ -3,6 +3,7 @@ import { Download, X, CheckCircle, RefreshCw } from "lucide-react";
 import { downloadAndInstall } from "@/lib/apkUpdater";
 
 const CURRENT_VERSION = __APP_VERSION__;
+const BUILD_DATE = __BUILD_DATE__;   // carimbo de quando este APK foi gerado
 const RELEASES_URL = "https://api.github.com/repos/weslleybertoldo/WatchMov/releases/latest";
 
 interface VersionInfo {
@@ -10,9 +11,12 @@ interface VersionInfo {
   download_url: string;
 }
 
-export function isNewerVersion(remote: string, local: string): boolean {
-  const r = remote.split(".").map(Number);
-  const l = local.split(".").map(Number);
+const norm = (v: string) => (v || "").trim().replace(/^v/i, "");
+
+/** Comparação numérica pura (3.10 > 3.9). Usada quando não há datas pra comparar. */
+function numericNewer(remote: string, local: string): boolean {
+  const r = norm(remote).split(".").map(Number);
+  const l = norm(local).split(".").map(Number);
   const len = Math.max(r.length, l.length);
   for (let i = 0; i < len; i++) {
     const rv = r[i] || 0;
@@ -21,6 +25,28 @@ export function isNewerVersion(remote: string, local: string): boolean {
     if (rv < lv) return false;
   }
   return false;
+}
+
+/**
+ * O release é MAIS RECENTE que o APK instalado? Quem decide é a DATA: o número
+ * sozinho engana quando a numeração é renumerada (3.102 → 3.2 é "menor", mas é
+ * mais novo) e o app ficaria preso achando que está em dia. Sem as datas (release
+ * antigo, build sem carimbo), cai na comparação numérica de sempre.
+ *
+ * Mesmo nome = mesma versão, nada a fazer.
+ */
+export function isNewerVersion(
+  remote: string,
+  local: string,
+  remoteDate?: string,
+  localDate?: string,
+): boolean {
+  if (!norm(remote)) return false;
+  if (norm(remote) === norm(local)) return false;
+  const r = remoteDate ? Date.parse(remoteDate) : NaN;
+  const l = localDate ? Date.parse(localDate) : NaN;
+  if (!Number.isNaN(r) && !Number.isNaN(l)) return r > l;
+  return numericNewer(remote, local);
 }
 
 export default function UpdateChecker() {
@@ -64,7 +90,7 @@ export default function UpdateChecker() {
       const remoteVersion = (release.tag_name || "").replace(/^v/, "");
       if (!remoteVersion || !mountedRef.current) return;
 
-      if (isNewerVersion(remoteVersion, CURRENT_VERSION)) {
+      if (isNewerVersion(remoteVersion, CURRENT_VERSION, release.published_at, BUILD_DATE)) {
         const apkAsset = (release.assets || []).find(
           (a: { name: string }) => a.name.endsWith(".apk")
         );

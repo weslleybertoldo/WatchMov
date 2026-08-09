@@ -118,8 +118,13 @@ jobs:
             git reset --hard origin/main
             CURRENT=$(node -p "require('./package.json').version")
             IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-            NEW_MINOR=$((MINOR + 1))
-            NEXT="$MAJOR.$NEW_MINOR"
+            # Minor vai só até 99: passou disso, sobe o major e zera.
+            # 3.2 → 3.3 → … → 3.99 → 4.0. Nunca mais um 3.101.
+            # 10# força base decimal (senão "08"/"09" viram octal inválido).
+            NEW_MINOR=$((10#$MINOR + 1))
+            NEW_MAJOR=$((10#$MAJOR))
+            if [ "$NEW_MINOR" -gt 99 ]; then NEW_MAJOR=$((NEW_MAJOR + 1)); NEW_MINOR=0; fi
+            NEXT="$NEW_MAJOR.$NEW_MINOR"
             node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
