@@ -249,7 +249,10 @@ export async function playDownloaded(key: string): Promise<boolean> {
     if (uri) {
       const start = getPosition(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
       const res = await playNative({
-        url: uri, mime: 'video/mp4', title: meta.title, startMs: start, offline: true,
+        // offline:false de propósito — "offline" no player significa tocar pelo cache
+        // via proxy local; aqui a URI JÁ é o arquivo. downloaded só acende o rótulo.
+        url: uri, mime: 'video/mp4', title: meta.title, startMs: start,
+        offline: false, downloaded: true,
         key: `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`,
       });
       if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
