@@ -286,6 +286,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const toggleDownload = (r: SniffResult) => {
     if (!dlKey) return;
     if (dlItem && dlItem.state !== 'removed') { removeDownload(dlKey); toast.info('Download removido'); return; }
+    // Fecha a lista de links antes: os dois modais ficam na mesma camada e o
+    // "Como quer baixar?" nascia ATRÁS — parecia que o toque não fez nada.
+    setPickerOpen(false);
     setDlAsk(r);   // pergunta o formato: padrão (Media3) ou MP4
   };
 
@@ -726,7 +729,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
       {/* Formato do download: cache do Media3 (padrão) ou MP4 solto no aparelho. */}
       {dlAsk && (
-        <div className="absolute inset-0 z-40 bg-black/80 flex items-center justify-center p-4" onClick={() => setDlAsk(null)}>
+        <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setDlAsk(null)}>
           <div className="bg-card border border-border rounded-xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-3 border-b border-border">
               <h3 className="font-semibold text-foreground text-sm">Como quer baixar?</h3>

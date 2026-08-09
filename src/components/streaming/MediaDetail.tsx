@@ -9,7 +9,7 @@ import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
-import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf } from '@/lib/downloads';
+import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { getEntry, streamKey } from '@/lib/streamCache';
 import type { DownloadItem } from '@/lib/downloader';
 import { toast } from 'sonner';
@@ -186,10 +186,20 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const markWatched = (it: WatchItem | null) => {
     if (it) store.updateItem(it.id, { lastWatchedAt: new Date().toISOString() });
   };
-  const playMovie = async () => { const it = await ensureLib(); markWatched(it); setPlayer({}); };
+  // Baixado toca do APARELHO, não do servidor: abre o reprodutor direto no arquivo
+  // (mesmo caminho da aba Download). Sem isso, tocar num episódio já baixado abria a
+  // tela do provedor — que é justamente o que baixar deveria evitar.
+  const playMovie = async () => {
+    const it = await ensureLib(); markWatched(it);
+    const k = movieKey(media.tmdbId);
+    if (dls.has(k)) { playDownloaded(k); return; }
+    setPlayer({});
+  };
   const playEpisode = async (seasonNum: number, ep: number) => {
     const it = await ensureLib();
     markWatched(it); // entra em "Continuar assistindo"; NÃO marca assistido (só faltando 1 min ou manual)
+    const k = epKey(media.tmdbId, seasonNum, ep);
+    if (dls.has(k)) { playDownloaded(k); return; }
     setPlayer({ season: seasonNum, episode: ep });
   };
   // Veio do atalho "espelhando na TV": abre direto o episódio/filme que está lá (1x).

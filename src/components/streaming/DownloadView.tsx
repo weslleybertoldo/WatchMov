@@ -6,6 +6,7 @@ import {
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
+import { useMp4, mp4Native, convertToMp4, openMp4 } from '@/lib/mp4Download';
 
 interface TitleGroup {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
@@ -39,6 +40,40 @@ function Progress({ item }: { item?: DownloadItem }) {
       </div>
       <p className="text-[9px] text-white/80 mt-0.5">{item.state === 'downloading' ? (p != null ? `${p}%` : 'baixando…') : item.state === 'queued' ? 'na fila…' : item.state}</p>
     </div>
+  );
+}
+
+// Formato do arquivo + conversão, no canto do item baixado:
+//  • ".exo"  → só o cache do app (só o WatchMov lê)
+//  • anel amarelo girando → convertendo pra MP4 (mesmo desenho do download)
+//  • "MP4" verde → tem arquivo em Movies/WatchMov; toca abrir no WVC/VLC
+function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
+  const mp4 = useMp4(dlKey);
+  if (!mp4Native()) return null;
+  const converting = mp4?.state === 'converting';
+  const ready = mp4?.state === 'done';
+  const R = 9, C = 2 * Math.PI * R;
+  const pct = mp4 && mp4.percent >= 0 ? mp4.percent : null;
+  return (
+    <button
+      className="absolute top-0.5 left-0.5 z-20 rounded bg-black/70 px-1 py-0.5 text-[8px] leading-none font-semibold flex items-center gap-0.5"
+      title={ready ? 'Abrir no Web Video Cast / VLC' : converting ? 'Convertendo…' : 'Converter pra MP4 (abre em outros apps)'}
+      onClick={ev => {
+        ev.stopPropagation();
+        if (converting) return;
+        if (ready) openMp4(dlKey, title); else convertToMp4(dlKey, title);
+      }}>
+      {converting ? (
+        <span className="relative inline-flex items-center justify-center w-[18px] h-[18px]">
+          <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${pct == null ? 'animate-spin' : ''}`}>
+            <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
+            <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
+              strokeDasharray={C} strokeDashoffset={C * (1 - (pct ?? 25) / 100)} />
+          </svg>
+        </span>
+      ) : ready ? <span className="text-green-400">MP4</span>
+        : <span className="text-white/70">.exo</span>}
+    </button>
   );
 }
 
@@ -111,9 +146,13 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
           const done = item?.state === 'completed';
           const wp = watchProgressOf(e.key);
           return (
-            <button key={e.key}
+            // <div role="button">, não <button>: precisa aceitar o botão de converter
+            // DENTRO (botão dentro de botão é HTML inválido) e, como filho direto do
+            // grid, o div mantém o tamanho da célula — foi trocar isso por um wrapper
+            // que a tela colapsou na v3.98.
+            <div key={e.key} role="button" tabIndex={0}
               onClick={() => editing ? toggle(e.key) : (done ? playDownloaded(e.key) : undefined)}
-              className={`relative aspect-square overflow-hidden rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition
+              className={`relative aspect-square overflow-hidden rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition cursor-pointer
                 ${picked ? 'border-destructive bg-destructive/15 text-destructive'
                   : done ? 'border-green-400/40 bg-green-400/5 text-foreground'
                   : 'border-border bg-secondary/40 text-muted-foreground'}`}>
@@ -142,7 +181,8 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
                   <span className="absolute bottom-0.5 inset-x-0 text-[8px] text-muted-foreground text-center truncate px-0.5">{wp.label}</span>
                 </>
               )}
-            </button>
+              {!editing && done && <Mp4Btn dlKey={e.key} title={g.title} />}
+            </div>
           );
         })}
       </div>
@@ -185,9 +225,15 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
             ? (item?.bytes ?? 0)
             : g.episodes.reduce((acc, e) => acc + (items.get(e.key)?.bytes ?? 0), 0);
           return (
-            <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge} watched={watched}
-              progress={progress} subtitle={subtitle} size={bytes > 0 ? fmtBytes(bytes) : undefined}
-              onClick={() => editing ? onDelete(g) : onOpen(g)} />
+            <div key={g.tmdbId} className="relative">
+              <Poster meta={g} item={item} editing={editing} badge={badge} watched={watched}
+                progress={progress} subtitle={subtitle} size={bytes > 0 ? fmtBytes(bytes) : undefined}
+                onClick={() => editing ? onDelete(g) : onOpen(g)} />
+              {/* Série converte por EPISÓDIO (lá dentro), não pelo card do título. */}
+              {g.type === 'movie' && !editing && item?.state === 'completed' && (
+                <Mp4Btn dlKey={movieKey(g.tmdbId)} title={g.title} />
+              )}
+            </div>
           );
         })}
       </div>

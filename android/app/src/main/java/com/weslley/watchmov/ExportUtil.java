@@ -65,6 +65,11 @@ public final class ExportUtil {
     private static String runningName;
     private static File tmpFile;
     private static Cb cb;
+    // Última execução (pro retry sem ap=pt e pro relato de erro no painel de bugs).
+    private static Context lastCtx;
+    private static String lastKey, lastName, lastSrc, lastMime;
+    private static boolean lastFromCache;
+    private static boolean retried = false;
 
     private ExportUtil() {}
 
@@ -84,6 +89,13 @@ public final class ExportUtil {
         } catch (Exception ignored) {}
         prefs(ctx).edit().remove(key).apply();
         return null;
+    }
+
+    /** Chaves que já têm MP4 (pra aba Download marcar o formato de cada item). */
+    public static java.util.List<String> exportedKeys(Context ctx) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String k : prefs(ctx).getAll().keySet()) if (exported(ctx, k) != null) out.add(k);
+        return out;
     }
 
     public static boolean isRunning() { return runningKey != null; }
@@ -166,6 +178,10 @@ public final class ExportUtil {
         runningKey = key;
         runningName = name;
         cb = callback;
+        // Guardados pro RETRY sem ap=pt (ver onError): o proxy remove as faixas de
+        // áudio não-PT do master e, em alguns títulos, o que sobra não casa com o
+        // grupo AUDIO= das variantes → o parser HLS recusa a playlist.
+        lastCtx = ctx; lastKey = key; lastName = name; lastSrc = src; lastMime = mime; lastFromCache = fromCache;
         final MediaItem item = new MediaItem.Builder().setUri(src).setMimeType(mime).build();
         final String out = tmpFile.getAbsolutePath();
         // Transformer é single-thread: criar, start, getProgress e cancel na main.
@@ -174,7 +190,7 @@ public final class ExportUtil {
                 Transformer.Builder b = new Transformer.Builder(ctx)
                     .addListener(new Transformer.Listener() {
                         @Override public void onCompleted(Composition c, ExportResult r) { publishAsync(ctx); }
-                        @Override public void onError(Composition c, ExportResult r, ExportException e) { fail(friendly(e)); }
+                        @Override public void onError(Composition c, ExportResult r, ExportException e) { onExportError(e); }
                     });
                 if (fromCache) {
                     // MESMO caminho de leitura do player offline: o CacheDataSource lê os
@@ -213,10 +229,51 @@ public final class ExportUtil {
         });
     }
 
+    /**
+     * Falhou. Antes de desistir, tenta UMA vez sem o &ap=pt: o proxy remove as faixas
+     * de áudio não-PT do master e há títulos em que isso deixa as variantes apontando
+     * pra um grupo AUDIO= que não existe mais — o parser recusa e o AssetLoader morre
+     * antes de ler o 1º segmento ("Asset loader error"). Sem o ap, a playlist é a
+     * original (áudio pode vir no idioma padrão, mas o arquivo sai).
+     */
+    private static void onExportError(ExportException e) {
+        String why = friendly(e);
+        // Registra no painel de bugs do app com código + causa raiz — sem isso o
+        // usuário só vê "Asset loader error", que não diz nada.
+        try {
+            NativePlayerPlugin.reportError(lastSrc, 0, 0, "EXPORT_MP4",
+                "[export] code=" + (e != null ? e.errorCode : -1) + " cache=" + lastFromCache
+                + " msg=" + (e != null ? e.getMessage() : "") + " cause=" + rootCause(e),
+                lastMime, null, lastName);
+        } catch (Throwable ignored) {}
+
+        boolean canRetry = !retried && lastSrc != null && lastSrc.contains("&ap=pt") && lastCtx != null;
+        if (!canRetry) { retried = false; fail(why); return; }
+        retried = true;
+        final Context ctx = lastCtx; final String key = lastKey, name = lastName, mime = lastMime;
+        final String src = lastSrc.replace("&ap=pt", "");
+        final boolean fromCache = lastFromCache;
+        final Cb c = cb;
+        cleanup();
+        main.post(() -> run(ctx, key, name, src, mime, fromCache, new Cb() {
+            @Override public void progress(int p) { if (c != null) c.progress(p); }
+            @Override public void done(Uri uri, String n) { retried = false; if (c != null) c.done(uri, n); }
+            @Override public void failed(String w) { retried = false; if (c != null) c.failed(w); }
+        }));
+    }
+
+    private static String rootCause(Throwable t) {
+        Throwable c = t;
+        int guard = 0;
+        while (c != null && c.getCause() != null && guard++ < 8) c = c.getCause();
+        return c == null ? "" : (c.getClass().getSimpleName() + ": " + c.getMessage());
+    }
+
     // Erro do remux em linguagem de gente (o código cru não diz nada pro usuário).
     private static String friendly(ExportException e) {
         String msg = e != null && e.getMessage() != null ? e.getMessage() : "falha no remux";
         int code = e != null ? e.errorCode : 0;
+        String cause = rootCause(e);
         if (code == ExportException.ERROR_CODE_MUXING_FAILED
             || code == ExportException.ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED
             || code == ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED) {
@@ -225,9 +282,11 @@ public final class ExportUtil {
         if (code == ExportException.ERROR_CODE_IO_FILE_NOT_FOUND
             || code == ExportException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
             || code == ExportException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
-            return "não consegui ler o vídeo baixado (abra o app e tente de novo)";
+            return "não consegui ler o vídeo (código " + code + " · " + cause + ")";
         }
-        return msg;
+        // Sem tradução conhecida: mostra o que dá pra agir em cima (código + causa
+        // raiz), não só "Asset loader error", que não diz nada.
+        return msg + (cause.isEmpty() ? "" : " · " + cause) + " (código " + code + ")";
     }
 
     private static void fail(String why) {
