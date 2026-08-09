@@ -24,6 +24,18 @@ function todaySP(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 }
 
+// Janela de tolerância: o cron é diário e fire-and-forget (pg_cron + net.http_post
+// não vê se a função enviou; sem retry). Se a execução do DIA EXATO da estreia
+// falhar (FCM/TMDB instável, cold start), avisar só quando air_date==hoje perdia o
+// aviso pra sempre. Aceitando air_date nos últimos GRACE_DAYS, o dia seguinte
+// repesca; o dedup por last_notified_key impede repetir.
+const GRACE_DAYS = 2;
+function daysAgoSP(base: string, n: number): string {
+  const d = new Date(`${base}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
 async function tmdb<T>(path: string): Promise<T | null> {
   const r = await fetch(`${TMDB}${path}${path.includes('?') ? '&' : '?'}api_key=${TMDB_KEY}&language=pt-BR`);
   return r.ok ? await r.json() as T : null;
@@ -83,6 +95,7 @@ async function sendPush(token: string, title: string, body: string, data: Record
 
 Deno.serve(async (req) => {
   const today = todaySP();
+  const graceStart = daysAgoSP(today, GRACE_DAYS);
   const url = new URL(req.url);
   const force = url.searchParams.get('force');   // teste manual: ?force=s1e1 ou ?force=released
   const dry = url.searchParams.get('dry') === '1';
@@ -103,7 +116,10 @@ Deno.serve(async (req) => {
     if (s.type === 'tv') {
       const d = await tmdb<{ name?: string; last_episode_to_air?: { air_date: string; season_number: number; episode_number: number; name?: string }; next_episode_to_air?: { air_date: string; season_number: number; episode_number: number; name?: string } }>(`/tv/${s.tmdb_id}`);
       const cand = [d?.last_episode_to_air, d?.next_episode_to_air].filter(Boolean) as NonNullable<typeof d>['last_episode_to_air'][];
-      const ep = cand.find(e => e!.air_date === today);
+      // episódio mais recente que já saiu dentro da janela [graceStart, hoje]
+      const ep = cand
+        .filter(e => e!.air_date && e!.air_date <= today && e!.air_date >= graceStart)
+        .sort((a, b) => (a!.air_date < b!.air_date ? 1 : -1))[0];
       if (ep) {
         const key = `s${ep!.season_number}e${ep!.episode_number}`;
         hit = {
@@ -114,8 +130,8 @@ Deno.serve(async (req) => {
       }
     } else {
       const d = await tmdb<{ title?: string; release_date?: string }>(`/movie/${s.tmdb_id}`);
-      if (d?.release_date === today) {
-        hit = { key: 'released', title: s.title || d?.title || 'Estreia hoje', body: 'Estreia hoje — já pode assistir.' };
+      if (d?.release_date && d.release_date <= today && d.release_date >= graceStart) {
+        hit = { key: 'released', title: s.title || d?.title || 'Estreia', body: 'Já disponível — pode assistir.' };
       }
     }
 
