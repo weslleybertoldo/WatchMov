@@ -80,6 +80,12 @@
       <ImageButton android:id="@id/exo_subtitle"
           style="@style/ExoStyledControls.Button.Bottom.CC"/>
 
+      <!-- Baixar o link atual (mesma escolha Media3/.exo x MP4 do "Links do vídeo"). -->
+      <ImageButton android:id="@+id/wm_download"
+          style="@style/ExoStyledControls.Button.Bottom"
+          android:src="@drawable/ic_download"
+          android:contentDescription="Baixar"/>
+
       <!-- Exporta o baixado pra MP4 em Movies/WatchMov e abre no Web Video Cast/VLC. -->
       <ImageButton android:id="@+id/wm_share"
           style="@style/ExoStyledControls.Button.Bottom"
