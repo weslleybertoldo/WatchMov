@@ -231,6 +231,11 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
               )}
               <span className="relative z-10 text-[10px] text-muted-foreground">T{e.season}</span>
               <span className="relative z-10 text-sm">{e.ep}</span>
+              {/* Em andamento: mesmo anel amarelo da grade de episódios do título,
+                  em vez de um "43%" solto que passava despercebido. */}
+              {!editing && item && (item.state === 'downloading' || item.state === 'queued' || item.state === 'restarting') && (
+                <span className="absolute top-0.5 right-0.5 z-10"><Ring percent={item.percent >= 0 ? item.percent : null} /></span>
+              )}
               {!editing && item && item.state !== 'completed' && (
                 <span className="text-[9px] text-primary">{item.state === 'downloading' ? (item.percent >= 0 ? `${item.percent}%` : '…') : item.state === 'failed' ? 'falhou' : '…'}</span>
               )}
