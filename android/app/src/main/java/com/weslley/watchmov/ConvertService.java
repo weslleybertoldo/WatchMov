@@ -49,10 +49,34 @@ public class ConvertService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String label = intent != null ? intent.getStringExtra(EXTRA_LABEL) : "";
         int percent = intent != null ? intent.getIntExtra(EXTRA_PERCENT, -1) : -1;
-        startForeground(FG_ID, build(label, percent));
+        // BLINDAGEM: onStartCommand NÃO pode lançar. Se o startForeground não vier a
+        // tempo (RemoteViews que não infla, FGS dataSync recusado no Android novo, etc.)
+        // o sistema MATA o app. Então: (1) sempre chamar startForeground primeiro, com
+        // a notificação mais simples que der; (2) se nem isso rolar, desligar o serviço
+        // e deixar a conversão seguir SEM primeiro plano (funciona com o app aberto) —
+        // melhor perder o background do que crashar.
+        try {
+            startForeground(FG_ID, build(label, percent));
+        } catch (Throwable t) {
+            try { startForeground(FG_ID, minimal(label, percent)); }
+            catch (Throwable t2) { stopForeground(true); stopSelf(); }
+        }
         // NÃO redisparar sozinho depois de morto: sem o Transformer vivo o serviço
         // ficaria de pé mostrando um progresso que não existe mais.
         return START_NOT_STICKY;
+    }
+
+    // Notificação SIMPLES (sem RemoteViews) — fallback à prova de falha.
+    private Notification minimal(String label, int percent) {
+        NotificationUtil.createNotificationChannel(this, DownloadUtil.CHANNEL_ID,
+            R.string.download_channel_name, 0, NotificationUtil.IMPORTANCE_LOW);
+        NotificationCompat.Builder b = new NotificationCompat.Builder(this, DownloadUtil.CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Convertendo pra MP4")
+            .setContentText(label == null || label.isEmpty() ? "Preparando…" : label)
+            .setOngoing(true).setOnlyAlertOnce(true);
+        if (percent >= 0) b.setProgress(100, percent, false); else b.setProgress(0, 0, true);
+        return b.build();
     }
 
     private Notification build(String label, int percent) {
