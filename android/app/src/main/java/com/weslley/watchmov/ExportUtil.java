@@ -54,7 +54,8 @@ public final class ExportUtil {
         void progress(int percent);          // -1 = ainda sem estimativa
         void done(Uri uri, String name);
         void failed(String why);
-        default void queued(int position) {} // esperando a vez (conversão é serial)
+        /** Esperando a vez (roda um por vez) — o nome vai junto pra UI mostrar o quê. */
+        default void queued(int position, String name) {}
     }
 
     /** Pedido esperando a vez — converter é I/O+CPU pesado, então roda um por vez. */
@@ -78,11 +79,11 @@ public final class ExportUtil {
 
     // Põe na fila; se nada estiver rodando, começa na hora.
     private static void enqueue(Job job) {
-        for (Job j : queue) if (j.key.equals(job.key)) { job.cb.queued(queue.size()); return; }
+        for (Job j : queue) if (j.key.equals(job.key)) { job.cb.queued(queue.size(), job.name); return; }
         if (job.key.equals(runningKey)) { job.cb.progress(-1); return; }
         queue.addLast(job);
         if (runningKey == null) pump();
-        else job.cb.queued(queue.size());
+        else job.cb.queued(queue.size(), job.name);
     }
 
     // Puxa o próximo da fila (chamado ao terminar, falhar ou cancelar).
