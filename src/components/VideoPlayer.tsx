@@ -12,6 +12,7 @@ import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, stre
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, movieKey, epKey } from '@/lib/downloads';
+import { downloadAsMp4 } from '@/lib/mp4Download';
 import { supabase } from '@/lib/supabase';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -68,6 +69,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // nativo e fica no cache (reabre direto + retoma de onde parou).
   const [capturedList, setCapturedList] = useState<SniffResult[]>([]);   // vídeos detectados
   const [pickerOpen, setPickerOpen] = useState(false);                   // lista pra escolher
+  const [dlAsk, setDlAsk] = useState<SniffResult | null>(null);          // escolha do formato do download
   const [pickerTab, setPickerTab] = useState<'master' | 'faixa'>('master'); // aba do picker
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
@@ -284,6 +286,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const toggleDownload = (r: SniffResult) => {
     if (!dlKey) return;
     if (dlItem && dlItem.state !== 'removed') { removeDownload(dlKey); toast.info('Download removido'); return; }
+    setDlAsk(r);   // pergunta o formato: padrão (Media3) ou MP4
+  };
+
+  // Download padrão: cache do Media3 (retoma sozinho, aba Download, play offline).
+  const startStandardDownload = (r: SniffResult) => {
+    if (!dlKey) return;
     addStreams([r], tmdbId, type, season, episode);
     setChosen(r.url, tmdbId, type, season, episode);
     enqueueDownload(dlKey, {
@@ -291,6 +299,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       tmdbId: tmdbId!, type, posterUrl, season, ep: episode,
     });
     toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });
+  };
+
+  // Download em MP4: arquivo real em Movies/WatchMov que qualquer app abre (Web
+  // Video Cast, VLC, galeria) e a TV toca. Não entra na aba Download nem retoma.
+  const startMp4Download = (r: SniffResult) => {
+    if (!dlKey) return;
+    downloadAsMp4(dlKey, { url: r.url, referer: r.referer, mime: r.mime, title });
   };
 
   // Assistir pelo servidor (iframe): grava que a última vez foi no servidor
@@ -706,6 +721,28 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           <Button size="sm" className="shrink-0" onClick={() => capturedList.length === 1 ? chooseStream(capturedList[0]) : setPickerOpen(true)}>
             {capturedList.length === 1 ? 'Reproduzir' : 'Escolher'}
           </Button>
+        </div>
+      )}
+
+      {/* Formato do download: cache do Media3 (padrão) ou MP4 solto no aparelho. */}
+      {dlAsk && (
+        <div className="absolute inset-0 z-40 bg-black/80 flex items-center justify-center p-4" onClick={() => setDlAsk(null)}>
+          <div className="bg-card border border-border rounded-xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-3 border-b border-border">
+              <h3 className="font-semibold text-foreground text-sm">Como quer baixar?</h3>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDlAsk(null)}><X className="w-4 h-4" /></Button>
+            </div>
+            <button onClick={() => { const r = dlAsk; setDlAsk(null); startStandardDownload(r); }}
+              className="w-full text-left px-3 py-3 hover:bg-secondary border-b border-border/40">
+              <p className="text-sm text-foreground flex items-center gap-2"><Download className="w-4 h-4 text-primary" /> Padrão (offline no app)</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Retoma sozinho se cair, aparece na aba Download e toca offline aqui. Outros apps não enxergam.</p>
+            </button>
+            <button onClick={() => { const r = dlAsk; setDlAsk(null); startMp4Download(r); }}
+              className="w-full text-left px-3 py-3 hover:bg-secondary">
+              <p className="text-sm text-foreground flex items-center gap-2"><Tv className="w-4 h-4 text-green-400" /> MP4 em Movies/WatchMov</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Arquivo que o Web Video Cast, VLC e a galeria abrem — é o que a TV toca. Não retoma se parar e não entra na aba Download.</p>
+            </button>
+          </div>
         </div>
       )}
 
