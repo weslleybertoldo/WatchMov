@@ -91,6 +91,19 @@ export const PROVIDERS: Provider[] = [
   },
   // VSEmbed (vsembed.ru = VidSrc) REMOVIDO 09/08: é embedder internacional só com
   // LEGENDA PT (ds_lang), sem áudio dublado — foge do foco (PT-BR dublado).
+  {
+    id: 'embedmovies',
+    name: 'Fonte 6 (EmbedMovies PT-BR)',
+    // myembed.biz — doc oficial (myembed.biz/api). Aceita TMDB ou IMDB, mesmo
+    // esquema do SuperFlix (/filme/{id}, /serie/{id}/{s}/{e}). iframe-only.
+    build: (t) => {
+      const id = t.tmdbId ?? t.imdbId;
+      if (!id) return null;
+      return t.type === 'movie'
+        ? `https://myembed.biz/filme/${id}`
+        : `https://myembed.biz/serie/${id}/${s(t)}/${e(t)}`;
+    },
+  },
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -101,4 +114,5 @@ export const PROVIDER_HOSTS = [
   // candidatos BR (esquema validado 09/08)
   'https://warezcdn.lat',
   'https://fshd.link',
+  'https://myembed.biz',
 ];
