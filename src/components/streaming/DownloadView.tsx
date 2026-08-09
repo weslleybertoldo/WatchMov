@@ -73,28 +73,42 @@ function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
   const [askCancel, setAskCancel] = useState(false);
   if (!mp4Native()) return null;
   const queued = mp4?.state === 'queued';
-  const converting = mp4?.state === 'converting' || queued;
+  const converting = mp4?.state === 'converting';
+  const baixando = mp4?.state === 'downloading';   // download DIRETO em MP4 (não é .exo!)
+  // "Ocupado" = qualquer tarefa MP4 em andamento (fila/convertendo/baixando). Antes o
+  // 'downloading' caía no else e mostrava ".exo" — mas o arquivo É mp4.
+  const busy = queued || converting || baixando;
   const ready = mp4?.state === 'done';
   const R = 9, C = 2 * Math.PI * R;
   const pct = mp4 && mp4.percent >= 0 ? mp4.percent : null;
+  const label = ready ? 'Abrir no Web Video Cast / VLC'
+    : queued ? 'Na fila — começa quando a atual terminar'
+    : baixando ? 'Baixando em MP4…'
+    : converting ? 'Convertendo…'
+    : 'Converter pra MP4 (abre em outros apps)';
   const btn = (
     <button
       className="absolute top-0.5 left-0.5 z-20 rounded bg-black/70 px-1 py-0.5 text-[8px] leading-none font-semibold flex items-center gap-0.5"
-      title={ready ? 'Abrir no Web Video Cast / VLC' : queued ? 'Na fila — começa quando a atual terminar' : converting ? 'Convertendo…' : 'Converter pra MP4 (abre em outros apps)'}
+      title={label}
       onClick={ev => {
         ev.stopPropagation();
-        // Tocar de novo enquanto converte = pedido de cancelar, mas só depois de
-        // confirmar: perder 10 min de conversão por um toque errado seria cruel.
-        if (converting) { setAskCancel(true); return; }
+        // Tocar de novo enquanto roda = pedido de cancelar, mas só depois de confirmar:
+        // perder minutos de conversão/download por um toque errado seria cruel.
+        if (busy) { setAskCancel(true); return; }
         if (ready) openMp4(dlKey, title); else convertToMp4(dlKey, title);
       }}>
-      {converting ? (
-        <span className="relative inline-flex items-center justify-center w-[18px] h-[18px]">
-          <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${pct == null ? 'animate-spin' : ''}`}>
-            <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
-            <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
-              strokeDasharray={C} strokeDashoffset={C * (1 - (pct ?? 25) / 100)} />
-          </svg>
+      {busy ? (
+        // Anel amarelo (mesmo do download .exo) + "MP4": mostra o formato JÁ durante o
+        // download direto, não só no fim.
+        <span className="flex items-center gap-0.5">
+          <span className="relative inline-flex items-center justify-center w-[16px] h-[16px]">
+            <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${pct == null ? 'animate-spin' : ''}`}>
+              <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
+              <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
+                strokeDasharray={C} strokeDashoffset={C * (1 - (pct ?? 25) / 100)} />
+            </svg>
+          </span>
+          <span className="text-yellow-400">MP4</span>
         </span>
       ) : ready ? <span className="text-green-400">MP4</span>
         : <span className="text-white/70">.exo</span>}
@@ -111,15 +125,17 @@ function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
       <AlertDialog open={askCancel} onOpenChange={setAskCancel}>
         <AlertDialogContent onClick={ev => ev.stopPropagation()}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cancelar a conversão?</AlertDialogTitle>
+            <AlertDialogTitle>{baixando ? 'Cancelar o download em MP4?' : 'Cancelar a conversão?'}</AlertDialogTitle>
             <AlertDialogDescription>
               {queued
-                ? 'Este item sai da fila e não vira MP4. O download continua intacto.'
-                : 'O que já foi convertido é descartado e você começa do zero depois. O download continua intacto.'}
+                ? 'Este item sai da fila. Nada do que já está no aparelho é perdido.'
+                : baixando
+                ? 'O MP4 ainda não terminou (não retoma), então o pedaço baixado é descartado. Dá pra baixar de novo depois.'
+                : 'O que já foi convertido é descartado e você começa do zero depois. O download original continua intacto.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Continuar convertendo</AlertDialogCancel>
+            <AlertDialogCancel>{baixando ? 'Continuar baixando' : 'Continuar convertendo'}</AlertDialogCancel>
             <AlertDialogAction onClick={() => cancelMp4(dlKey)}>Sim, cancelar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
