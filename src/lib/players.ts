@@ -62,6 +62,60 @@ export const PROVIDERS: Provider[] = [
     },
   },
   // Fonte 4 (MegaEmbed) e Fonte 5 (PlayerFlix) removidas 09/08 — pedido do Weslley.
+  // ── Candidatos BR pra TESTAR no aparelho (09/08) ──────────────────────────────
+  // ⚠️ Esquema de URL é PALPITE (padrão SuperFlix /filme//serie): do IP daqui os
+  // sites dão Cloudflare 000/403, só o celular alcança. Se a fonte não listar nada,
+  // o esquema está errado → reportar que eu ajusto por site.
+  {
+    id: 'warezcdn',
+    name: 'Fonte 4 (WarezCDN — testar)',
+    build: (t) => {                                   // WarezCDN usa IMDB id
+      if (!t.imdbId) return null;
+      return t.type === 'movie'
+        ? `https://embed.warezcdn.com/filme/${t.imdbId}`
+        : `https://embed.warezcdn.com/serie/${t.imdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
+    id: 'overflixtv',
+    name: 'Fonte 5 (OverflixTV — testar)',
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://overflixtv.top/filme/${t.tmdbId}`
+        : `https://overflixtv.top/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
+    id: 'roxano',
+    name: 'Fonte 6 (Roxano — testar)',
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://roxano.top/filme/${t.tmdbId}`
+        : `https://roxano.top/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
+    id: 'mostraflix',
+    name: 'Fonte 7 (MostraFlix — testar)',
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://mostraflix.top/filme/${t.tmdbId}`
+        : `https://mostraflix.top/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
+    id: 'visioncine',
+    name: 'Fonte 8 (VisionCine — testar)',
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://visioncine.xyz/filme/${t.tmdbId}`
+        : `https://visioncine.xyz/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -69,4 +123,10 @@ export const PROVIDER_HOSTS = [
   'https://fembed.sx',
   'https://embedplayapi.top',
   'https://superflixapi.cyou',
+  // candidatos BR em teste (09/08)
+  'https://embed.warezcdn.com',
+  'https://overflixtv.top',
+  'https://roxano.top',
+  'https://mostraflix.top',
+  'https://visioncine.xyz',
 ];
