@@ -4,7 +4,7 @@ import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress } from './nativePlayer';
 import { upsertNotice } from './appNotices';
-import { mp4DoneKeys, mp4UriOf, onMp4Change } from './mp4Download';
+import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change } from './mp4Download';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -73,6 +73,16 @@ export function getDownloadMeta(): Record<string, DownloadMeta> {
     if (out[k] || it.state === 'removed') return;
     const s = syntheticMeta(it);
     if (s) out[k] = s;
+  });
+  // Baixado só em MP4 (sem passar pelo DownloadManager): o título vem do nome do
+  // arquivo. Sem isto, o episódio existe no aparelho mas some da aba Download.
+  mp4Names().forEach((nome, k) => {
+    if (out[k]) return;
+    const m = metaFromKey(k);
+    if (!m) return;
+    // O nome do arquivo termina em "— T1E8"; o título do GRUPO é a série.
+    const limpo = (nome || '').replace(/\s*[—-]\s*T\d+E\d+$/i, '').trim();
+    out[k] = { ...m, title: limpo || m.title };
   });
   return out;
 }
@@ -225,11 +235,11 @@ function metaFromKey(key: string): DownloadMeta | null {
 
 // Reproduz um download OFFLINE direto do cache (sem passar por MediaDetail/TMDB,
 // que exigem rede). Retoma da posição salva; salva a posição ao fechar.
-export async function playDownloaded(key: string) {
+export async function playDownloaded(key: string): Promise<boolean> {
   // MP4 baixado por uma versão anterior não tem registro de título; a própria
   // chave (m:tmdbId / e:tmdbId:s:e) basta pra tocar e pra guardar a posição.
   const meta = getDownloadMeta()[key] ?? metaFromKey(key);
-  if (!meta) return;
+  if (!meta) return false;
   // Baixado em MP4 (sem cache do Media3): toca o arquivo direto do MediaStore.
   if (items.get(key)?.state !== 'completed') {
     const uri = await mp4UriOf(key);
@@ -241,10 +251,10 @@ export async function playDownloaded(key: string) {
       });
       if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
       notify();
-      return;
+      return true;
     }
   }
-  if (!meta.url) return;
+  if (!meta.url) return false;
   // MESMA chave de resume do VideoPlayer (`tmdbId:type:season:ep`) → o progresso é
   // um só: retoma de onde parou na home e o que assistir aqui reflete lá.
   const resumeKey = `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`;
@@ -271,6 +281,7 @@ export async function playDownloaded(key: string) {
     handle?.remove();
     notify();   // atualiza a barra da aba na volta
   }
+  return true;
 }
 
 // Hook reativo: Set de concluídos.

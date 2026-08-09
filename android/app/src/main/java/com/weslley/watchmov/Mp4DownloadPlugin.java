@@ -98,9 +98,17 @@ public class Mp4DownloadPlugin extends Plugin {
     @PluginMethod
     public void list(PluginCall call) {
         com.getcapacitor.JSArray arr = new com.getcapacitor.JSArray();
-        for (String k : ExportUtil.exportedKeys(getContext())) arr.put(k);
+        com.getcapacitor.JSArray nomes = new com.getcapacitor.JSArray();
+        for (String k : ExportUtil.exportedKeys(getContext())) {
+            arr.put(k);
+            JSObject e = new JSObject();
+            e.put("key", k);
+            e.put("name", ExportUtil.exportedName(getContext(), k));
+            nomes.put(e);
+        }
         JSObject ret = new JSObject();
         ret.put("keys", arr);
+        ret.put("entries", nomes);   // com o nome do arquivo, pra UI ter um título
         if (ExportUtil.runningKey() != null) ret.put("running", ExportUtil.runningKey());
         com.getcapacitor.JSArray q = new com.getcapacitor.JSArray();
         for (String k : ExportUtil.queuedKeys()) q.put(k);

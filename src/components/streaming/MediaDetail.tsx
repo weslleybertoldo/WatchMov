@@ -192,14 +192,15 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const playMovie = async () => {
     const it = await ensureLib(); markWatched(it);
     const k = movieKey(media.tmdbId);
-    if (dls.has(k)) { playDownloaded(k); return; }
+    // Só cai no servidor se o arquivo não abrir de fato (ex. MP4 apagado por fora).
+    if (dls.has(k) && await playDownloaded(k)) return;
     setPlayer({});
   };
   const playEpisode = async (seasonNum: number, ep: number) => {
     const it = await ensureLib();
     markWatched(it); // entra em "Continuar assistindo"; NÃO marca assistido (só faltando 1 min ou manual)
     const k = epKey(media.tmdbId, seasonNum, ep);
-    if (dls.has(k)) { playDownloaded(k); return; }
+    if (dls.has(k) && await playDownloaded(k)) return;
     setPlayer({ season: seasonNum, episode: ep });
   };
   // Veio do atalho "espelhando na TV": abre direto o episódio/filme que está lá (1x).

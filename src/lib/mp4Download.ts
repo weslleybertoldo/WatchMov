@@ -23,7 +23,7 @@ export interface Mp4Event {
 interface Mp4DownloadPlugin {
   start(o: { key: string; url: string; referer?: string; mime?: string; title?: string }): Promise<void>;
   convert(o: { key: string; title?: string }): Promise<void>;
-  list(): Promise<{ keys: string[]; running?: string; queued?: string[] }>;
+  list(): Promise<{ keys: string[]; running?: string; queued?: string[]; entries?: { key: string; name?: string }[] }>;
   cancel(o?: { key?: string }): Promise<void>;
   status(o: { key: string }): Promise<{ done: boolean; uri?: string; running: boolean }>;
   openWith(o: { key: string; title?: string }): Promise<void>;
@@ -48,8 +48,9 @@ const notify = () => subs.forEach(f => f());
 function listen() {
   if (listening || !mp4Native()) return;
   listening = true;
-  Mp4Download.list().then(({ keys, running, queued }) => {
-    keys.forEach(k => items.set(k, { key: k, state: 'done', percent: 100 }));
+  Mp4Download.list().then(({ keys, running, queued, entries }) => {
+    const nomes = new Map((entries || []).map(e => [e.key, e.name]));
+    keys.forEach(k => items.set(k, { key: k, state: 'done', percent: 100, name: nomes.get(k) }));
     (queued || []).forEach(k => items.set(k, { key: k, state: 'queued', percent: -1 }));
     if (running) items.set(running, { key: running, state: 'converting', percent: -1 });
     notify();
@@ -164,6 +165,15 @@ export async function convertToMp4(key: string, title?: string) {
     items.delete(key); notify();
     toast.error('Não consegui converter', { description: (e as Error)?.message || 'erro' });
   }
+}
+
+/** Nome do arquivo MP4 de cada chave pronta — único título de um MP4 baixado
+ *  antes do registro de metadata existir. */
+export function mp4Names(): Map<string, string> {
+  listen();
+  const out = new Map<string, string>();
+  items.forEach((v, k) => { if (v.state === 'done' && v.name) out.set(k, v.name.replace(/\.mp4$/i, '')); });
+  return out;
 }
 
 /** Chaves que já têm MP4 pronto (o app trata como BAIXADO, igual ao cache Media3). */
