@@ -213,10 +213,22 @@ export function clearDownloadsFor(tmdbId: number, isMovie: boolean) {
   for (const k of [...knownKeys()]) if (k.startsWith(p)) removeDownload(k);
 }
 
+// Metadata mínima a partir da chave — sem título/poster, mas o suficiente pra
+// reproduzir e salvar a posição.
+function metaFromKey(key: string): DownloadMeta | null {
+  const p = key.split(':');
+  const tmdbId = Number(p[1]);
+  if (!tmdbId) return null;
+  if (p[0] === 'm') return { tmdbId, type: 'movie', title: '', url: '' };
+  return { tmdbId, type: 'tv', title: '', season: Number(p[2]), ep: Number(p[3]), url: '' };
+}
+
 // Reproduz um download OFFLINE direto do cache (sem passar por MediaDetail/TMDB,
 // que exigem rede). Retoma da posição salva; salva a posição ao fechar.
 export async function playDownloaded(key: string) {
-  const meta = getDownloadMeta()[key];   // inclui itens reconstruídos do nativo
+  // MP4 baixado por uma versão anterior não tem registro de título; a própria
+  // chave (m:tmdbId / e:tmdbId:s:e) basta pra tocar e pra guardar a posição.
+  const meta = getDownloadMeta()[key] ?? metaFromKey(key);
   if (!meta) return;
   // Baixado em MP4 (sem cache do Media3): toca o arquivo direto do MediaStore.
   if (items.get(key)?.state !== 'completed') {
