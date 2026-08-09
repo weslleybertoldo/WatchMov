@@ -8,6 +8,9 @@ export default defineConfig(() => ({
   base: "/",
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Quando ESTE APK foi gerado: é o que decide se o release do GitHub é mais
+    // recente (comparar só o número quebra quando a numeração é renumerada).
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString()),
   },
   server: {
     host: "::",
