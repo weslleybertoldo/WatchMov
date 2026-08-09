@@ -312,6 +312,14 @@ public final class ExportUtil {
         main.post(() -> {
             try {
                 Transformer.Builder b = new Transformer.Builder(ctx)
+                    // CAUSA RAIZ do "app fecha sem log" (crash NATIVO): o muxer padrão do
+                    // Transformer é o FrameworkMuxer = MediaMuxer do Android, em C++. Com o
+                    // HLS do EmbedPlay (faixas áudio/vídeo separadas + codec que o MediaMuxer
+                    // não engole) ele estoura em SIGSEGV, fora do alcance de qualquer
+                    // try/catch Java. O InAppMuxer é o muxer do Media3 em Java puro: sem
+                    // MediaMuxer nativo → não há SIGSEGV; formato não suportado vira
+                    // MuxerException → onError (erro tratável, sem fechar o app).
+                    .setMuxerFactory(new androidx.media3.transformer.InAppMuxer.Factory.Builder().build())
                     .addListener(new Transformer.Listener() {
                         @Override public void onCompleted(Composition c, ExportResult r) { publishAsync(ctx); }
                         @Override public void onError(Composition c, ExportResult r, ExportException e) { onExportError(e); }
