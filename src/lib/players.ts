@@ -89,16 +89,8 @@ export const PROVIDERS: Provider[] = [
         : `https://fshd.link/serie/${t.imdbId}/${s(t)}/${e(t)}`;
     },
   },
-  {
-    id: 'vsembed',
-    name: 'Fonte 6 (VSEmbed — abrir DUBLADO)', // UI em inglês, mas tem faixa DUB PT
-    build: (t) => {                                   // IMDB id, querystring
-      if (!t.imdbId) return null;
-      return t.type === 'movie'
-        ? `https://vsembed.ru/embed/movie?imdb=${t.imdbId}`
-        : `https://vsembed.ru/embed/tv?imdb=${t.imdbId}&sea=${s(t)}&epi=${e(t)}`;
-    },
-  },
+  // VSEmbed (vsembed.ru = VidSrc) REMOVIDO 09/08: é embedder internacional só com
+  // LEGENDA PT (ds_lang), sem áudio dublado — foge do foco (PT-BR dublado).
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -109,5 +101,4 @@ export const PROVIDER_HOSTS = [
   // candidatos BR (esquema validado 09/08)
   'https://warezcdn.lat',
   'https://fshd.link',
-  'https://vsembed.ru',
 ];
