@@ -132,7 +132,32 @@ public final class ExportUtil {
         String src = d.request.uri.toString();
         if (!src.contains("&ap=")) src = src + "&ap=pt";
         String mime = d.request.mimeType != null ? d.request.mimeType : MimeTypes.APPLICATION_M3U8;
+        run(ctx, key, name, src, mime, true, callback);
+    }
 
+    /**
+     * Baixa JÁ EM MP4, direto do stream (sem passar pelo download do Media3): o
+     * Transformer puxa o HLS pelo proxy e vai escrevendo o container. Não retoma se
+     * cair (o MP4 só fecha no fim) — por isso é uma opção, não o padrão.
+     */
+    public static void startFromUrl(Context context, String key, String url, String referer,
+                                    String mime, String title, Cb callback) {
+        final Context ctx = context.getApplicationContext();
+        if (runningKey != null) { callback.failed("já tem uma conversão em andamento"); return; }
+        if (url == null || url.isEmpty()) { callback.failed("sem link"); return; }
+        ProxyServer.ensure();
+        String src = url.contains("/s?u=") ? url : ProxyServer.local(url, referer);
+        if (!src.contains("&ap=")) src = src + "&ap=pt";
+        String m = (mime == null || mime.isEmpty()) ? MimeTypes.APPLICATION_M3U8 : mime;
+        run(ctx, key, safeName(title, key) + ".mp4", src, m, false, callback);
+    }
+
+    /**
+     * Motor comum: Transformer → MP4 temporário → MediaStore. fromCache=true lê os
+     * segmentos do SimpleCache (título já baixado); false busca na rede pelo proxy.
+     */
+    private static void run(Context ctx, String key, String name, String src, String mime,
+                            boolean fromCache, Cb callback) {
         File dir = new File(ctx.getExternalFilesDir(null), TMP_DIR);
         if (!dir.exists() && !dir.mkdirs()) { callback.failed("não consegui criar a pasta temporária"); return; }
         tmpFile = new File(dir, "export.mp4");
@@ -146,20 +171,22 @@ public final class ExportUtil {
         // Transformer é single-thread: criar, start, getProgress e cancel na main.
         main.post(() -> {
             try {
-                transformer = new Transformer.Builder(ctx)
-                    // MESMO caminho de leitura do player offline: o CacheDataSource lê os
-                    // segmentos do SimpleCache pela chave normalizada e só cai no
-                    // proxy/rede em cache-miss.
-                    .setAssetLoaderFactory(new ExoPlayerAssetLoader.Factory(
-                        ctx,
-                        new DefaultDecoderFactory(ctx),
-                        Clock.DEFAULT,
-                        new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(ctx))))
+                Transformer.Builder b = new Transformer.Builder(ctx)
                     .addListener(new Transformer.Listener() {
                         @Override public void onCompleted(Composition c, ExportResult r) { publishAsync(ctx); }
                         @Override public void onError(Composition c, ExportResult r, ExportException e) { fail(friendly(e)); }
-                    })
-                    .build();
+                    });
+                if (fromCache) {
+                    // MESMO caminho de leitura do player offline: o CacheDataSource lê os
+                    // segmentos do SimpleCache pela chave normalizada e só cai no
+                    // proxy/rede em cache-miss.
+                    b.setAssetLoaderFactory(new ExoPlayerAssetLoader.Factory(
+                        ctx,
+                        new DefaultDecoderFactory(ctx),
+                        Clock.DEFAULT,
+                        new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(ctx))));
+                }
+                transformer = b.build();
                 transformer.start(item, out);
                 if (cb != null) cb.progress(-1);
                 main.postDelayed(ExportUtil::poll, 800);
