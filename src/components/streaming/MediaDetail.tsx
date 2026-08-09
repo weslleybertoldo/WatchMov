@@ -337,6 +337,15 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     if (rd && /^\d{4}-\d{2}/.test(rd)) return `${rd.slice(5, 7)}/${rd.slice(0, 4)}`;
     return media.year;
   })();
+  // Duração: filme = a do próprio filme; série/anime = a do episódio (TMDB só dá
+  // episode_run_time, então rotula "/ep" pra não parecer a temporada inteira).
+  const durationLabel = (() => {
+    const mins = isSeries ? details?.seasons?.[0]?.episodeDuration : details?.runtime;
+    if (!mins || mins <= 0) return null;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    const t = h > 0 ? (m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`) : `${m}min`;
+    return isSeries ? `${t}/ep` : t;
+  })();
   const inList = !!liveItem?.favorite;
   const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
   const hasProgress = resumeMins > 0 || (isSeries && !!liveItem?.seasons?.some(s => episodesWatched(s).length > 0));
@@ -365,6 +374,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
       <div className="-mt-12 relative px-1 space-y-3">
         <h1 className="text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          {/* Duração antes da data: filme = duração do filme; série/anime = por episódio. */}
+          {durationLabel && <span>{durationLabel}</span>}
           {releaseLabel && <span>{releaseLabel}</span>}
           {isUpcoming(details?.releaseDate) ? (
             <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">Em breve</span>
