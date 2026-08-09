@@ -1,6 +1,6 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
-export interface SniffResult { url: string; mime?: string; referer?: string; quality?: string }
+export interface SniffResult { url: string; mime?: string; referer?: string; quality?: string; headers?: Record<string, string> }
 
 interface StreamSnifferPlugin {
   startWatching(): Promise<void>;

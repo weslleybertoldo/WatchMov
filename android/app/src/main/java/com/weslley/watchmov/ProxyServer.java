@@ -110,6 +110,29 @@ public class ProxyServer extends NanoHTTPD {
         }
     }
 
+    // Headers REAIS capturados pelo sniffer, por HOST — o proxy os reenvia verbatim
+    // ao re-buscar o stream. Antes só o Referer sobrevivia à captura; CDNs do
+    // EmbedPlay que gateiam por Origin/token respondiam 403 ("carrega e para"). O
+    // gate é por host, então guardar por host cobre master + segmentos.
+    private static final java.util.Map<String, java.util.Map<String, String>> HDRS =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static void putHeaders(String url, java.util.Map<String, String> headers) {
+        if (url == null || headers == null || headers.isEmpty()) return;
+        try {
+            String host = new URL(url).getHost();
+            if (host != null) HDRS.put(host.toLowerCase(), new java.util.HashMap<>(headers));
+        } catch (Exception ignored) {}
+    }
+
+    private static java.util.Map<String, String> headersFor(String url) {
+        try {
+            String host = new URL(url).getHost();
+            if (host != null) return HDRS.get(host.toLowerCase());
+        } catch (Exception ignored) {}
+        return null;
+    }
+
     // URL local (ExoPlayer no próprio aparelho).
     public static String local(String url, String referer) {
         ensure();
@@ -181,6 +204,13 @@ public class ProxyServer extends NanoHTTPD {
             if (r != null && !r.isEmpty()) {
                 rb.header("Referer", r);
                 try { URL ru = new URL(r); rb.header("Origin", ru.getProtocol() + "://" + ru.getHost()); } catch (Exception ignored) {}
+            }
+            // Headers REAIS que o WebView usou (Origin, sec-*, x-*, token…) — vêm do
+            // sniffer via ProxyServer.putHeaders e VENCEM os adivinhados acima. É o que
+            // faz os CDNs do EmbedPlay que gateiam por header aceitarem o replay.
+            java.util.Map<String, String> real = headersFor(u);
+            if (real != null) for (java.util.Map.Entry<String, String> e : real.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) rb.header(e.getKey(), e.getValue());
             }
             // Cookies do WebView (mesma sessão que capturou): vários CDNs (SuperFlix)
             // devolvem HTML "security error" (anti-bot) sem o cookie de sessão. O proxy

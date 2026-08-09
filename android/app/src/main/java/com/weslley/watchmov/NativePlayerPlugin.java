@@ -75,6 +75,7 @@ public class NativePlayerPlugin extends Plugin {
     public void loadNext(final PluginCall call) {
         PlayerActivity act = PlayerActivity.current();
         if (act == null) { call.resolve(new JSObject().put("ok", false)); return; }
+        registerHeaders(call.getString("url"), call);   // idem no avanço de episódio
         act.loadNextInPlace(
             call.getString("url"), call.getString("referer"), call.getString("mime"),
             call.getString("title"), toArray(call.getArray("urls", null)),
@@ -123,6 +124,7 @@ public class NativePlayerPlugin extends Plugin {
     public void play(final PluginCall call) {
         final String url = call.getString("url");
         if (url == null || url.isEmpty()) { call.reject("no_url"); return; }
+        registerHeaders(url, call);   // headers reais da captura → proxy reenvia verbatim
         Intent intent = new Intent(getContext(), PlayerActivity.class);
         intent.putExtra(PlayerActivity.EXTRA_URL, url);
         intent.putExtra(PlayerActivity.EXTRA_REFERER, call.getString("referer"));
@@ -139,6 +141,20 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         intent.putExtra(PlayerActivity.EXTRA_QUALITIES, toArray(call.getArray("qualities", null)));
         startActivityForResult(call, intent, "playerResult");
+    }
+
+    // Lê o objeto "headers" do call e registra no ProxyServer por host, pra o proxy
+    // reenviar os headers REAIS da captura (ver ProxyServer.putHeaders).
+    private static void registerHeaders(String url, PluginCall call) {
+        if (url == null) return;
+        try {
+            JSObject h = call.getObject("headers");
+            if (h == null) return;
+            java.util.Map<String, String> map = new java.util.HashMap<>();
+            java.util.Iterator<String> it = h.keys();
+            while (it.hasNext()) { String k = it.next(); String v = h.getString(k); if (v != null) map.put(k, v); }
+            if (!map.isEmpty()) ProxyServer.putHeaders(url, map);
+        } catch (Exception ignored) {}
     }
 
     private static String[] toArray(JSArray arr) {

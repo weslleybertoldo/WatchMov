@@ -117,7 +117,7 @@ public class StreamSnifferPlugin extends Plugin {
     public static void inspect(String url, Map<String, String> headers) {
         if (!watching || url == null || isBlockedHost(url)) return;
         String ref = headers != null ? headers.get("Referer") : null;
-        if (looksLikeVideo(url)) { report(url, ref, mimeFor(url)); return; }
+        if (looksLikeVideo(url)) { report(url, ref, mimeFor(url), headers); return; }
         if (skipProbe(url)) return;
         if (probeCount > 60 || !probed.add(noQuery(url))) return;   // teto e dedup de probes
         probeCount++;
@@ -129,15 +129,15 @@ public class StreamSnifferPlugin extends Plugin {
                 }
                 try (Response resp = http.newCall(rb.build()).execute()) {
                     String ct = resp.header("Content-Type");
-                    if (isVideoContentType(ct)) { report(url, ref, ct); return; }
+                    if (isVideoContentType(ct)) { report(url, ref, ct, headers); return; }
                     // Content-Type genérico (octet-stream/text/nulo): confere os 1os bytes.
                     if (ct == null || ct.toLowerCase().contains("octet-stream") || ct.toLowerCase().contains("text/")
                         || ct.toLowerCase().contains("application/binary")) {
                         if (resp.body() != null) {
                             byte[] b = resp.body().bytes();
                             String head = new String(b, 0, Math.min(b.length, 64));
-                            if (head.contains("#EXTM3U")) { report(url, ref, "application/vnd.apple.mpegurl"); }
-                            else if (head.contains("ftyp")) { report(url, ref, "video/mp4"); }
+                            if (head.contains("#EXTM3U")) { report(url, ref, "application/vnd.apple.mpegurl", headers); }
+                            else if (head.contains("ftyp")) { report(url, ref, "video/mp4", headers); }
                         }
                     }
                 }
@@ -152,11 +152,28 @@ public class StreamSnifferPlugin extends Plugin {
         return "video/mp4";
     }
 
-    private static void report(String url, String referer, String mime) {
+    // Headers que NÃO devem ser replicados no replay do proxy: são recalculados por
+    // conexão (hop-by-hop) ou atrapalham (Range/Accept-Encoding do probe).
+    private static boolean dropHeader(String k) {
+        if (k == null) return true;
+        String l = k.toLowerCase();
+        return l.equals("host") || l.equals("content-length") || l.equals("connection")
+            || l.equals("accept-encoding") || l.equals("range") || l.equals("if-range")
+            || l.equals("transfer-encoding") || l.equals("upgrade") || l.equals("keep-alive");
+    }
+
+    private static void report(String url, String referer, String mime, Map<String, String> headers) {
         if (instance == null || !watching || url == null || isBlockedHost(url)) return;
         if (!emitted.add(noQuery(url))) return;
         final String fMime = mime != null ? mime : mimeFor(url);
         final boolean isHls = fMime.toLowerCase().contains("mpegurl") || url.toLowerCase().contains(".m3u8");
+        // Copia os headers REAIS que o WebView usou (Origin, sec-*, x-*, etc.) — o proxy
+        // vai reenviar VERBATIM. Antes só o Referer sobrevivia à captura, e CDNs que
+        // gateiam por Origin/token respondiam 403 ao replay incompleto ("chega com falha").
+        final JSObject hdrs = new JSObject();
+        if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null && !dropHeader(e.getKey())) hdrs.put(e.getKey(), e.getValue());
+        }
         // Tenta descobrir a resolução SEM tocar (rotula o link já na captura).
         pool.submit(() -> {
             String quality = probeQuality(url, referer, isHls);
@@ -164,6 +181,7 @@ public class StreamSnifferPlugin extends Plugin {
             d.put("url", url);
             if (referer != null) d.put("referer", referer);
             d.put("mime", fMime);
+            if (hdrs.length() > 0) d.put("headers", hdrs);
             if (!quality.isEmpty()) d.put("quality", quality);
             instance.notifyListeners("streamFound", d);
         });
