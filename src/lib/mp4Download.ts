@@ -62,13 +62,13 @@ function listen() {
     }
     if (e.state === 'converting') {
       toast.loading(e.percent >= 0 ? `Convertendo pra MP4… ${e.percent}%` : 'Convertendo pra MP4…', {
-        id, description: 'Deixe o app aberto.',
+        id, description: 'Pode fechar o app — continua na notificação.',
       });
       return;
     }
     if (e.state === 'downloading') {
       toast.loading(e.percent >= 0 ? `Baixando em MP4… ${e.percent}%` : 'Baixando em MP4…', {
-        id, description: 'Deixe o app aberto — esse formato não retoma se parar.',
+        id, description: 'Segue na notificação; se parar no meio, recomeça do zero.',
       });
     } else if (e.state === 'done') {
       toast.success('MP4 pronto', {

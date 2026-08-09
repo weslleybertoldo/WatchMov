@@ -65,6 +65,12 @@
             </intent-filter>
         </service>
 
+        <!-- Conversão pra MP4 em primeiro plano (segue com o app fechado) -->
+        <service
+            android:name=".ConvertService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

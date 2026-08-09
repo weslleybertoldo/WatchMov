@@ -743,7 +743,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <button onClick={() => { const r = dlAsk; setDlAsk(null); startMp4Download(r); }}
               className="w-full text-left px-3 py-3 hover:bg-secondary">
               <p className="text-sm text-foreground flex items-center gap-2"><Tv className="w-4 h-4 text-green-400" /> MP4 em Movies/WatchMov</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Arquivo que o Web Video Cast, VLC e a galeria abrem — é o que a TV toca. Não retoma se parar e não entra na aba Download.</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Arquivo que o Web Video Cast, VLC e a galeria abrem — é o que a TV toca. Segue com o app fechado; se parar no meio, recomeça do zero.</p>
             </button>
           </div>
         </div>
