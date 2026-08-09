@@ -75,6 +75,7 @@ public class Mp4DownloadPlugin extends Plugin {
             call.getString("mime"), call.getString("title", ""),
             new ExportUtil.Cb() {
                 @Override public void progress(int p) { emit(key, "downloading", p, null, null, null); }
+                @Override public void queued(int pos) { emit(key, "queued", -1, null, null, null); }
                 @Override public void done(Uri uri, String name) { emit(key, "done", 100, name, uri.toString(), null); }
                 @Override public void failed(String why) { emit(key, "failed", 0, null, null, why); }
             });
@@ -89,6 +90,9 @@ public class Mp4DownloadPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("keys", arr);
         if (ExportUtil.runningKey() != null) ret.put("running", ExportUtil.runningKey());
+        com.getcapacitor.JSArray q = new com.getcapacitor.JSArray();
+        for (String k : ExportUtil.queuedKeys()) q.put(k);
+        ret.put("queued", q);
         call.resolve(ret);
     }
 
@@ -119,6 +123,7 @@ public class Mp4DownloadPlugin extends Plugin {
         if (ready != null) { emit(key, "done", 100, null, ready.toString(), null); call.resolve(); return; }
         ExportUtil.start(getContext(), key, call.getString("title", ""), new ExportUtil.Cb() {
             @Override public void progress(int p) { emit(key, "converting", p, null, null, null); }
+            @Override public void queued(int pos) { emit(key, "queued", -1, null, null, null); }
             @Override public void done(Uri uri, String name) { emit(key, "done", 100, name, uri.toString(), null); }
             @Override public void failed(String why) { emit(key, "failed", 0, null, null, why); }
         });
@@ -127,9 +132,10 @@ public class Mp4DownloadPlugin extends Plugin {
 
     @PluginMethod
     public void cancel(PluginCall call) {
-        String running = ExportUtil.runningKey();
-        ExportUtil.cancel();
-        if (running != null) emit(running, "canceled", 0, null, null, null);
+        String key = call.getString("key");
+        String target = key != null ? key : ExportUtil.runningKey();
+        ExportUtil.cancel(key);
+        if (target != null) emit(target, "canceled", 0, null, null, null);
         call.resolve();
     }
 

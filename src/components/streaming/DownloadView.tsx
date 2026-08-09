@@ -7,6 +7,7 @@ import {
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
 import { useMp4, mp4Native, convertToMp4, openMp4 } from '@/lib/mp4Download';
+import { useAndroidBackButton } from '@/hooks/use-android-back';
 
 interface TitleGroup {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
@@ -50,14 +51,15 @@ function Progress({ item }: { item?: DownloadItem }) {
 function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
   const mp4 = useMp4(dlKey);
   if (!mp4Native()) return null;
-  const converting = mp4?.state === 'converting';
+  const queued = mp4?.state === 'queued';
+  const converting = mp4?.state === 'converting' || queued;
   const ready = mp4?.state === 'done';
   const R = 9, C = 2 * Math.PI * R;
   const pct = mp4 && mp4.percent >= 0 ? mp4.percent : null;
   return (
     <button
       className="absolute top-0.5 left-0.5 z-20 rounded bg-black/70 px-1 py-0.5 text-[8px] leading-none font-semibold flex items-center gap-0.5"
-      title={ready ? 'Abrir no Web Video Cast / VLC' : converting ? 'Convertendo…' : 'Converter pra MP4 (abre em outros apps)'}
+      title={ready ? 'Abrir no Web Video Cast / VLC' : queued ? 'Na fila — começa quando a atual terminar' : converting ? 'Convertendo…' : 'Converter pra MP4 (abre em outros apps)'}
       onClick={ev => {
         ev.stopPropagation();
         if (converting) return;
@@ -245,6 +247,14 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const { meta, items } = useDownloadList();
   const [editing, setEditing] = useState(false);
   const [openSeries, setOpenSeries] = useState<number | null>(null);
+
+  // Voltar (botão ou gesto) DENTRO dos episódios fecha só a sub-tela — antes ele
+  // caía direto no handler do Index, que fechava a aba inteira e devolvia o
+  // usuário às Configurações (de onde a aba é aberta).
+  useAndroidBackButton(() => {
+    if (openSeries != null) { setOpenSeries(null); return true; }
+    return false;
+  });
 
   const [freeBytes, setFreeBytes] = useState(0);
 
