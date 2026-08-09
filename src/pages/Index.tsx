@@ -25,12 +25,14 @@ import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
 import BugsView from '@/components/streaming/BugsView';
+import LiveTvView from '@/components/streaming/LiveTvView';
+import type { Channel } from '@/lib/liveTv';
 import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, RadioTower, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
 
-type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista' | 'procurar';
+type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'procurar';
 
 function itemToSummary(i: WatchItem): MediaSummary {
   return {
@@ -80,7 +82,7 @@ const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'filmes', label: 'Filmes', icon: Film },
   { key: 'series', label: 'Séries', icon: Tv },
   { key: 'animes', label: 'Animes', icon: Sparkles },
-  { key: 'lista', label: 'Minha Lista', icon: Bookmark },
+  { key: 'aovivo', label: 'Ao Vivo', icon: RadioTower },
   { key: 'procurar', label: 'Procurar', icon: Compass },
 ];
 
@@ -107,6 +109,8 @@ export default function Index() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [bugsOpen, setBugsOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);          // Minha Lista (agora dentro do Painel)
+  const [liveChannel, setLiveChannel] = useState<Channel | null>(null); // canal ao vivo tocando
 
   // Push: registra o device e carrega os sinos; tocar na notificação abre o título.
   useEffect(() => {
@@ -159,19 +163,21 @@ export default function Index() {
     setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
   const handleBack = useCallback(async (): Promise<boolean> => {
+    if (liveChannel) { setLiveChannel(null); return true; }
     if (selected) { setSelected(null); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
+    if (listFilter) { setListFilter(null); return true; }
+    if (listOpen) { setListOpen(false); return true; }
     if (noticesOpen) { setNoticesOpen(false); return true; }
     if (settingsOpen) { setSettingsOpen(false); return true; }
     if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
-    if (listFilter) { setListFilter(null); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, category, tab]);
+  }, [liveChannel, selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -218,7 +224,7 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); setNoticesOpen(false); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -261,6 +267,22 @@ export default function Index() {
         </div>
       </header>
 
+      {/* Player de canal ao vivo — overlay full-screen (iframe modo servidor). */}
+      {liveChannel && (
+        <div className="fixed inset-0 z-50 bg-black flex flex-col">
+          <div className="flex items-center gap-2 px-3 h-12 bg-black/90 text-white shrink-0">
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-white hover:bg-white/10" onClick={() => setLiveChannel(null)}>
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <span className="text-sm font-medium truncate">{liveChannel.name}</span>
+          </div>
+          <iframe key={liveChannel.embed} src={liveChannel.embed} title={liveChannel.name}
+            className="flex-1 w-full border-0"
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            allowFullScreen referrerPolicy="origin" />
+        </div>
+      )}
+
       {/* Conteúdo */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
@@ -278,23 +300,33 @@ export default function Index() {
             <DownloadView onBack={() => setDownloadOpen(false)} />
           ) : bugsOpen ? (
             <BugsView onBack={() => setBugsOpen(false)} />
+          ) : listOpen ? (
+            <div className="space-y-6 animate-fade-in">
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { if (listFilter) setListFilter(null); else setListOpen(false); }}><ArrowLeft className="w-5 h-5" /></Button>
+                <h1 className="text-xl font-bold">{listFilter ? listTitle : 'Minha Lista'}</h1>
+              </div>
+              {listFilter ? (
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                  {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
+                </div>
+              ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
+                <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Lista" num título.</p>
+              ) : (
+                <>
+                  {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
+                  {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
+                  {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
+                </>
+              )}
+            </div>
           ) : (
-            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+            <SettingsView stats={watchedStats} onList={() => setListOpen(true)} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
           )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
         ) : continueFilter ? (
           <ContinueView title={continueTitle} entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueFilter(null)} />
-        ) : listFilter ? (
-          <div className="space-y-4 animate-fade-in">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setListFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
-              <h1 className="text-xl font-bold">{listTitle}</h1>
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-              {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
-            </div>
-          </div>
         ) : category ? (
           <CategoryView title={category.title} loadPage={category.loadPage} cacheKey={category.cacheKey} onOpen={openMedia} onBack={() => setCategory(null)} />
         ) : tab === 'inicio' ? (
@@ -352,18 +384,7 @@ export default function Index() {
         ) : tab === 'procurar' ? (
           <BrowseView onOpen={openMedia} />
         ) : (
-          <div className="space-y-6">
-            <h1 className="text-xl font-bold">Minha Lista</h1>
-            {listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Minha Lista" num título.</p>
-            ) : (
-              <>
-                {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
-                {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
-                {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
-              </>
-            )}
-          </div>
+          <LiveTvView onPlay={setLiveChannel} />
         )}
       </main>
 
