@@ -107,6 +107,7 @@ public class PlayerActivity extends Activity {
     private boolean watched = false;              // estado atual do "assistido"
     private boolean userUnwatched = false;        // desmarcou manual → não auto-marcar de novo
     private android.widget.ImageButton watchedBtn;
+    private android.widget.ImageButton shareBtn;   // enviar o vídeo pra outro app (WVC/VLC)
     private boolean resultSaved = false;
     private String resumeKey;
     private android.content.SharedPreferences resumePrefs;
@@ -197,6 +198,10 @@ public class PlayerActivity extends Activity {
         castBtn = view.findViewById(R.id.wm_cast);
         castBtn.setColorFilter(Color.WHITE);
         castBtn.setOnClickListener(v -> onCastButton());
+
+        shareBtn = view.findViewById(R.id.wm_share);
+        shareBtn.setOnClickListener(v -> onShareButton());
+        refreshShareBtn();
 
         final LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -703,6 +708,86 @@ public class PlayerActivity extends Activity {
     private static boolean isTrackOnly(String u) {
         String l = u.toLowerCase();
         return l.contains("/m3/") || l.contains("/md/") || l.contains("index-f") || l.matches(".*-v\\d-a\\d.*");
+    }
+
+    // Verde = este episódio já tem MP4 exportado (é só abrir no app externo).
+    private void refreshShareBtn() {
+        if (shareBtn == null) return;
+        String key = ExportUtil.downloadKeyFromResume(resumeKey);
+        boolean ready = key != null && ExportUtil.exported(this, key) != null;
+        shareBtn.setColorFilter(ready ? Color.parseColor("#4ADE80") : Color.WHITE);
+    }
+
+    // Enviar pra outro app (Web Video Cast/VLC/MX). BAIXADO: converte num MP4 real em
+    // Movies/WatchMov e abre o chooser — é o que faz a TV tocar, já que receptor DLNA
+    // não engole HLS e o arquivo do download (SimpleCache em Android/data) é invisível
+    // pros outros apps. NÃO baixado: manda a URL, como o handoff sempre fez.
+    private void onShareButton() {
+        final String key = ExportUtil.downloadKeyFromResume(resumeKey);
+        if (!downloaded || key == null) { shareStreamUrl(); return; }
+        android.net.Uri ready = ExportUtil.exported(this, key);
+        if (ready != null) { ExportUtil.openWith(this, ready, mTitle); return; }
+        if (ExportUtil.isRunning()) { castMsg("Já tem uma conversão em andamento…", 3000); return; }
+        new AlertDialog.Builder(this)
+            .setTitle("Enviar pra outro app")
+            .setMessage("Converto o vídeo baixado num MP4 (fica em Movies/WatchMov) e abro o Web Video Cast/VLC — aí a TV toca direto. Leva alguns minutos; deixe o app aberto.")
+            .setPositiveButton("Converter", (d, w) -> startExport(key))
+            .setNeutralButton("Só mandar o link", (d, w) -> shareStreamUrl())
+            .setNegativeButton("Cancelar", null)
+            .show();
+    }
+
+    private void startExport(String key) {
+        castMsg("Convertendo pra MP4…", 0);
+        ExportUtil.start(this, key, mTitle, new ExportUtil.Cb() {
+            @Override public void progress(int p) {
+                castMsg(p >= 0 ? "Convertendo pra MP4… " + p + "%" : "Convertendo pra MP4…", 0);
+            }
+            @Override public void done(android.net.Uri uri, String name) {
+                castMsg("Pronto: " + name, 4000);
+                refreshShareBtn();
+                ExportUtil.openWith(PlayerActivity.this, uri, mTitle);
+            }
+            @Override public void failed(String why) {
+                castMsg("Não consegui converter: " + why, 7000);
+            }
+        });
+    }
+
+    // Sem arquivo exportado: manda a URL (HLS vai pelo proxy da LAN, com áudio PT) pro
+    // app que o usuário escolher no chooser.
+    private void shareStreamUrl() {
+        if (currentUrl == null) { castMsg("Sem link", 2500); return; }
+        try {
+            String url = currentUrl;
+            String m = (mMime == null || mMime.isEmpty()) ? "video/*" : mMime;
+            String lu = url.toLowerCase();
+            boolean hls = m.toLowerCase().contains("mpegurl")
+                || lu.contains(".m3u8") || lu.contains(".txt") || lu.contains("master")
+                || lu.contains("/m3/") || lu.contains("playlist");
+            if (hls) {
+                if (!url.contains("/s?u=")) {
+                    String ip = localIp();
+                    if (ip != null) url = ProxyServer.lan(url, mReferer, ip);
+                }
+                if ("video/*".equals(m)) m = "application/x-mpegURL";
+            }
+            android.content.Intent view = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            view.setDataAndType(android.net.Uri.parse(url), m);
+            if (mTitle != null) view.putExtra("title", mTitle);
+            view.putExtra("secure_uri", true);
+            android.os.Bundle hb = new android.os.Bundle();
+            if (mReferer != null && !mReferer.isEmpty()) hb.putString("Referer", mReferer);
+            hb.putString("User-Agent", UA_HANDOFF);
+            view.putExtra("headers", hb);
+            view.putExtra("com.android.browser.headers", hb);
+            view.putExtra("android.media.intent.extra.HTTP_HEADERS", hb);
+            android.content.Intent chooser = android.content.Intent.createChooser(view, "Abrir com");
+            chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(chooser);
+        } catch (Exception e) {
+            castMsg("Não consegui abrir: " + e.getMessage(), 5000);
+        }
     }
 
     // Handoff pro player externo. Manda a(s) MASTER (playlist completa áudio+vídeo);
@@ -1490,6 +1575,7 @@ public class PlayerActivity extends Activity {
             if (wmTitleTv != null) wmTitleTv.setText(title);
             if (activeCastMode != CAST_NONE) { activeCastKey = key; activeCastTitle = title; }
             if (watchedBtn != null) watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
+            refreshShareBtn();                  // o novo ep pode não ter MP4 exportado
             if (nextBtn != null) nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
             if (nextCastBtn != null) nextCastBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
             // Zera o tempo do remoto: o overlay mostrava o tempo do ep ANTERIOR (a TV

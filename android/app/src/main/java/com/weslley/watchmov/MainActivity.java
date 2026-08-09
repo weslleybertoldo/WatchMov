@@ -50,7 +50,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DlnaCastPlugin.class);
         registerPlugin(ExternalCastPlugin.class);
         registerPlugin(DownloaderPlugin.class);
-        registerPlugin(ExporterPlugin.class);
         super.onCreate(savedInstanceState);
 
         WebView webView = this.bridge.getWebView();

@@ -80,6 +80,12 @@
       <ImageButton android:id="@id/exo_subtitle"
           style="@style/ExoStyledControls.Button.Bottom.CC"/>
 
+      <!-- Exporta o baixado pra MP4 em Movies/WatchMov e abre no Web Video Cast/VLC. -->
+      <ImageButton android:id="@+id/wm_share"
+          style="@style/ExoStyledControls.Button.Bottom"
+          android:src="@drawable/ic_share"
+          android:contentDescription="Enviar o vídeo pra outro app"/>
+
       <ImageButton android:id="@id/exo_settings"
           style="@style/ExoStyledControls.Button.Bottom.Settings"/>
 
