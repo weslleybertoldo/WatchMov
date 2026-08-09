@@ -761,7 +761,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             </div>
             <button onClick={() => { const r = dlAsk; setDlAsk(null); startStandardDownload(r); }}
               className="w-full text-left px-3 py-3 hover:bg-secondary border-b border-border/40">
-              <p className="text-sm text-foreground flex items-center gap-2"><Download className="w-4 h-4 text-primary" /> Padrão (offline no app)</p>
+              <p className="text-sm text-foreground flex items-center gap-2"><Download className="w-4 h-4 text-primary" /> Media3 (.exo)</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Retoma sozinho se cair, aparece na aba Download e toca offline aqui. Outros apps não enxergam.</p>
             </button>
             <button onClick={() => { const r = dlAsk; setDlAsk(null); startMp4Download(r); }}

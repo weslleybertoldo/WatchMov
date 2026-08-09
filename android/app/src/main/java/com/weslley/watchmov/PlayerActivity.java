@@ -108,6 +108,7 @@ public class PlayerActivity extends Activity {
     private boolean userUnwatched = false;        // desmarcou manual → não auto-marcar de novo
     private android.widget.ImageButton watchedBtn;
     private android.widget.ImageButton shareBtn;   // enviar o vídeo pra outro app (WVC/VLC)
+    private android.widget.ImageButton downloadBtn; // baixar o link atual (Media3/.exo x MP4)
     private boolean resultSaved = false;
     private String resumeKey;
     private android.content.SharedPreferences resumePrefs;
@@ -202,6 +203,12 @@ public class PlayerActivity extends Activity {
         shareBtn = view.findViewById(R.id.wm_share);
         shareBtn.setOnClickListener(v -> onShareButton());
         refreshShareBtn();
+
+        downloadBtn = view.findViewById(R.id.wm_download);
+        if (downloadBtn != null) {
+            downloadBtn.setColorFilter(Color.WHITE);
+            downloadBtn.setOnClickListener(v -> onDownloadButton());
+        }
 
         final LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -767,6 +774,44 @@ public class PlayerActivity extends Activity {
                 castMsg("Não consegui converter: " + why, 7000);
             }
         });
+    }
+
+    // Baixar o link ATUAL direto do player (mesma escolha do ⤓ em "Links do vídeo"):
+    // Media3 (.exo, cache que retoma e toca offline) OU MP4 (Movies/WatchMov, abre em
+    // qualquer app). Reusa ExportUtil (MP4) e o mesmo enqueue do DownloaderPlugin (.exo).
+    private void onDownloadButton() {
+        if (currentUrl == null) { castMsg("Sem link pra baixar", 2500); return; }
+        final String key = ExportUtil.downloadKeyFromResume(resumeKey);
+        if (key == null) { castMsg("Não dá pra baixar este item", 2500); return; }
+        new AlertDialog.Builder(this)
+            .setTitle("Como quer baixar?")
+            .setItems(new CharSequence[]{ "Media3 (.exo)", "MP4 em Movies/WatchMov" }, (d, which) -> {
+                if (which == 0) dlAsMedia3(key); else dlAsMp4(key);
+            })
+            .setNegativeButton("Cancelar", null)
+            .show();
+    }
+
+    private void dlAsMp4(String key) {
+        castMsg("Baixando em MP4…", 3000);
+        ExportUtil.startFromUrl(this, key, currentUrl, mReferer, mMime, mTitle, new ExportUtil.Cb() {
+            @Override public void progress(int p) {}
+            @Override public void done(android.net.Uri uri, String name) { castMsg("MP4 salvo: " + name, 4000); refreshShareBtn(); }
+            @Override public void failed(String why) { castMsg("Falha no MP4: " + why, 6000); }
+        });
+    }
+
+    private void dlAsMedia3(String key) {
+        try {
+            String proxied = ProxyServer.local(currentUrl, mReferer);
+            androidx.media3.exoplayer.offline.DownloadRequest.Builder b =
+                new androidx.media3.exoplayer.offline.DownloadRequest.Builder(key, android.net.Uri.parse(proxied));
+            if (mMime != null && mMime.toLowerCase().contains("mpegurl")) b.setMimeType(MimeTypes.APPLICATION_M3U8);
+            if (mTitle != null) b.setData(mTitle.getBytes());
+            androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(
+                this, WatchDownloadService.class, b.build(), true);
+            castMsg("Baixando… acompanhe na aba Download", 4000);
+        } catch (Exception e) { castMsg("Falha ao baixar: " + e, 6000); }
     }
 
     // Sem arquivo exportado: manda a URL (HLS vai pelo proxy da LAN, com áudio PT) pro
