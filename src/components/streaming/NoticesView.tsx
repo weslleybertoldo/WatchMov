@@ -30,7 +30,11 @@ export default function NoticesView({ onBack }: { onBack: () => void }) {
   const { list } = useNotices();
   const [tab, setTab] = useState<NoticeKind>('release');
   // Conversões/downloads de MP4 rodando agora (progresso ao vivo).
-  const ativos = useMp4All().filter(m => m.state !== 'done');
+  // Conversão (o vídeo já estava baixado) vai pra aba Conversões; baixar já em MP4
+  // é download, então aparece na aba Downloads junto dos downloads normais.
+  const mp4Todos = useMp4All().filter(m => m.state !== 'done');
+  const ativos = mp4Todos.filter(m => m.mode !== 'download');
+  const mp4Baixando = mp4Todos.filter(m => m.mode === 'download');
   // Downloads rodando agora (aba Downloads mostra o progresso junto do histórico).
   const { meta: dlMeta, items: dlItems } = useDownloadList();
   const baixando = [...dlItems.values()]
@@ -69,8 +73,22 @@ export default function NoticesView({ onBack }: { onBack: () => void }) {
 
       {/* Em andamento AGORA (só na aba Conversões): o % vai fechando aqui, sem
           precisar de um toast preso na tela. */}
-      {tab === 'download' && baixando.length > 0 && (
+      {tab === 'download' && (baixando.length > 0 || mp4Baixando.length > 0) && (
         <div className="space-y-2">
+          {mp4Baixando.map(m => (
+            <div key={m.key} className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-foreground truncate">
+                  {m.state === 'queued' ? `${m.position ? `${m.position}º na fila` : 'Na fila'}` : 'Baixando em MP4'}
+                  {m.name ? `: ${m.name.replace('.mp4', '')}` : ''}
+                </p>
+                <span className="text-xs text-primary shrink-0">{m.percent >= 0 ? `${m.percent}%` : '…'}</span>
+              </div>
+              <div className="mt-1.5 h-1 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-primary transition-all" style={{ width: `${m.percent >= 0 ? m.percent : 6}%` }} />
+              </div>
+            </div>
+          ))}
           {baixando.map(d => (
             <div key={d.key} className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
@@ -91,7 +109,7 @@ export default function NoticesView({ onBack }: { onBack: () => void }) {
             <div key={a.key} className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm text-foreground truncate">
-                  {a.state === 'queued' ? 'Na fila' : a.state === 'downloading' ? 'Baixando em MP4' : 'Convertendo'}
+                  {a.state === 'queued' ? `${a.position ? `${a.position}º na fila` : 'Na fila'}` : 'Convertendo'}
                   {a.name ? `: ${a.name.replace('.mp4', '')}` : ''}
                 </p>
                 <span className="text-xs text-primary shrink-0">{a.percent >= 0 ? `${a.percent}%` : '…'}</span>
@@ -104,7 +122,7 @@ export default function NoticesView({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {shown.length === 0 && !(tab === 'mp4' && ativos.length > 0) && !(tab === 'download' && baixando.length > 0) ? (
+      {shown.length === 0 && !(tab === 'mp4' && ativos.length > 0) && !(tab === 'download' && (baixando.length > 0 || mp4Baixando.length > 0)) ? (
         <p className="text-sm text-muted-foreground py-8 text-center">{meta.empty}</p>
       ) : (
         <div className="space-y-2">

@@ -12,10 +12,12 @@ import { upsertNotice } from '@/lib/appNotices';
 export interface Mp4Event {
   key: string;
   state: 'downloading' | 'converting' | 'queued' | 'done' | 'failed' | 'canceled' | 'removed';
-  percent: number;   // -1 enquanto não dá pra estimar
+  percent: number;      // -1 enquanto não dá pra estimar
   name?: string;
   uri?: string;
   error?: string;
+  mode?: 'download' | 'convert';   // baixar já em MP4 x converter o que já baixou
+  position?: number;    // lugar na fila (1 = próximo a rodar)
 }
 
 interface Mp4DownloadPlugin {
@@ -31,6 +33,9 @@ interface Mp4DownloadPlugin {
 
 export const Mp4Download = registerPlugin<Mp4DownloadPlugin>('Mp4Download');
 export const mp4Native = () => Capacitor.isNativePlatform();
+
+// "Seus Amigos e Vizinhos — T2E9" (sem a extensão) — o nativo manda o nome do arquivo.
+const nomeDe = (e: Mp4Event) => (e.name || 'vídeo').replace(/\.mp4$/i, '');
 
 let listening = false;
 
@@ -55,11 +60,13 @@ function listen() {
     else items.set(e.key, e);
     notify();
     const id = `mp4-${e.key}`;
-    if (e.state === 'canceled') { upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: 'Conversão cancelada', body: 'O download continua no aparelho.' }); toast.dismiss(id); return; }
+    if (e.state === 'canceled') { upsertNotice(`mp4:${e.key}`, { kind: e.mode === 'download' ? 'download' : 'mp4', title: `Cancelado: ${nomeDe(e)}`, body: 'O que já estava baixado continua no aparelho.' }); toast.dismiss(id); return; }
     if (e.state === 'queued') {
       // Toast COM saída (o loading ficava preso na tela); o registro fica no sino.
       toast.info('Na fila…', { id, duration: 4000, description: 'Começa assim que a conversão atual terminar.' });
-      upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: 'Conversão na fila', body: 'Começa assim que a atual terminar.' });
+      upsertNotice(`mp4:${e.key}`, { kind: e.mode === 'download' ? 'download' : 'mp4',
+        title: `${e.position ? `${e.position}º na fila` : 'Na fila'}: ${nomeDe(e)}`,
+        body: 'Começa assim que a atual terminar.' });
       return;
     }
     if (e.state === 'converting') {
@@ -68,14 +75,14 @@ function listen() {
       // tapa a tela inteira enquanto a conversão dura.
       if (antes !== 'converting') {
         toast.info('Convertendo pra MP4…', { id, duration: 4000, description: 'Acompanhe no sino ou na notificação. Pode fechar o app.' });
-        upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: `Convertendo ${(e.name || 'vídeo').replace('.mp4', '')}`, body: 'Acompanhe o progresso aqui.' });
+        upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: `Convertendo ${nomeDe(e)}`, body: 'Acompanhe o progresso aqui.' });
       }
       return;
     }
     if (e.state === 'downloading') {
       if (antes !== 'downloading') {
         toast.info('Baixando em MP4…', { id, duration: 4000, description: 'Acompanhe no sino ou na notificação; se parar no meio, recomeça do zero.' });
-        upsertNotice(`mp4:${e.key}`, { kind: 'mp4', title: `Baixando ${(e.name || 'vídeo').replace('.mp4', '')} em MP4`, body: 'Acompanhe o progresso aqui.' });
+        upsertNotice(`mp4:${e.key}`, { kind: 'download', title: `Baixando ${nomeDe(e)} em MP4`, body: 'Acompanhe o progresso aqui.' });
       }
     } else if (e.state === 'done') {
       toast.success('MP4 pronto', {
@@ -83,13 +90,15 @@ function listen() {
         description: `${e.name || 'vídeo'} em Movies/WatchMov — abra no Web Video Cast pra mandar na TV.`,
       });
       // Substitui o aviso de progresso desta mesma tarefa.
-      upsertNotice(`mp4:${e.key}`, { kind: 'mp4',
-        title: `${antes === 'downloading' ? 'Download' : 'Conversão'} de ${(e.name || 'vídeo').replace('.mp4', '')} concluído (MP4)`,
+      const baixou = (e.mode ?? (antes === 'downloading' ? 'download' : 'convert')) === 'download';
+      upsertNotice(`mp4:${e.key}`, { kind: baixou ? 'download' : 'mp4',
+        title: `${baixou ? 'Download' : 'Conversão'} de ${nomeDe(e)} concluído (MP4)`,
         body: 'Está em Movies/WatchMov — dá pra abrir no Web Video Cast ou VLC.' });
     } else if (e.state === 'failed') {
       toast.error('Não consegui baixar em MP4', { id, duration: 8000, description: e.error || 'erro' });
-      upsertNotice(`mp4:${e.key}`, { kind: 'mp4', error: true,
-        title: `${antes === 'downloading' ? 'O download em MP4' : 'A conversão'} de ${(e.name || 'vídeo').replace('.mp4', '')} falhou`,
+      const eraDownload = (e.mode ?? (antes === 'downloading' ? 'download' : 'convert')) === 'download';
+      upsertNotice(`mp4:${e.key}`, { kind: eraDownload ? 'download' : 'mp4', error: true,
+        title: `${eraDownload ? 'O download em MP4' : 'A conversão'} de ${nomeDe(e)} falhou`,
         body: e.error || 'erro' });
       // Vai pro painel de bugs mesmo com o player fechado (o log do player só
       // registra enquanto ele está montado — foi por isso que o 1º erro se perdeu).
