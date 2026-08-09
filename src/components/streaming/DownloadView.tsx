@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Pencil, Check, Trash2, Play, DownloadCloud } from 'lucide-react';
+import { ArrowLeft, Pencil, Check, Trash2, Play, DownloadCloud, AlertCircle } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
-import { useMp4, mp4Native, convertToMp4, openMp4, cancelMp4 } from '@/lib/mp4Download';
+import { useMp4, useMp4All, mp4Native, convertToMp4, openMp4, cancelMp4 } from '@/lib/mp4Download';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -192,6 +192,8 @@ function Poster({ meta, item, onClick, editing, badge, watched, progress, subtit
 
 // Sub-tela: episódios baixados de uma série. Clicar reproduz; lápis → selecionar/excluir.
 function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string, DownloadItem>; onBack: () => void }) {
+  const mp4Lista = useMp4All();
+  const mp4State = (k: string) => mp4Lista.find(m => m.key === k);
   const [editing, setEditing] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [cancelKey, setCancelKey] = useState<string | null>(null);   // download a cancelar
@@ -212,8 +214,13 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
         {g.episodes.map(e => {
           const item = items.get(e.key);
           const picked = sel.has(e.key);
-          const done = item?.state === 'completed';
-          const baixando = !!item && item.state !== 'completed' && item.state !== 'removed';
+          const mp4 = mp4State(e.key);
+          const done = item?.state === 'completed' || mp4?.state === 'done';
+          const rodando = (!!item && item.state !== 'completed' && item.state !== 'removed' && item.state !== 'failed')
+            || mp4?.state === 'downloading' || mp4?.state === 'converting' || mp4?.state === 'queued';
+          // Nem pronto nem rodando = ficou pela metade (app fechado, app morto…).
+          const interrompido = !done && !rodando;
+          const baixando = rodando;
           const wp = watchProgressOf(e.key);
           return (
             // <div role="button">, não <button>: precisa aceitar o botão de converter
@@ -221,7 +228,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
             // grid, o div mantém o tamanho da célula — foi trocar isso por um wrapper
             // que a tela colapsou na v3.98.
             <div key={e.key} role="button" tabIndex={0}
-              onClick={() => editing ? toggle(e.key) : done ? playDownloaded(e.key) : baixando ? setCancelKey(e.key) : undefined}
+              onClick={() => editing ? toggle(e.key) : done ? playDownloaded(e.key) : setCancelKey(e.key)}
               className={`relative aspect-square overflow-hidden rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition cursor-pointer
                 ${picked ? 'border-destructive bg-destructive/15 text-destructive'
                   : done ? 'border-green-400/40 bg-green-400/5 text-foreground'
@@ -256,7 +263,13 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
                   <span className="absolute bottom-0.5 inset-x-0 text-[8px] text-muted-foreground text-center truncate px-0.5">{wp.label}</span>
                 </>
               )}
-              {!editing && done && <Mp4Btn dlKey={e.key} title={g.title} />}
+              {!editing && interrompido && (
+                <span className="absolute top-0.5 right-0.5 z-10 animate-pulse" title="Download não concluído — toque pra remover e baixar de novo">
+                  <AlertCircle className="w-4 h-4 text-red-500 drop-shadow" />
+                </span>
+              )}
+              {/* Formato aparece também DURANTE o download em MP4, não só no fim. */}
+              {!editing && (done || mp4) && <Mp4Btn dlKey={e.key} title={g.title} />}
             </div>
           );
         })}
@@ -272,9 +285,10 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
       <AlertDialog open={!!cancelKey} onOpenChange={o => { if (!o) setCancelKey(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cancelar o download?</AlertDialogTitle>
+            <AlertDialogTitle>Remover este episódio?</AlertDialogTitle>
             <AlertDialogDescription>
-              O episódio sai da lista e o que já baixou é descartado. Dá pra baixar de novo depois.
+              O download não está completo — não há nada pra assistir. Ele sai da lista e o
+              pedaço baixado é descartado; dá pra baixar de novo depois.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

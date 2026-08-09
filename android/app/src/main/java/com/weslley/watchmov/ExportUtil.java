@@ -137,6 +137,15 @@ public final class ExportUtil {
         return out;
     }
 
+    /** Nome do arquivo MP4 dessa chave ("Witch Hat Atelier — T1E8.mp4"), ou null.
+     *  É o único título que sobra pra um MP4 baixado antes do registro de metadata. */
+    public static String exportedName(Context ctx, String key) {
+        String v = prefs(ctx).getString(key, null);
+        if (v == null) return null;
+        int sep = v.indexOf('|');
+        return sep >= 0 ? v.substring(sep + 1) : null;
+    }
+
     public static boolean isRunning() { return runningKey != null; }
     public static String runningKey() { return runningKey; }
     /** Nome do arquivo em conversão (a central mostra "Convertendo: <título>"). */
