@@ -185,15 +185,16 @@ export async function discoverByGenre(type: TmdbMediaType, genreId: number, page
 
 // Episódios de uma temporada COM a data de exibição — o detalhe usa pra marcar
 // "Em breve" (ainda não foi ao ar) e "Novo" (foi ao ar faz menos de 30 dias).
-export interface TmdbEpisodeInfo { number: number; airDate?: string; name?: string; stillUrl?: string }
+export interface TmdbEpisodeInfo { number: number; airDate?: string; name?: string; stillUrl?: string; runtime?: number }
 
 export async function getSeasonEpisodes(tvId: number, season: number): Promise<TmdbEpisodeInfo[]> {
-  const d = await tmdbFetch<{ episodes?: { episode_number: number; air_date?: string; name?: string; still_path?: string | null }[] }>(
+  const d = await tmdbFetch<{ episodes?: { episode_number: number; air_date?: string; name?: string; still_path?: string | null; runtime?: number | null }[] }>(
     `/tv/${tvId}/season/${season}`);
   return (d.episodes || []).map(e => ({
     number: e.episode_number,
     airDate: e.air_date || undefined,
     name: e.name || undefined,
+    runtime: e.runtime || undefined,            // duração DESTE episódio (varia bastante)
     stillUrl: posterUrl(e.still_path, 'w300'),   // frame do episódio (16:9)
   }));
 }

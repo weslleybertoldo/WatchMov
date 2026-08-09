@@ -547,6 +547,14 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                               {picked && <Check className="w-3 h-3 text-primary-foreground" />}
                             </span>
                           )}
+                          {/* Duração DESTE episódio (varia dentro da temporada) —
+                              canto inferior esquerdo, acima da barra de progresso e
+                              longe do ícone de download, que fica na direita. */}
+                          {!selecting && (info?.runtime || s.episodeDuration) > 0 && (
+                            <span className="absolute bottom-1.5 left-1 z-10 rounded bg-black/70 px-1 py-0.5 text-[9px] leading-none text-white/90">
+                              {info?.runtime || s.episodeDuration}min
+                            </span>
+                          )}
                           <EpDownloadBadge downloaded={downloaded} item={dlItem} />
                         </button>
                       );
