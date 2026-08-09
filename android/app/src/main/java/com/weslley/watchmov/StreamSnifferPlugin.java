@@ -50,8 +50,20 @@ public class StreamSnifferPlugin extends Plugin {
         "cloudflare-terms-of-service-abuse", "brwin.games",
         "doubleclick.net", "googlesyndication.com", "adservice.", "popads.", "popcash.",
         "propellerads.", "propu.", "adnxs.", "onclickalgo.", "hilltopads.", "juicyads.",
-        "exoclick.", "trafficjunky.", "mgid.", "revcontent.", "outbrain.", "taboola."
+        "exoclick.", "trafficjunky.", "mgid.", "revcontent.", "outbrain.", "taboola.",
+        // criativos de vídeo-anúncio vistos poluindo o picker (09/08): apostas/adulto
+        "redgarto.", "blacked.com", "masonry.blacked", "clickadu.", "adsterra.",
+        "monetag.", "galaksion.", "trafficstars.", "eroadvertising.", "vast."
     };
+
+    // Paths típicos de criativo de anúncio (mesmo em CDN "neutra"): nunca é o conteúdo.
+    private static final String[] AD_PATHS = {
+        "/gambling/", "/interstitial/", "/notifications/", "/creatives/", "/adasset",
+    };
+    private static boolean isAdPath(String u) {
+        for (String p : AD_PATHS) if (u.contains(p)) return true;
+        return false;
+    }
 
     public static boolean isBlockedHost(String url) {
         if (url == null) return false;
@@ -73,7 +85,7 @@ public class StreamSnifferPlugin extends Plugin {
         if (url == null) return false;
         String u = url.toLowerCase();
         for (String k : KILL_RES) if (u.contains(k)) return true;
-        return isBlockedHost(url);
+        return isBlockedHost(url) || isAdPath(u);
     }
 
     public static android.webkit.WebResourceResponse blockedResponse() {
@@ -83,6 +95,7 @@ public class StreamSnifferPlugin extends Plugin {
     public static boolean looksLikeVideo(String url) {
         if (url == null || isBlockedHost(url)) return false;
         String u = url.toLowerCase();
+        if (isAdPath(u)) return false;              // criativo de anúncio, não é o vídeo
         String path = noQuery(u);
         // Segmentos/init NÃO são links tocáveis sozinhos → não captura (poluíam a lista
         // com dezenas de seg-/init/.m4s/.ts que o ExoPlayer já busca sozinho do master).
