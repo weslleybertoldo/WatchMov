@@ -17,6 +17,9 @@ import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
+import NoticesView from '@/components/streaming/NoticesView';
+import { useNotices } from '@/lib/appNotices';
+import { startMp4Listener } from '@/lib/mp4Download';
 import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
@@ -24,7 +27,7 @@ import BugsView from '@/components/streaming/BugsView';
 import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
-import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'lista' | 'procurar';
 
@@ -90,6 +93,9 @@ export default function Index() {
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  const { unread: unreadNotices } = useNotices();   // badge do sino
+  useEffect(() => { startMp4Listener(); }, []);     // avisos de conversão desde o boot
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [bugsOpen, setBugsOpen] = useState(false);
@@ -149,6 +155,7 @@ export default function Index() {
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
+    if (noticesOpen) { setNoticesOpen(false); return true; }
     if (settingsOpen) { setSettingsOpen(false); return true; }
     if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
     if (continueFilter) { setContinueFilter(null); return true; }
@@ -156,7 +163,7 @@ export default function Index() {
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, searchOpen, continueFilter, listFilter, category, tab]);
+  }, [selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -203,7 +210,7 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); };
+  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); setNoticesOpen(false); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -230,7 +237,16 @@ export default function Index() {
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setHistoryOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Painel">
+            <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
+              onClick={() => { setNoticesOpen(o => !o); setSettingsOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Notificações">
+              <Bell className="w-4 h-4" />
+              {unreadNotices > 0 && (
+                <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
+                  {unreadNotices > 9 ? '9+' : unreadNotices}
+                </span>
+              )}
+            </Button>
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
           </div>
@@ -245,6 +261,8 @@ export default function Index() {
             /* Relacionado NÃO passa pelo openMedia: ele grava o scroll da HOME, e aqui
                estamos dentro do detalhe — sobrescrever bagunçaria a volta. */
             onOpen={(m) => { setSelected(m); window.scrollTo(0, 0); }} />
+        ) : noticesOpen ? (
+          <NoticesView onBack={() => setNoticesOpen(false)} />
         ) : settingsOpen ? (
           historyOpen ? (
             <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />

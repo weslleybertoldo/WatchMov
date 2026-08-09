@@ -30,6 +30,7 @@ import java.util.concurrent.Executors;
 public final class DownloadUtil {
 
     public static final String CHANNEL_ID = "watchmov_downloads";
+    public static final String DONE_CHANNEL_ID = "watchmov_done";   // aviso de concluído
     private static final String CACHE_DIR = "wm_downloads";
 
     private static DatabaseProvider databaseProvider;
@@ -89,6 +90,17 @@ public final class DownloadUtil {
                 app, index,
                 new DefaultDownloaderFactory(cacheWriter, Executors.newFixedThreadPool(4)));
             downloadManager.setMaxParallelDownloads(2);
+            // Avisa quando TERMINA. Fica no DownloadManager (não no plugin) porque o
+            // download roda no serviço mesmo com o app fechado — no plugin, quem
+            // fechasse o app não receberia nada.
+            downloadManager.addListener(new DownloadManager.Listener() {
+                @Override
+                public void onDownloadChanged(DownloadManager m, androidx.media3.exoplayer.offline.Download d, Exception e) {
+                    if (d.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) {
+                        notifyReady(app, labelOf(d), "já está disponível em Downloads");
+                    }
+                }
+            });
         }
         return downloadManager;
     }
@@ -115,6 +127,45 @@ public final class DownloadUtil {
     private static synchronized DatabaseProvider getDatabaseProvider(Context app) {
         if (databaseProvider == null) databaseProvider = new StandaloneDatabaseProvider(app);
         return databaseProvider;
+    }
+
+    // "Seus Amigos e Vizinhos — T2E5": título gravado no download + temporada/episódio
+    // da própria chave (m:tmdbId / e:tmdbId:s:e).
+    static String labelOf(androidx.media3.exoplayer.offline.Download d) {
+        String title = "";
+        try { if (d.request.data != null && d.request.data.length > 0) title = new String(d.request.data); } catch (Exception ignored) {}
+        String[] p = d.request.id.split(":");
+        if (p.length >= 4 && "e".equals(p[0])) title = (title.isEmpty() ? "Episódio" : title) + " — T" + p[2] + "E" + p[3];
+        return title.isEmpty() ? "Seu vídeo" : title;
+    }
+
+    /**
+     * Notificação de "pronto" (download concluído ou MP4 convertido). Canal separado
+     * do progresso: aquele é silencioso por design, este precisa aparecer. Tocar abre
+     * o app.
+     */
+    public static void notifyReady(Context ctx, String label, String what) {
+        try {
+            Context app = ctx.getApplicationContext();
+            androidx.media3.common.util.NotificationUtil.createNotificationChannel(
+                app, DONE_CHANNEL_ID, R.string.download_done_channel_name, 0,
+                androidx.media3.common.util.NotificationUtil.IMPORTANCE_DEFAULT);
+            android.content.Intent open = new android.content.Intent(app, MainActivity.class)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            int flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                | (android.os.Build.VERSION.SDK_INT >= 23 ? android.app.PendingIntent.FLAG_IMMUTABLE : 0);
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(app, 0, open, flags);
+            android.app.Notification n = new androidx.core.app.NotificationCompat.Builder(app, DONE_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle(label)
+                .setContentText(what)
+                .setStyle(new androidx.core.app.NotificationCompat.BigTextStyle().bigText(label + " " + what))
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build();
+            // ID por título: um aviso por episódio, sem empilhar repetido.
+            androidx.core.app.NotificationManagerCompat.from(app).notify(Math.abs((label + what).hashCode()), n);
+        } catch (Throwable ignored) { /* sem permissão de notificação: silencioso */ }
     }
 
     // Diretório onde os downloads ocupam espaço (pra medir o livre no aparelho).

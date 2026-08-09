@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { addNotice } from '@/lib/appNotices';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { supabase } from '@/lib/supabase';
 
@@ -87,6 +88,11 @@ export async function initPush() {
       }, { onConflict: 'token' });
     });
     PushNotifications.addListener('registrationError', (e) => console.warn('[push] registro falhou', e));
+    // Guarda o aviso de estreia/episódio novo na central (aba Lançamentos): a
+    // notificação do sistema some, o registro fica.
+    PushNotifications.addListener('pushNotificationReceived', (n) => {
+      addNotice({ kind: 'release', title: n.title || 'Novidade', body: n.body || undefined });
+    });
     await PushNotifications.register();
   } catch (e) {
     console.warn('[push] init falhou', e);

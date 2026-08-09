@@ -249,8 +249,11 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     store.updateItem(it.id, { favorite: next });
     setLibItem({ ...it, favorite: next });
     // Entrar na lista LIGA o sino; sair APAGA a inscrição (re-adicionar volta a ligar).
-    if (next) setNotify({ tmdbId: media.tmdbId, type: media.type, enabled: true, title: media.title, posterUrl: media.posterUrl });
-    else clearNotify(media.tmdbId, media.type);
+    // FILME já lançado não liga: não tem episódio novo pra avisar, então o aviso só
+    // faz sentido enquanto a estreia não chegou (data futura). Série sempre liga.
+    const worthNotifying = isSeries || isUpcoming(details?.releaseDate);
+    if (next && worthNotifying) setNotify({ tmdbId: media.tmdbId, type: media.type, enabled: true, title: media.title, posterUrl: media.posterUrl });
+    else if (!next) clearNotify(media.tmdbId, media.type);
   };
 
   // Sino manual: funciona dentro ou fora da lista; desligar aqui mantém desligado
