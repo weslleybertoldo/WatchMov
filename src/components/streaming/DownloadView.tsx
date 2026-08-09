@@ -248,8 +248,10 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
               {!editing && item && item.state !== 'completed' && (
                 <span className="text-[9px] text-primary">{item.state === 'downloading' ? (item.percent >= 0 ? `${item.percent}%` : '…') : item.state === 'failed' ? 'falhou' : '…'}</span>
               )}
-              {!editing && item?.state === 'completed' && (item.bytes ?? 0) > 0 && (
-                <span className="text-[9px] text-muted-foreground">{fmtBytes(item.bytes)}</span>
+              {!editing && ((item?.state === 'completed' && (item.bytes ?? 0) > 0) || (mp4?.state === 'done')) && (
+                <span className="text-[9px] text-muted-foreground">
+                  {mp4?.state === 'done' && (mp4.size ?? 0) > 0 ? fmtBytes(mp4.size) : fmtBytes(item?.bytes)}
+                </span>
               )}
               {editing && picked && (
                 <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm bg-destructive flex items-center justify-center"><Check className="w-3 h-3 text-destructive-foreground" /></span>

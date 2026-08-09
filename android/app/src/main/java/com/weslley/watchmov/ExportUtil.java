@@ -137,6 +137,15 @@ public final class ExportUtil {
         return out;
     }
 
+    /** Tamanho real do MP4 no MediaStore (0 = arquivo vazio/some da galeria). */
+    public static long exportedSize(Context ctx, String key) {
+        Uri uri = exported(ctx, key);
+        if (uri == null) return 0;
+        try (android.os.ParcelFileDescriptor fd = ctx.getContentResolver().openFileDescriptor(uri, "r")) {
+            return fd == null ? 0 : fd.getStatSize();
+        } catch (Exception e) { return 0; }
+    }
+
     /** Nome do arquivo MP4 dessa chave ("Witch Hat Atelier — T1E8.mp4"), ou null.
      *  É o único título que sobra pra um MP4 baixado antes do registro de metadata. */
     public static String exportedName(Context ctx, String key) {

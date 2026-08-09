@@ -18,12 +18,13 @@ export interface Mp4Event {
   error?: string;
   mode?: 'download' | 'convert';   // baixar já em MP4 x converter o que já baixou
   position?: number;    // lugar na fila (1 = próximo a rodar)
+  size?: number;        // bytes do MP4 no MediaStore (0 = arquivo vazio)
 }
 
 interface Mp4DownloadPlugin {
   start(o: { key: string; url: string; referer?: string; mime?: string; title?: string }): Promise<void>;
   convert(o: { key: string; title?: string }): Promise<void>;
-  list(): Promise<{ keys: string[]; running?: string; queued?: string[]; entries?: { key: string; name?: string }[] }>;
+  list(): Promise<{ keys: string[]; running?: string; queued?: string[]; entries?: { key: string; name?: string; size?: number }[] }>;
   cancel(o?: { key?: string }): Promise<void>;
   status(o: { key: string }): Promise<{ done: boolean; uri?: string; running: boolean }>;
   openWith(o: { key: string; title?: string }): Promise<void>;
@@ -49,8 +50,8 @@ function listen() {
   if (listening || !mp4Native()) return;
   listening = true;
   Mp4Download.list().then(({ keys, running, queued, entries }) => {
-    const nomes = new Map((entries || []).map(e => [e.key, e.name]));
-    keys.forEach(k => items.set(k, { key: k, state: 'done', percent: 100, name: nomes.get(k) }));
+    const info = new Map((entries || []).map(e => [e.key, e]));
+    keys.forEach(k => items.set(k, { key: k, state: 'done', percent: 100, name: info.get(k)?.name, size: info.get(k)?.size }));
     (queued || []).forEach(k => items.set(k, { key: k, state: 'queued', percent: -1 }));
     if (running) items.set(running, { key: running, state: 'converting', percent: -1 });
     notify();

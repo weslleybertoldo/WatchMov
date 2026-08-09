@@ -104,6 +104,7 @@ public class Mp4DownloadPlugin extends Plugin {
             JSObject e = new JSObject();
             e.put("key", k);
             e.put("name", ExportUtil.exportedName(getContext(), k));
+            e.put("size", ExportUtil.exportedSize(getContext(), k));   // 0 = arquivo vazio
             nomes.put(e);
         }
         JSObject ret = new JSObject();
@@ -166,7 +167,7 @@ public class Mp4DownloadPlugin extends Plugin {
         Uri uri = ExportUtil.exported(getContext(), key);
         JSObject ret = new JSObject();
         ret.put("done", uri != null);
-        if (uri != null) ret.put("uri", uri.toString());
+        if (uri != null) { ret.put("uri", uri.toString()); ret.put("size", ExportUtil.exportedSize(getContext(), key)); }
         ret.put("running", key != null && key.equals(ExportUtil.runningKey()));
         call.resolve(ret);
     }
