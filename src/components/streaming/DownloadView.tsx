@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Pencil, Check, Trash2, Play } from 'lucide-react';
+import { ArrowLeft, Pencil, Check, Trash2, Play, DownloadCloud } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
   movieKey, watchProgressOf, type DownloadMeta,
@@ -45,6 +45,22 @@ function Progress({ item }: { item?: DownloadItem }) {
       </div>
       <p className="text-[9px] text-white/80 mt-0.5">{item.state === 'downloading' ? (p != null ? `${p}%` : 'baixando…') : item.state === 'queued' ? 'na fila…' : item.state}</p>
     </div>
+  );
+}
+
+// Anel amarelo de download (mesmo desenho da grade de episódios): sem % conhecido,
+// gira; com %, vai fechando.
+function Ring({ percent }: { percent: number | null }) {
+  const R = 9, C = 2 * Math.PI * R;
+  return (
+    <span className="relative inline-flex items-center justify-center w-[22px] h-[22px]">
+      <svg viewBox="0 0 24 24" className={`absolute inset-0 w-full h-full -rotate-90 ${percent == null ? 'animate-spin' : ''}`}>
+        <circle cx="12" cy="12" r={R} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2.5" />
+        <circle cx="12" cy="12" r={R} fill="none" stroke="#facc15" strokeWidth="2.5" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={C * (1 - (percent ?? 25) / 100)} />
+      </svg>
+      <DownloadCloud className="w-3 h-3 text-yellow-400" />
+    </span>
   );
 }
 
@@ -113,10 +129,11 @@ function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
   );
 }
 
-function Poster({ meta, item, onClick, editing, badge, watched, progress, subtitle, size }: {
+function Poster({ meta, item, onClick, editing, badge, watched, progress, subtitle, size, busy }: {
   meta: { title: string; posterUrl?: string }; item?: DownloadItem;
   onClick: () => void; editing: boolean; badge?: string; watched?: boolean;
   progress?: { percent: number; label: string } | null; subtitle?: string; size?: string;
+  busy?: DownloadItem;   // download rolando AGORA (o do filme ou o do episódio da série)
 }) {
   return (
     <button onClick={onClick} className="relative block text-left">
@@ -141,6 +158,21 @@ function Poster({ meta, item, onClick, editing, badge, watched, progress, subtit
           </span>
         )}
         <Progress item={item} />
+        {/* Baixando: anel no canto + faixa com o % (série não tem "item" próprio,
+            então o andamento vem do episódio que está na fila/baixando). */}
+        {!editing && busy && (
+          <>
+            <span className="absolute top-1 left-1 z-10"><Ring percent={busy.percent >= 0 ? busy.percent : null} /></span>
+            {!item && (
+              <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1.5 py-1">
+                <div className="h-1 rounded bg-white/20 overflow-hidden">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${busy.percent >= 0 ? busy.percent : 6}%` }} />
+                </div>
+                <p className="text-[9px] text-white/80 mt-0.5">{busy.state === 'downloading' ? (busy.percent >= 0 ? `${busy.percent}%` : 'baixando…') : 'na fila…'}</p>
+              </div>
+            )}
+          </>
+        )}
       </div>
       <p className="text-xs mt-1 line-clamp-1">{meta.title}</p>
       {size && <p className="text-[10px] text-muted-foreground">{size}</p>}
@@ -242,7 +274,12 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
         {groups.map(g => {
           const item = g.type === 'movie' ? items.get(movieKey(g.tmdbId)) : undefined;
-          const dlCount = g.episodes.filter(e => items.get(e.key)?.state === 'downloading' || items.get(e.key)?.state === 'queued').length;
+          const emAndamento = (s?: DownloadItem['state']) => s === 'downloading' || s === 'queued' || s === 'restarting';
+          const dlCount = g.episodes.filter(e => emAndamento(items.get(e.key)?.state)).length;
+          // Filme usa o próprio item; série mostra o episódio que está baixando agora.
+          const busy = g.type === 'movie'
+            ? (emAndamento(item?.state) ? item : undefined)
+            : g.episodes.map(e => items.get(e.key)).find(d => emAndamento(d?.state));
           const badge = g.type === 'tv' ? `${g.episodes.length} ep${dlCount ? ` · ${dlCount}↓` : ''}` : undefined;
           // Filme: check se assistido. Série: check se TODOS os eps baixados foram vistos.
           const watched = g.type === 'movie'
@@ -262,7 +299,7 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
             : g.episodes.reduce((acc, e) => acc + (items.get(e.key)?.bytes ?? 0), 0);
           return (
             <div key={g.tmdbId} className="relative">
-              <Poster meta={g} item={item} editing={editing} badge={badge} watched={watched}
+              <Poster meta={g} item={item} editing={editing} badge={badge} watched={watched} busy={busy}
                 progress={progress} subtitle={subtitle} size={bytes > 0 ? fmtBytes(bytes) : undefined}
                 onClick={() => editing ? onDelete(g) : onOpen(g)} />
               {/* Série converte por EPISÓDIO (lá dentro), não pelo card do título. */}
