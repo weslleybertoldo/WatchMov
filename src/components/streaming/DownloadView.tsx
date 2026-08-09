@@ -88,6 +88,10 @@ function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
   return (
     <>
       {btn}
+      {/* O diálogo vai pra um portal, mas evento de portal no React sobe pela árvore
+          de COMPONENTES, não pelo DOM: sem este wrapper, tocar no fundo escuro
+          chegava no onClick do card e abria o reprodutor. */}
+      <span onClick={ev => ev.stopPropagation()} onPointerDown={ev => ev.stopPropagation()}>
       <AlertDialog open={askCancel} onOpenChange={setAskCancel}>
         <AlertDialogContent onClick={ev => ev.stopPropagation()}>
           <AlertDialogHeader>
@@ -104,6 +108,7 @@ function Mp4Btn({ dlKey, title }: { dlKey: string; title?: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </span>
     </>
   );
 }

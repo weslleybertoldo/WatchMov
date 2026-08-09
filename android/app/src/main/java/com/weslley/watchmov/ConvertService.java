@@ -58,15 +58,25 @@ public class ConvertService extends Service {
     private Notification build(String label, int percent) {
         NotificationUtil.createNotificationChannel(this, DownloadUtil.CHANNEL_ID,
             R.string.download_channel_name, 0, NotificationUtil.IMPORTANCE_LOW);
-        NotificationCompat.Builder b = new NotificationCompat.Builder(this, DownloadUtil.CHANNEL_ID)
+        String nome = label == null || label.isEmpty() ? "Preparando…" : label;
+
+        // Layout próprio: a barra padrão do Android ocupa a linha toda e não mostra
+        // número. Aqui ela é fina e o % fica no FIM dela.
+        android.widget.RemoteViews rv = new android.widget.RemoteViews(getPackageName(), R.layout.wm_notif_convert);
+        rv.setTextViewText(R.id.wm_notif_title, "Convertendo pra MP4");
+        rv.setTextViewText(R.id.wm_notif_text, nome);
+        rv.setProgressBar(R.id.wm_notif_bar, 100, Math.max(percent, 0), percent < 0);
+        rv.setTextViewText(R.id.wm_notif_pct, percent >= 0 ? percent + "%" : "…");
+
+        return new NotificationCompat.Builder(this, DownloadUtil.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("Convertendo pra MP4")
-            .setContentText(label == null || label.isEmpty() ? "Preparando…" : label)
+            .setContentText(nome)
+            .setCustomContentView(rv)
+            .setStyle(new NotificationCompat.DecoratedCustomViewStyle())
             .setOngoing(true)
-            .setOnlyAlertOnce(true);
-        if (percent >= 0) b.setProgress(100, percent, false);
-        else b.setProgress(0, 0, true);
-        return b.build();
+            .setOnlyAlertOnce(true)
+            .build();
     }
 
     @Nullable
