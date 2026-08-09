@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Pencil, Check, Trash2, Play } from 'lucide-react';
+import { ArrowLeft, Pencil, Check, Trash2, Play, Share2, Tv } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
+import { useExport, exportNative, startExport, openExport, removeExport, cancelExport } from '@/lib/exporter';
 
 interface TitleGroup {
   tmdbId: number; type: 'movie' | 'tv'; title: string; posterUrl?: string;
@@ -39,6 +40,46 @@ function Progress({ item }: { item?: DownloadItem }) {
       </div>
       <p className="text-[9px] text-white/80 mt-0.5">{item.state === 'downloading' ? (p != null ? `${p}%` : 'baixando…') : item.state === 'queued' ? 'na fila…' : item.state}</p>
     </div>
+  );
+}
+
+// Botão de EXPORTAR o baixado pra MP4 em Movies/WatchMov e abrir no Web Video
+// Cast/VLC — o caminho que leva um download pra TV (o handoff por URL depende do
+// celular servir HLS, que receptor DLNA não toca). Fica sobre a arte, fora do
+// <button> do card (botão dentro de botão é HTML inválido).
+function ExportBtn({ dlKey, title, editing, className }: {
+  dlKey: string; title?: string; editing?: boolean; className?: string;
+}) {
+  const ex = useExport(dlKey);
+  if (!exportNative()) return null;
+  const busy = ex?.state === 'exporting';
+  const done = ex?.state === 'done';
+  const base = `absolute z-20 rounded-md bg-black/75 backdrop-blur px-1.5 py-1 text-[9px] leading-none flex items-center gap-1 ${className || ''}`;
+  // Em modo edição o botão passa a excluir SÓ o MP4 exportado (o download em si
+  // sai pelo card) — sem isso a cópia ficaria ocupando espaço sem ninguém ver.
+  if (editing) {
+    if (!done) return null;
+    return (
+      <button className={`${base} text-destructive`} title="Excluir o MP4 exportado"
+        onClick={e => { e.stopPropagation(); removeExport(dlKey); }}>
+        <Trash2 className="w-3 h-3" /> MP4
+      </button>
+    );
+  }
+  return (
+    <button
+      className={`${base} ${done ? 'text-green-400' : 'text-white/85'}`}
+      title={done ? 'Abrir no Web Video Cast / VLC (pra mandar na TV)' : 'Exportar MP4 pra mandar na TV'}
+      onClick={e => {
+        e.stopPropagation();
+        if (busy) cancelExport(dlKey);
+        else if (done) openExport(dlKey);
+        else startExport(dlKey, title);
+      }}>
+      {busy
+        ? <span className="animate-pulse">{ex && ex.percent >= 0 ? `${ex.percent}%` : '…'}</span>
+        : done ? <Tv className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />}
+    </button>
   );
 }
 
@@ -111,7 +152,8 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
           const done = item?.state === 'completed';
           const wp = watchProgressOf(e.key);
           return (
-            <button key={e.key}
+            <div key={e.key} className="relative">
+            <button
               onClick={() => editing ? toggle(e.key) : (done ? playDownloaded(e.key) : undefined)}
               className={`relative aspect-square overflow-hidden rounded-lg flex flex-col items-center justify-center text-xs font-medium border transition
                 ${picked ? 'border-destructive bg-destructive/15 text-destructive'
@@ -143,6 +185,8 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
                 </>
               )}
             </button>
+            {done && <ExportBtn dlKey={e.key} title={g.title} editing={editing} className="top-0.5 left-0.5" />}
+            </div>
           );
         })}
       </div>
@@ -185,9 +229,15 @@ function Section({ title, groups, items, editing, onOpen, onDelete }: {
             ? (item?.bytes ?? 0)
             : g.episodes.reduce((acc, e) => acc + (items.get(e.key)?.bytes ?? 0), 0);
           return (
-            <Poster key={g.tmdbId} meta={g} item={item} editing={editing} badge={badge} watched={watched}
-              progress={progress} subtitle={subtitle} size={bytes > 0 ? fmtBytes(bytes) : undefined}
-              onClick={() => editing ? onDelete(g) : onOpen(g)} />
+            <div key={g.tmdbId} className="relative">
+              <Poster meta={g} item={item} editing={editing} badge={badge} watched={watched}
+                progress={progress} subtitle={subtitle} size={bytes > 0 ? fmtBytes(bytes) : undefined}
+                onClick={() => editing ? onDelete(g) : onOpen(g)} />
+              {/* Série exporta por EPISÓDIO (dentro do título), não pelo card. */}
+              {g.type === 'movie' && item?.state === 'completed' && (
+                <ExportBtn dlKey={movieKey(g.tmdbId)} title={g.title} editing={editing} className="top-1 right-1" />
+              )}
+            </div>
           );
         })}
       </div>
@@ -253,6 +303,13 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
         <p className="text-xs text-muted-foreground -mt-4">
           Ocupando <span className="text-foreground font-medium">{fmtBytes(totalBytes)}</span>
           {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres no aparelho</>}
+        </p>
+      )}
+
+      {!empty && exportNative() && (
+        <p className="text-[11px] text-muted-foreground -mt-4 flex items-center gap-1">
+          <Share2 className="w-3 h-3 shrink-0" />
+          No item baixado, exporta um MP4 pra Movies/WatchMov — daí dá pra abrir no Web Video Cast/VLC e mandar na TV.
         </p>
       )}
 
