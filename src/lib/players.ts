@@ -61,67 +61,28 @@ export const PROVIDERS: Provider[] = [
         : `https://fembed.sx/e/${t.tmdbId}/${s(t)}-${e(t)}`;
     },
   },
-  // Fonte 4 (MegaEmbed) e Fonte 5 (PlayerFlix) removidas 09/08 — pedido do Weslley.
-  // ── Candidatos BR pra TESTAR no aparelho (09/08) ──────────────────────────────
-  // ⚠️ Esquema de URL é PALPITE (padrão SuperFlix /filme//serie): do IP daqui os
-  // sites dão Cloudflare 000/403, só o celular alcança. Se a fonte não listar nada,
-  // o esquema está errado → reportar que eu ajusto por site.
+  // ── Candidatos BR (esquema validado com o Weslley 09/08 no navegador) ──────────
+  // Removidas 09/08: MegaEmbed, PlayerFlix, OverflixTV (overflix.party é slug, sem
+  // rota por id), Roxano (domínio morto), MostraFlix (domínio morto), VisionCine
+  // (visioncine.lol é slug .html, sem rota por id). Slug-based precisaria de um
+  // resolvedor título→slug (scrape) — fora de escopo por ora.
   {
     id: 'warezcdn',
-    name: 'Fonte 4 (WarezCDN — testar)',
-    build: (t) => {                                   // WarezCDN usa IMDB id
-      if (!t.imdbId) return null;
-      return t.type === 'movie'
-        ? `https://embed.warezcdn.com/filme/${t.imdbId}`
-        : `https://embed.warezcdn.com/serie/${t.imdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
-    id: 'overflixtv',
-    name: 'Fonte 5 (OverflixTV — testar)',
+    name: 'Fonte 4 (WarezCDN PT-BR)',
+    // Domínio real warezcdn.lat (embed.warezcdn.com morreu). Usa TMDB id
+    // (/serie/276643 confirmado). Série abre no landing p/ escolher temporada/ep.
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
-        ? `https://overflixtv.top/filme/${t.tmdbId}`
-        : `https://overflixtv.top/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+        ? `https://warezcdn.lat/filme/${t.tmdbId}`
+        : `https://warezcdn.lat/serie/${t.tmdbId}`;
     },
   },
-  {
-    id: 'roxano',
-    name: 'Fonte 6 (Roxano — testar)',
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://roxano.top/filme/${t.tmdbId}`
-        : `https://roxano.top/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
-    id: 'mostraflix',
-    name: 'Fonte 7 (MostraFlix — testar)',
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://mostraflix.top/filme/${t.tmdbId}`
-        : `https://mostraflix.top/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  {
-    id: 'visioncine',
-    name: 'Fonte 8 (VisionCine — testar)',
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://visioncine.xyz/filme/${t.tmdbId}`
-        : `https://visioncine.xyz/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  // Achados no agregador onlinefilmer.net (Pobreflix) — esquema por IMDB confirmado
-  // p/ filme; série é palpite.
   {
     id: 'fshd',
-    name: 'Fonte 9 (FS/HD — testar)',
-    build: (t) => {                                   // IMDB id
+    name: 'Fonte 5 (FS/HD PT-BR)',
+    // IMDB id — confirmado no navegador (fshd.link/filme/tt1375666).
+    build: (t) => {
       if (!t.imdbId) return null;
       return t.type === 'movie'
         ? `https://fshd.link/filme/${t.imdbId}`
@@ -130,7 +91,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'vsembed',
-    name: 'Fonte 10 (VSEmbed — testar)',
+    name: 'Fonte 6 (VSEmbed — abrir DUBLADO)', // UI em inglês, mas tem faixa DUB PT
     build: (t) => {                                   // IMDB id, querystring
       if (!t.imdbId) return null;
       return t.type === 'movie'
@@ -145,12 +106,8 @@ export const PROVIDER_HOSTS = [
   'https://fembed.sx',
   'https://embedplayapi.top',
   'https://superflixapi.cyou',
-  // candidatos BR em teste (09/08)
-  'https://embed.warezcdn.com',
-  'https://overflixtv.top',
-  'https://roxano.top',
-  'https://mostraflix.top',
-  'https://visioncine.xyz',
+  // candidatos BR (esquema validado 09/08)
+  'https://warezcdn.lat',
   'https://fshd.link',
   'https://vsembed.ru',
 ];
