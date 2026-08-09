@@ -11,7 +11,7 @@ import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
-import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, movieKey, epKey } from '@/lib/downloads';
+import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { downloadAsMp4 } from '@/lib/mp4Download';
 import { supabase } from '@/lib/supabase';
 
@@ -307,7 +307,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Download em MP4: arquivo real em Movies/WatchMov que qualquer app abre (Web
   // Video Cast, VLC, galeria) e a TV toca. Não entra na aba Download nem retoma.
   const startMp4Download = (r: SniffResult) => {
-    if (!dlKey) return;
+    if (!dlKey || tmdbId == null) return;
+    // Registra o título mesmo sem passar pelo DownloadManager: é isso que faz o
+    // episódio aparecer na aba Download e marcado como baixado no detalhe.
+    addStreams([r], tmdbId, type, season, episode);
+    saveDownloadMeta(dlKey, {
+      tmdbId, type, title, posterUrl, season, ep: episode,
+      url: r.url, referer: r.referer, mime: r.mime,
+    });
     downloadAsMp4(dlKey, { url: r.url, referer: r.referer, mime: r.mime, title });
   };
 

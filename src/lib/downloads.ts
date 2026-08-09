@@ -4,6 +4,7 @@ import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress } from './nativePlayer';
 import { upsertNotice } from './appNotices';
+import { mp4DoneKeys, mp4UriOf, onMp4Change } from './mp4Download';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -59,6 +60,12 @@ function syntheticMeta(it: DownloadItem): DownloadMeta | null {
 }
 
 // Metadata efetiva: registro local (rico: poster) + reconstruída do nativo (legado).
+/** Registra a metadata sem enfileirar nada — usado pelo download direto em MP4,
+ *  que não passa pelo DownloadManager mas precisa aparecer na aba e no detalhe. */
+export function saveDownloadMeta(key: string, meta: DownloadMeta) {
+  const all = readMeta(); all[key] = meta; writeMeta(all);
+}
+
 export function getDownloadMeta(): Record<string, DownloadMeta> {
   const stored = readMeta();
   const out: Record<string, DownloadMeta> = { ...stored };
@@ -101,6 +108,7 @@ function ensureInit() {
     downloads.forEach(d => items.set(d.key, d));
     notify(); syncPolling();
   }).catch(() => {});
+  onMp4Change(notify);   // MP4 pronto/removido também mexe no que está "baixado"
   Downloader.addListener('downloadChanged', (d) => {
     const antes = items.get(d.key)?.state;
     if (d.state === 'removed') items.delete(d.key);
@@ -143,6 +151,9 @@ function completedSet(): Set<string> {
   if (!downloadsNative()) return webRead();
   const s = new Set<string>();
   items.forEach((v, k) => { if (v.state === 'completed') s.add(k); });
+  // MP4 gravado em Movies/WatchMov também é "baixado": o vídeo está no aparelho,
+  // só não passou pelo cache do Media3.
+  mp4DoneKeys().forEach(k => s.add(k));
   return s;
 }
 
@@ -206,7 +217,22 @@ export function clearDownloadsFor(tmdbId: number, isMovie: boolean) {
 // que exigem rede). Retoma da posição salva; salva a posição ao fechar.
 export async function playDownloaded(key: string) {
   const meta = getDownloadMeta()[key];   // inclui itens reconstruídos do nativo
-  if (!meta || !meta.url) return;
+  if (!meta) return;
+  // Baixado em MP4 (sem cache do Media3): toca o arquivo direto do MediaStore.
+  if (items.get(key)?.state !== 'completed') {
+    const uri = await mp4UriOf(key);
+    if (uri) {
+      const start = getPosition(meta.tmdbId, meta.type, meta.season, meta.ep)?.positionMs ?? 0;
+      const res = await playNative({
+        url: uri, mime: 'video/mp4', title: meta.title, startMs: start, offline: true,
+        key: `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`,
+      });
+      if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+      notify();
+      return;
+    }
+  }
+  if (!meta.url) return;
   // MESMA chave de resume do VideoPlayer (`tmdbId:type:season:ep`) → o progresso é
   // um só: retoma de onde parou na home e o que assistir aqui reflete lá.
   const resumeKey = `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`;

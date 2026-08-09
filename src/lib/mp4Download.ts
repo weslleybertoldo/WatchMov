@@ -166,6 +166,25 @@ export async function convertToMp4(key: string, title?: string) {
   }
 }
 
+/** Chaves que já têm MP4 pronto (o app trata como BAIXADO, igual ao cache Media3). */
+export function mp4DoneKeys(): Set<string> {
+  listen();
+  const out = new Set<string>();
+  items.forEach((v, k) => { if (v.state === 'done') out.add(k); });
+  return out;
+}
+
+/** Onde está o MP4 dessa chave (content:// do MediaStore), pra reproduzir. */
+export async function mp4UriOf(key: string): Promise<string | null> {
+  if (!mp4Native()) return null;
+  try { const r = await Mp4Download.status({ key }); return r.done ? (r.uri ?? null) : null; } catch { return null; }
+}
+
+/** Avisa a UI quando a lista de MP4 muda (a aba Download escuta pra atualizar). */
+export function onMp4Change(cb: () => void): () => void {
+  listen(); subs.add(cb); return () => { subs.delete(cb); };
+}
+
 // Hook reativo com TUDO: a aba Conversões do sino lista o que está em andamento.
 export function useMp4All(): Mp4Event[] {
   const [, force] = useReducer((x: number) => x + 1, 0);
