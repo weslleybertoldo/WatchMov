@@ -24,6 +24,14 @@ let pendingNextInPlayer = false;
 // Usado p/ rotular, agrupar em abas e escopar o auto-avanço/handoff.
 const isTrackOnly = (u: string) => /\/m3\/|\/md\/|index-f\d|-v\d-a\d/i.test(u || '');
 
+// Rótulo colorido do provedor que gerou o link (carimbado na captura). SuperFlix
+// vermelho, EmbedPlay azul; outros não recebem tag.
+function providerTag(provider?: string): { label: string; color: string } | null {
+  if (provider === 'superflix') return { label: 'SuperFlix', color: '#f87171' };
+  if (provider === 'embedplayapi') return { label: 'EmbedPlay', color: '#60a5fa' };
+  return null;
+}
+
 interface ScreenCastPlugin { openCast(): Promise<void>; }
 const ScreenCast = registerPlugin<ScreenCastPlugin>('ScreenCast');
 
@@ -252,15 +260,19 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setCapturedList(getEntry(tmdbId, type, season, episode)?.streams ?? []);
     let alive = true;
     let stop = () => {};
-    watchStream(r => {
+    watchStream(rr => {
       if (!alive) return;
+      // Carimba o PROVEDOR ativo na captura (o link nasceu do iframe deste provedor):
+      // é o que a tag do picker mostra (SuperFlix/EmbedPlay), mais confiável que
+      // adivinhar pelo host (que rotaciona).
+      const r = { ...rr, provider: rr.provider || providerId };
       // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar.
       setCapturedList(prev => {
         const key = streamKey(r.url);
         const idx = prev.findIndex(x => streamKey(x.url) === key);
         if (idx < 0) return [...prev, r];
         const copy = [...prev];
-        copy[idx] = { url: r.url, mime: r.mime || copy[idx].mime, referer: r.referer || copy[idx].referer };
+        copy[idx] = { url: r.url, mime: r.mime || copy[idx].mime, referer: r.referer || copy[idx].referer, provider: r.provider || copy[idx].provider };
         return copy;
       });
       addStreams([r], tmdbId, type, season, episode);
@@ -800,6 +812,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                             <p className="text-sm text-foreground">
                               Link {gi} <span className="text-[10px] text-muted-foreground">({kind})</span>
                               <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{track ? 'FAIXA' : 'MASTER'}</span>
+                              {/* De qual provedor veio o link (carimbado na captura). */}
+                              {providerTag(s.provider) && (
+                                <span className="text-[10px] ml-1 font-semibold px-1 rounded" style={{ color: providerTag(s.provider)!.color }}>
+                                  {providerTag(s.provider)!.label}
+                                </span>
+                              )}
                               {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
                             </p>
                             <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
