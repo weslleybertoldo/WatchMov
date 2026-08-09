@@ -19,7 +19,8 @@ import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
 import NoticesView from '@/components/streaming/NoticesView';
 import { useNotices } from '@/lib/appNotices';
-import { startMp4Listener } from '@/lib/mp4Download';
+import { startMp4Listener, useMp4All } from '@/lib/mp4Download';
+import { useDownloadList } from '@/lib/downloads';
 import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
@@ -94,8 +95,15 @@ export default function Index() {
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [noticesOpen, setNoticesOpen] = useState(false);
-  const { unread: unreadNotices } = useNotices();   // badge do sino
+  const { unread: unreadNotices } = useNotices();
   useEffect(() => { startMp4Listener(); }, []);     // avisos de conversão desde o boot
+  // Badge do sino = avisos não lidos + o que está EM ANDAMENTO. Abrir o sino zera
+  // os lidos, mas enquanto um download/conversão roda o número continua lá — some
+  // só quando termina E o aviso de conclusão é visto.
+  const { items: dlItemsAll } = useDownloadList();
+  const dlAtivos = [...dlItemsAll.values()].filter(d => d.state === 'downloading' || d.state === 'queued' || d.state === 'restarting').length;
+  const mp4Ativos = useMp4All().filter(m => m.state !== 'done').length;
+  const badgeNotices = unreadNotices + dlAtivos + mp4Ativos;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [bugsOpen, setBugsOpen] = useState(false);
@@ -240,9 +248,9 @@ export default function Index() {
             <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
               onClick={() => { setNoticesOpen(o => !o); setSettingsOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Notificações">
               <Bell className="w-4 h-4" />
-              {unreadNotices > 0 && (
+              {badgeNotices > 0 && (
                 <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
-                  {unreadNotices > 9 ? '9+' : unreadNotices}
+                  {badgeNotices > 9 ? '9+' : badgeNotices}
                 </span>
               )}
             </Button>

@@ -74,7 +74,7 @@ public class Mp4DownloadPlugin extends Plugin {
             call.getString("url"), call.getString("referer"),
             call.getString("mime"), call.getString("title", ""),
             new ExportUtil.Cb() {
-                @Override public void progress(int p) { emit(key, "downloading", p, null, null, null); }
+                @Override public void progress(int p) { emit(key, "downloading", p, ExportUtil.runningName(), null, null); }
                 @Override public void queued(int pos) { emit(key, "queued", -1, null, null, null); }
                 @Override public void done(Uri uri, String name) { emit(key, "done", 100, name, uri.toString(), null); }
                 @Override public void failed(String why) { emit(key, "failed", 0, null, null, why); }
@@ -122,7 +122,7 @@ public class Mp4DownloadPlugin extends Plugin {
         Uri ready = ExportUtil.exported(getContext(), key);
         if (ready != null) { emit(key, "done", 100, null, ready.toString(), null); call.resolve(); return; }
         ExportUtil.start(getContext(), key, call.getString("title", ""), new ExportUtil.Cb() {
-            @Override public void progress(int p) { emit(key, "converting", p, null, null, null); }
+            @Override public void progress(int p) { emit(key, "converting", p, ExportUtil.runningName(), null, null); }
             @Override public void queued(int pos) { emit(key, "queued", -1, null, null, null); }
             @Override public void done(Uri uri, String name) { emit(key, "done", 100, name, uri.toString(), null); }
             @Override public void failed(String why) { emit(key, "failed", 0, null, null, why); }

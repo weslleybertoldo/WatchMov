@@ -3,7 +3,7 @@ import { Downloader, downloadsNative, type DownloadItem } from './downloader';
 import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress } from './nativePlayer';
-import { addNotice } from './appNotices';
+import { upsertNotice } from './appNotices';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -109,10 +109,10 @@ function ensureInit() {
     // o listener repete o mesmo estado várias vezes.
     if (antes !== d.state) {
       if (d.state === 'completed') {
-        addNotice({ kind: 'download', title: `${labelOf(d.key, d.title)} já está disponível em Downloads`,
-          body: 'Toque na aba Download pra assistir offline.' });
+        upsertNotice(`dl:${d.key}`, { kind: 'download', title: `Download de ${labelOf(d.key, d.title)} concluído`,
+          body: 'Já está disponível na aba Download pra assistir offline.' });
       } else if (d.state === 'failed') {
-        addNotice({ kind: 'download', error: true, title: `Falhou o download de ${labelOf(d.key, d.title)}`,
+        upsertNotice(`dl:${d.key}`, { kind: 'download', error: true, title: `Falhou o download de ${labelOf(d.key, d.title)}`,
           body: d.reason || 'erro' });
       }
     }

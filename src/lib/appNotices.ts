@@ -15,6 +15,7 @@ export interface Notice {
   body?: string;
   error?: boolean;     // falhou (aparece na aba do tipo, marcado em vermelho)
   read?: boolean;
+  ref?: string;        // mesma tarefa (ex. "mp4:e:123:2:5") → o aviso é SUBSTITUÍDO
 }
 
 const KEY = 'watchmov_notices';
@@ -37,6 +38,17 @@ export function addNotice(n: { kind: NoticeKind; title: string; body?: string; e
   // Mesmo aviso repetido em sequência (ex. reenvio do evento) não duplica.
   if (list[0] && list[0].title === n.title && list[0].body === n.body && at - list[0].at < 15000) return;
   write([{ id: `${at}-${Math.round(Math.random() * 1e6)}`, at, read: false, ...n }, ...list]);
+}
+
+/**
+ * Aviso da MESMA tarefa: substitui o anterior em vez de empilhar. "Convertendo X"
+ * vira "Conversão de X concluída" na mesma linha — sem deixar um progresso morto
+ * no histórico.
+ */
+export function upsertNotice(ref: string, n: { kind: NoticeKind; title: string; body?: string; error?: boolean }) {
+  const list = read().filter(x => x.ref !== ref);
+  const at = Date.now();
+  write([{ id: `${ref}-${at}`, at, read: false, ref, ...n }, ...list]);
 }
 
 export function getNotices(): Notice[] { return read(); }

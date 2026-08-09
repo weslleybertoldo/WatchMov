@@ -138,6 +138,8 @@ public final class ExportUtil {
 
     public static boolean isRunning() { return runningKey != null; }
     public static String runningKey() { return runningKey; }
+    /** Nome do arquivo em conversão (a central mostra "Convertendo: <título>"). */
+    public static String runningName() { return runningName; }
 
     /** Chave de download (m:tmdbId / e:tmdbId:s:e) a partir da chave de resume do player. */
     public static String downloadKeyFromResume(String resumeKey) {
