@@ -61,30 +61,7 @@ export const PROVIDERS: Provider[] = [
         : `https://fembed.sx/e/${t.tmdbId}/${s(t)}-${e(t)}`;
     },
   },
-  {
-    id: 'megaembed',
-    name: 'Fonte 4 (MegaEmbed — só séries)',
-    // ⚠️ 01/07: endpoint de FILME quebrado ("movie not found" p/ qualquer id) —
-    // só SÉRIE funciona (/embed/{tmdb}?sea=&epi=). Filme retorna null (some da lista).
-    build: (t) => {
-      if (t.type === 'movie') return null;
-      const id = t.tmdbId ?? t.imdbId;
-      if (!id) return null;
-      return `https://megaembedapi.site/embed/${id}?sea=${s(t)}&epi=${e(t)}`;
-    },
-  },
-  {
-    id: 'playerflix',
-    name: 'Fonte 5 (PlayerFlix — via servidor)',
-    // Só toca embedado (anti-hotlink) → abre no modo Servidor (iframe), não no
-    // player nativo. Resolve TMDB id. /filme/{tmdb}; /serie/{tmdb}/{s}/{e}.
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://playerflixapi.com/filme/${t.tmdbId}`
-        : `https://playerflixapi.com/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
+  // Fonte 4 (MegaEmbed) e Fonte 5 (PlayerFlix) removidas 09/08 — pedido do Weslley.
 ];
 
 // Domínios usados (para CSP frame-src)
@@ -92,6 +69,4 @@ export const PROVIDER_HOSTS = [
   'https://fembed.sx',
   'https://embedplayapi.top',
   'https://superflixapi.cyou',
-  'https://megaembedapi.site',
-  'https://playerflixapi.com',
 ];
