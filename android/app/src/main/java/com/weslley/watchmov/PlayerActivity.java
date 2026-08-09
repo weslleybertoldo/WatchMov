@@ -390,11 +390,18 @@ public class PlayerActivity extends Activity {
             .build();
 
         trackSelector = new DefaultTrackSelector(this);
-        // Offline (item baixado): lê do SimpleCache via CacheDataSource (não precisa de
-        // rede). Online: OkHttp normal (descomprime gzip do m3u8).
-        androidx.media3.exoplayer.source.MediaSource.Factory msFactory = offline
-            ? new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(this))
-            : new DefaultMediaSourceFactory(http);
+        // ARQUIVO local (content:// do MP4 exportado, file://): o OkHttp não sabe abrir
+        // esses esquemas e o player morria em ERROR_CODE_FAILED_RUNTIME_CHECK; o
+        // DefaultDataSource resolve content/file/asset além de http.
+        // Offline (cache Media3): CacheDataSource, sem rede. Online: OkHttp (descomprime
+        // o gzip do m3u8).
+        boolean arquivoLocal = currentUrl != null
+            && !(currentUrl.startsWith("http://") || currentUrl.startsWith("https://"));
+        androidx.media3.exoplayer.source.MediaSource.Factory msFactory = arquivoLocal
+            ? new DefaultMediaSourceFactory(new androidx.media3.datasource.DefaultDataSource.Factory(this))
+            : offline
+                ? new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(this))
+                : new DefaultMediaSourceFactory(http);
         player = new ExoPlayer.Builder(this)
             .setMediaSourceFactory(msFactory)
             .setLoadControl(loadControl)
@@ -546,8 +553,11 @@ public class PlayerActivity extends Activity {
     // De onde o vídeo vem AGORA (barra de baixo) e se o episódio está baixado (topo).
     private void updateSourceUi() {
         if (sourceTv != null) {
-            sourceTv.setText(offline ? "Baixado" : "Servidor");
-            sourceTv.setTextColor(offline ? Color.parseColor("#4ADE80") : Color.parseColor("#B0FFFFFF"));
+            // "downloaded" cobre o MP4 local, que roda com offline=false (não passa pelo
+            // proxy) mas é tão baixado quanto o cache.
+            boolean doAparelho = offline || downloaded;
+            sourceTv.setText(doAparelho ? "Baixado" : "Servidor");
+            sourceTv.setTextColor(doAparelho ? Color.parseColor("#4ADE80") : Color.parseColor("#B0FFFFFF"));
         }
         if (dlBtn != null) {
             dlBtn.setText(downloaded ? "⤓ Baixado" : "⤓");
