@@ -120,6 +120,13 @@ export async function openMp4(key: string, title?: string) {
   catch (e) { toast.error('Não consegui abrir', { description: (e as Error)?.message || 'erro' }); }
 }
 
+// Cancela a conversão/baixa em MP4 dessa chave (se estiver na fila, só sai dela).
+export async function cancelMp4(key: string) {
+  if (!mp4Native()) return;
+  items.delete(key); notify();
+  try { await Mp4Download.cancel({ key }); } catch { /* nada rodando */ }
+}
+
 export async function removeMp4(key: string) {
   if (!mp4Native()) return;
   try { await Mp4Download.remove({ key }); } catch { /* já não existe */ }
