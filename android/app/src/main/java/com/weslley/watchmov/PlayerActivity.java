@@ -623,7 +623,12 @@ public class PlayerActivity extends Activity {
         NativePlayerPlugin.reportError(url, 0, 0, "PLAYER_START",
             "[play] startMs=" + startMs + " key=" + resumeKey + " offline=" + offline
             + " silent=" + castSilentStart, mimeType, mReferer, mTitle);
-        String playUri = (offline || MimeTypes.APPLICATION_M3U8.equals(mimeType)) ? ProxyServer.local(url, mReferer) : url;
+        // Arquivo local (content:// do MP4 exportado, file://) NÃO passa pelo proxy: o
+        // proxy só sabe falar HTTP e devolvia ERROR_CODE_IO_BAD_HTTP_STATUS ao tentar
+        // "baixar" um content://.
+        boolean rede = url.startsWith("http://") || url.startsWith("https://");
+        String playUri = (rede && (offline || MimeTypes.APPLICATION_M3U8.equals(mimeType)))
+            ? ProxyServer.local(url, mReferer) : url;
         MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
         player.setMediaItem(item);
         if (startMs > 0) player.seekTo(startMs);
