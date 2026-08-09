@@ -200,9 +200,25 @@ public final class ExportUtil {
         ProxyServer.ensure();
         String src = url.contains("/s?u=") ? url : ProxyServer.local(url, referer);
         if (!src.contains("&ap=")) src = src + "&ap=pt";
-        String m = (mime == null || mime.isEmpty()) ? MimeTypes.APPLICATION_M3U8 : mime;
+        // O mime vindo do JS às vezes chega como video/* — e aí o ExoPlayer trata a
+        // PLAYLIST como arquivo progressivo e morre em
+        // "UnrecognizedInputFormatException: None of the available extractors could
+        // read the stream". Quem manda é o padrão da URL (mesma regra do proxy e do
+        // handoff); o mime do JS só decide quando não é HLS.
+        String m = isHlsUrl(url, mime) ? MimeTypes.APPLICATION_M3U8
+            : (mime == null || mime.isEmpty() ? MimeTypes.APPLICATION_M3U8 : mime);
         // Baixando da rede não dá pra saber o tamanho final → o anel gira sem %.
         enqueue(new Job(ctx, key, safeName(title, key) + ".mp4", src, m, false, 0, callback));
+    }
+
+    /** É HLS? (mesma leitura de URL que o ProxyServer e o handoff externo usam.) */
+    private static boolean isHlsUrl(String url, String mime) {
+        if (mime != null && mime.toLowerCase().contains("mpegurl")) return true;
+        if (url == null) return false;
+        String l = url.toLowerCase();
+        return l.contains(".m3u8") || l.contains(".m3u") || l.contains("/hls/")
+            || l.contains("/m3/") || l.contains("/md/") || l.contains("master")
+            || l.contains("playlist") || l.endsWith(".txt");
     }
 
     /**
