@@ -164,6 +164,16 @@ public class MainActivity extends BridgeActivity {
         webView.setWebViewClient(new BridgeWebViewClient(this.bridge) {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // Esquema não-web (shopee://, intent://, market://…) em QUALQUER frame:
+                // anúncio tentando abrir app externo — o Bridge do Capacitor repassaria
+                // pro startActivity. Aborta aqui (nenhum fluxo legítimo do app navega
+                // o WebView pra esquema custom; o deep link do login entra por fora).
+                String scheme = request.getUrl() != null ? request.getUrl().getScheme() : null;
+                if (scheme != null && !scheme.equals("http") && !scheme.equals("https")
+                        && !scheme.equals("data") && !scheme.equals("blob")
+                        && !scheme.equals("about") && !scheme.equals("file")) {
+                    return true;
+                }
                 if (request.isForMainFrame() && !isAllowedTopNav(request.getUrl().getHost())) {
                     return true;
                 }
