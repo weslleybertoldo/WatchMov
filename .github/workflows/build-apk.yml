@@ -14,7 +14,9 @@ jobs:
     # SEM [skip ci] na mensagem de propósito — o Vercel respeita [skip ci] e,
     # além de pular o bump, cancelava o build do merge ainda na fila (site web
     # ficou 4 dias preso na v4.24 por isso, 09→12/08).
-    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore: bump version')
+    # Aspas duplas obrigatórias: sem elas o ": " dentro de 'chore: bump version'
+    # quebra o YAML (escalar plano) e o workflow INTEIRO falha com 0s/sem jobs.
+    if: "github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore: bump version')"
     runs-on: ubuntu-latest
 
     steps:
