@@ -735,8 +735,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             // Web: sandbox sem allow-popups/allow-top-navigation = anúncio não abre
             // aba nem sequestra a página. No APK fica de fora: o sniffer nativo
             // depende do popup com gesto (onCreateWindow) pra capturar o stream.
-            // Provedor com anti-adblock (noSandbox) também fica de fora, senão não toca.
-            sandbox={Capacitor.isNativePlatform() || provider?.noSandbox ? undefined : 'allow-scripts allow-same-origin allow-forms allow-presentation'}
+            sandbox={Capacitor.isNativePlatform() ? undefined : 'allow-scripts allow-same-origin allow-forms allow-presentation'}
           />
         )}
       </div>

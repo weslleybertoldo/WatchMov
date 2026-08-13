@@ -15,9 +15,6 @@ export interface Provider {
   id: string;
   name: string;
   build: (t: PlayerTarget) => string | null;
-  // Player detecta sandbox/adblock e RECUSA tocar (anti-adblock). Nesses, o
-  // iframe web vai SEM sandbox — os anúncios voltam só nessa fonte.
-  noSandbox?: boolean;
 }
 
 const s = (t: PlayerTarget) => t.season ?? 1;
@@ -29,7 +26,6 @@ export const PROVIDERS: Provider[] = [
   {
     id: 'embedplayapi',
     name: 'Fonte 1 (EmbedPlayApi PT-BR)', // PRINCIPAL/default
-    noSandbox: true, // player exige ads: com sandbox mostra "disabling AdBlock or removing the Sandbox"
     // Player BR dublado. TMDB id. Formato /embed/{id} e /embed/{id}/{s}/{e}.
     // ⚠️ o banner "Novo domínio da API, atualize no seu código >> embedplayapi.top"
     // é só ANÚNCIO — NÃO trocar pra /embed/movie|tv (essas rotas devolvem shell
