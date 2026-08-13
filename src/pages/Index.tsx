@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Capacitor } from '@capacitor/core';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -280,8 +279,7 @@ export default function Index() {
           <iframe key={liveChannel.embed} src={liveChannel.embed} title={liveChannel.name}
             className="flex-1 w-full border-0"
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            allowFullScreen referrerPolicy="origin"
-            sandbox={Capacitor.isNativePlatform() ? undefined : 'allow-scripts allow-same-origin allow-forms allow-presentation'} />
+            allowFullScreen referrerPolicy="origin" />
         </div>
       )}
 

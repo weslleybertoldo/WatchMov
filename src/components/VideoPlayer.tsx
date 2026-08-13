@@ -732,10 +732,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen
             referrerPolicy="origin"
-            // Web: sandbox sem allow-popups/allow-top-navigation = anúncio não abre
-            // aba nem sequestra a página. No APK fica de fora: o sniffer nativo
-            // depende do popup com gesto (onCreateWindow) pra capturar o stream.
-            sandbox={Capacitor.isNativePlatform() ? undefined : 'allow-scripts allow-same-origin allow-forms allow-presentation'}
           />
         )}
       </div>
