@@ -476,6 +476,16 @@ public final class ExportUtil {
         if (key == null || src == null) { cleanup(); pump(); return; }
         new Thread(() -> {
             try {
+                // Sem espaço a cópia morre no meio (ENOSPC) e deixa lixo pra trás:
+                // avisa ANTES, com números que dão pra agir.
+                long precisa = src.length();
+                long livre = 0;
+                try {
+                    livre = new android.os.StatFs(Environment.getExternalStorageDirectory().getPath()).getAvailableBytes();
+                } catch (Exception ignored) {}
+                if (livre > 0 && livre < precisa + (64L << 20))
+                    throw new Exception("sem espaço no aparelho — o vídeo tem " + (precisa >> 20)
+                        + " MB e só há " + (livre >> 20) + " MB livres; libere espaço e tente de novo");
                 Uri uri = publish(ctx, src, name);
                 prefs(ctx).edit().putString(key, uri.toString() + "|" + name).apply();
                 main.post(() -> {
@@ -506,19 +516,31 @@ public final class ExportUtil {
             v.put(MediaStore.Video.Media.IS_PENDING, 1);   // some da galeria enquanto copia
             Uri uri = cr.insert(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), v);
             if (uri == null) throw new Exception("MediaStore recusou o arquivo");
-            try (InputStream in = new FileInputStream(src); OutputStream out = cr.openOutputStream(uri)) {
-                if (out == null) throw new Exception("sem stream de escrita");
-                copy(in, out);
+            try {
+                try (InputStream in = new FileInputStream(src); OutputStream out = cr.openOutputStream(uri)) {
+                    if (out == null) throw new Exception("sem stream de escrita");
+                    copy(in, out);
+                }
+                ContentValues done = new ContentValues();
+                done.put(MediaStore.Video.Media.IS_PENDING, 0);
+                cr.update(uri, done, null, null);
+            } catch (Exception e) {
+                // Cópia falhou (ex. ENOSPC): sem isso a linha IS_PENDING fica órfã
+                // ocupando espaço invisível na galeria — piora o "sem espaço".
+                try { cr.delete(uri, null, null); } catch (Exception ignored) {}
+                throw e;
             }
-            ContentValues done = new ContentValues();
-            done.put(MediaStore.Video.Media.IS_PENDING, 0);
-            cr.update(uri, done, null, null);
             return uri;
         }
         File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "WatchMov");
         if (!dir.exists() && !dir.mkdirs()) throw new Exception("não consegui criar Movies/WatchMov");
         File out = new File(dir, name);
-        try (InputStream in = new FileInputStream(src); OutputStream o = new FileOutputStream(out)) { copy(in, o); }
+        try (InputStream in = new FileInputStream(src); OutputStream o = new FileOutputStream(out)) {
+            copy(in, o);
+        } catch (Exception e) {
+            try { out.delete(); } catch (Exception ignored) {}   // não deixa MP4 parcial
+            throw e;
+        }
         MediaScannerConnection.scanFile(ctx, new String[]{ out.getAbsolutePath() }, new String[]{ "video/mp4" }, null);
         return androidx.core.content.FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", out);
     }

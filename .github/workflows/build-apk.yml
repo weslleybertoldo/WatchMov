@@ -10,6 +10,11 @@ permissions:
 
 jobs:
   build:
+    # Guarda anti-loop: o commit de bump não gera outro APK. O push do bump sai
+    # SEM [skip ci] na mensagem de propósito — o Vercel respeita [skip ci] e,
+    # além de pular o bump, cancelava o build do merge ainda na fila (site web
+    # ficou 4 dias preso na v4.24 por isso, 09→12/08).
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore: bump version')
     runs-on: ubuntu-latest
 
     steps:
@@ -133,7 +138,9 @@ jobs:
             "
             git add package.json
             if git diff --staged --quiet; then exit 0; fi
-            git commit -m "chore: bump version to v$NEXT [skip ci]"
+            # Sem [skip ci]: o job acima já se protege do loop e o Vercel
+            # precisa buildar este commit (senão o site fica pra trás).
+            git commit -m "chore: bump version to v$NEXT"
             if git push origin main; then
               echo "Pushed v$NEXT on attempt $i"
               exit 0
