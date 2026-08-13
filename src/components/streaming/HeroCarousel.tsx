@@ -30,7 +30,10 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
 
   return (
     <div
-      className="relative -mx-4 -mt-2 mb-2 aspect-video max-h-[46vh] overflow-hidden cursor-pointer animate-fade-in"
+      // aspect-video + max-h: quando a ALTURA trava (desktop), o aspect-ratio
+      // encolhe a LARGURA e o hero fica num canto com faixa preta ao lado.
+      // Em md+ solta o ratio e fixa a altura: largura total, imagem cobre.
+      className="relative -mx-4 md:-mx-6 -mt-2 mb-2 aspect-video max-h-[46vh] md:aspect-auto md:h-[46vh] md:max-h-none overflow-hidden cursor-pointer animate-fade-in"
       style={{ touchAction: 'pan-y' }}
       onTouchStart={(e) => { startX.current = e.touches[0].clientX; swiped.current = false; }}
       onTouchMove={(e) => { if (startX.current != null && Math.abs(e.touches[0].clientX - startX.current) > 10) swiped.current = true; }}
