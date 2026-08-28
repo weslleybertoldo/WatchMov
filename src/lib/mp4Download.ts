@@ -24,7 +24,14 @@ export interface Mp4Event {
 interface Mp4DownloadPlugin {
   start(o: { key: string; url: string; referer?: string; mime?: string; title?: string }): Promise<void>;
   convert(o: { key: string; title?: string }): Promise<void>;
-  list(): Promise<{ keys: string[]; running?: string; queued?: string[]; entries?: { key: string; name?: string; size?: number }[] }>;
+  list(): Promise<{
+    keys: string[]; running?: string; queued?: string[];
+    entries?: { key: string; name?: string; size?: number }[];
+    // Falhas gravadas em disco pelo nativo (ver ExportUtil.failPrefs) — as que
+    // aconteceram com o app fechado e cujo evento ao vivo se perdeu.
+    failed?: { key: string; name?: string; at?: string; error?: string }[];
+  }>;
+  clearFailed(o: { key: string }): Promise<void>;
   cancel(o?: { key?: string }): Promise<void>;
   status(o: { key: string; title?: string }): Promise<{ done: boolean; uri?: string; running: boolean; size?: number }>;
   openWith(o: { key: string; title?: string }): Promise<void>;
@@ -38,6 +45,25 @@ export const mp4Native = () => Capacitor.isNativePlatform();
 // "Seus Amigos e Vizinhos — T2E9" (sem a extensão) — o nativo manda o nome do arquivo.
 const nomeDe = (e: Mp4Event) => (e.name || 'vídeo').replace(/\.mp4$/i, '');
 
+// Registra uma falha de MP4 no sino + no painel de bugs. Vive fora do listener
+// porque as falhas que acontecem com o app FECHADO chegam depois, pelo list().
+function logFalhaMp4(o: { key: string; nome: string; erro: string; eraDownload: boolean }) {
+  upsertNotice(`mp4:${o.key}`, {
+    kind: o.eraDownload ? 'download' : 'mp4', error: true,
+    title: `${o.eraDownload ? 'O download em MP4' : 'A conversão'} de ${o.nome} falhou`,
+    body: o.erro,
+  });
+  // Vai pro painel de bugs mesmo com o player fechado (o log do player só
+  // registra enquanto ele está montado — foi por isso que o 1º erro se perdeu).
+  supabase.from('wm_playback_errors').insert({
+    title: o.nome || o.key,
+    error_name: 'EXPORT_MP4',
+    error_cause: o.erro || null,
+    app_version: __APP_VERSION__,
+    platform: 'android',
+  }).then(({ error }) => { if (error) console.warn('[bugs] log export falhou', error.message); });
+}
+
 let listening = false;
 
 // Estado por chave (a aba Download mostra o formato e o progresso da conversão).
@@ -49,12 +75,27 @@ const notify = () => subs.forEach(f => f());
 function listen() {
   if (listening || !mp4Native()) return;
   listening = true;
-  Mp4Download.list().then(({ keys, running, queued, entries }) => {
+  Mp4Download.list().then(({ keys, running, queued, entries, failed }) => {
     const info = new Map((entries || []).map(e => [e.key, e]));
     keys.forEach(k => items.set(k, { key: k, state: 'done', percent: 100, name: info.get(k)?.name, size: info.get(k)?.size }));
     (queued || []).forEach(k => items.set(k, { key: k, state: 'queued', percent: -1 }));
     if (running) items.set(running, { key: running, state: 'converting', percent: -1 });
     notify();
+    // Drena as falhas que o nativo guardou enquanto o app estava fechado. Sem isto o
+    // MP4 que morria em 99% simplesmente sumia — sem aviso e sem linha no painel de
+    // bugs — porque o `mp4Changed` daquele instante não tinha ninguém escutando.
+    (failed || []).forEach(f => {
+      if (items.get(f.key)?.state === 'done') { Mp4Download.clearFailed({ key: f.key }).catch(() => {}); return; }
+      logFalhaMp4({
+        key: f.key,
+        nome: (f.name || 'vídeo').replace(/\.mp4$/i, ''),
+        erro: f.error || 'erro',
+        // Sem o `mode` gravado, "download" é a leitura certa: é o caminho que roda
+        // com o app fechado (a conversão pelo botão quase sempre tem o app aberto).
+        eraDownload: true,
+      });
+      Mp4Download.clearFailed({ key: f.key }).catch(() => {});
+    });
   }).catch(() => {});
   Mp4Download.addListener('mp4Changed', e => {
     const antes = items.get(e.key)?.state;
@@ -99,18 +140,10 @@ function listen() {
     } else if (e.state === 'failed') {
       toast.error('Não consegui baixar em MP4', { id, duration: 8000, description: e.error || 'erro' });
       const eraDownload = (e.mode ?? (antes === 'downloading' ? 'download' : 'convert')) === 'download';
-      upsertNotice(`mp4:${e.key}`, { kind: eraDownload ? 'download' : 'mp4', error: true,
-        title: `${eraDownload ? 'O download em MP4' : 'A conversão'} de ${nomeDe(e)} falhou`,
-        body: e.error || 'erro' });
-      // Vai pro painel de bugs mesmo com o player fechado (o log do player só
-      // registra enquanto ele está montado — foi por isso que o 1º erro se perdeu).
-      supabase.from('wm_playback_errors').insert({
-        title: e.name ?? e.key,
-        error_name: 'EXPORT_MP4',
-        error_cause: e.error ?? null,
-        app_version: __APP_VERSION__,
-        platform: 'android',
-      }).then(({ error }) => { if (error) console.warn('[bugs] log export falhou', error.message); });
+      logFalhaMp4({ key: e.key, nome: nomeDe(e), erro: e.error || 'erro', eraDownload });
+      // O nativo também gravou esta falha em disco (pro caso do app fechado); como
+      // ela JÁ virou aviso aqui, apaga pra não duplicar no próximo boot.
+      Mp4Download.clearFailed({ key: e.key }).catch(() => {});
     } else {
       toast.dismiss(id);
     }

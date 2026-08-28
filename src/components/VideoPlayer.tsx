@@ -24,12 +24,14 @@ let pendingNextInPlayer = false;
 // Usado p/ rotular, agrupar em abas e escopar o auto-avanço/handoff.
 const isTrackOnly = (u: string) => /\/m3\/|\/md\/|index-f\d|-v\d-a\d/i.test(u || '');
 
-// Rótulo colorido do provedor que gerou o link (carimbado na captura). SuperFlix
-// vermelho, EmbedPlay azul; outros não recebem tag.
+// Rótulo colorido do provedor que gerou o link (carimbado na captura, ver o
+// `provider: rr.provider || providerId` mais abaixo). Sai do próprio PROVIDERS: antes
+// era um if chapado com SuperFlix e EmbedPlay, e as outras 4 fontes ficavam sem tag
+// mesmo já tendo o campo preenchido. Link capturado antes do carimbo existir não tem
+// `provider` e segue sem tag até ser recapturado — o host rotaciona, não dá pra inferir.
 function providerTag(provider?: string): { label: string; color: string } | null {
-  if (provider === 'superflix') return { label: 'SuperFlix', color: '#f87171' };
-  if (provider === 'embedplayapi') return { label: 'EmbedPlay', color: '#60a5fa' };
-  return null;
+  const p = provider ? PROVIDERS.find(x => x.id === provider) : undefined;
+  return p ? { label: p.tag, color: p.color } : null;
 }
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
@@ -55,11 +57,15 @@ interface VideoPlayerProps {
   onCompleted?: () => void;
   watched?: boolean;               // assistido (episódio atual ou filme)
   onSetWatched?: (v: boolean) => void;  // define a marcação de assistido (true/false)
+  // Marca por CHAVE (`tmdbId:type:season:ep`) em vez de "o episódio atual". O player
+  // nativo troca de episódio sem recriar a Activity e sem re-renderizar o React, então
+  // "atual" aqui podia ser outro ep — marcar o E24 marcava/desmarcava o E23.
+  onSetWatchedFor?: (key: string, v: boolean) => void;
   onNext?: () => void;             // série: avança pro próximo episódio
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onNext } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -171,6 +177,23 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // "Baixado" vale pros dois formatos: cache do Media3 OU MP4 em Movies/WatchMov.
   const mp4Item = useMp4(dlKey ?? '');
   const dlDone = dlItem?.state === 'completed' || mp4Item?.state === 'done';
+
+  // ── "Assistido" vindo do nativo, endereçado por CHAVE ────────────────────────
+  // Refs (padrão "latest ref") porque o listener nativo é registrado UMA vez e o
+  // resultado do fechamento chega numa promise antiga: os dois precisam enxergar as
+  // props de agora, não as do render em que foram criados.
+  const setWatchedRef = useRef(onSetWatched);
+  const setWatchedForRef = useRef(onSetWatchedFor);
+  useEffect(() => {
+    setWatchedRef.current = onSetWatched;
+    setWatchedForRef.current = onSetWatchedFor;
+  });
+  // `key` = tmdbId:type:season:ep que o player nativo mandou. Sem ela (APK antigo, ou
+  // filme, que não tem episódio) cai no comportamento antigo — "o atual".
+  const applyWatched = (key: string | undefined, v: boolean) => {
+    if (key && setWatchedForRef.current) { setWatchedForRef.current(key, v); return; }
+    setWatchedRef.current?.(v);
+  };
   // O download é do EPISÓDIO (1 por chave), mas foi feito a partir de UM link — só
   // esse mostra o progresso; os outros seguem oferecendo "baixar".
   const dlUrl = dlKey ? getDownloadMeta()[dlKey]?.url : undefined;
@@ -381,7 +404,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const ep = curEpRef.current;
       // Estado final de "assistido" vem no resultado (o evento ao vivo se perde com o
       // WebView em background) → fonte da verdade ao fechar; garante mark E unmark.
-      if (typeof res.watched === 'boolean') onSetWatched?.(res.watched);
+      // ⚠️ `res.watchedKey` é obrigatório aqui: este `.then` é da promise do episódio
+      // que ABRIU o player, e o nativo pode ter trocado de ep no meio (loadNextInPlace).
+      // Sem a chave, fechar depois de avançar aplicava o estado do ep NOVO no ANTERIOR
+      // — marcava o já marcado e, pior, desmarcava o que você tinha acabado de marcar.
+      if (typeof res.watched === 'boolean') applyWatched(res.watchedKey, res.watched);
       if (res.positionMs > 0) {
         setStreamPosition(res.positionMs, ep.tmdbId, ep.type, ep.season, ep.episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
@@ -415,12 +442,23 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   }, [open, directMode, tmdbId, type, season, episode]);
 
   // "Assistido" reportado pelo player nativo (botão ou faltando 1 min pro fim).
+  // Deps SÓ [open], de propósito: `onSetWatched` é uma arrow NOVA a cada render do
+  // MediaDetail (que re-renderiza sozinho — polling de download, useMp4All, store), e
+  // com ela nas deps o listener era removido e re-registrado o tempo todo. Como
+  // addListener é assíncrono, o evento que caísse nessa janela era descartado pelo
+  // Capacitor — era isso que fazia "cliquei e não marcou" acontecer só às vezes.
   useEffect(() => {
-    if (!open || !isNative() || !onSetWatched) return;
+    if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
-    onPlayerWatched?.(({ watched: w }) => onSetWatched(w))?.then(h => { handle = h; });
-    return () => { handle?.remove(); };
-  }, [open, tmdbId, type, season, episode, onSetWatched]);
+    let cancelado = false;
+    onPlayerWatched?.(({ watched: w, key }) => applyWatched(key, w))?.then(h => {
+      handle = h;
+      // Desmontou antes do addListener resolver: o cleanup rodou com handle=null e o
+      // listener ficaria pendurado pra sempre (evento duplicado no player seguinte).
+      if (cancelado) { h.remove(); handle = null; }
+    });
+    return () => { cancelado = true; handle?.remove(); };
+  }, [open]);
 
   // Aprende a resolução real do link (do ExoPlayer) e rotula na lista.
   useEffect(() => {

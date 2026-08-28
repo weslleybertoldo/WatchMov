@@ -20,14 +20,14 @@ import SettingsView, { type WatchedStats } from '@/components/streaming/Settings
 import NoticesView from '@/components/streaming/NoticesView';
 import { useNotices } from '@/lib/appNotices';
 import { startMp4Listener, useMp4All } from '@/lib/mp4Download';
-import { useDownloadList } from '@/lib/downloads';
+import { useDownloadList, setWatchedBridge } from '@/lib/downloads';
 import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
 import BugsView from '@/components/streaming/BugsView';
 import LiveTvView from '@/components/streaming/LiveTvView';
 import type { Channel } from '@/lib/liveTv';
-import { continueLabel, continueProgress, totalEpisodesWatched } from '@/lib/watchProgress';
+import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { Button } from '@/components/ui/button';
 import { Home, Film, Tv, Sparkles, RadioTower, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
@@ -89,6 +89,44 @@ const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
 export default function Index() {
   const { signOut, user } = useAuth();
   const store = useWatchStore(user?.id);
+  // Episódio BAIXADO abre o player por downloads.ts, fora do VideoPlayer — lá não há
+  // store, então o "assistido" que o player devolvia era descartado. Aqui o store fica
+  // acessível pra ele aplicar, sempre pela chave que o NATIVO mandou.
+  useEffect(() => {
+    // `tmdbId:type:season:ep` → item do store. Devolve null quando o título não está
+    // na biblioteca (nada a marcar) ou a chave veio malformada.
+    const acha = (key: string) => {
+      const p = (key || '').split(':');
+      const tmdbId = Number(p[0]);
+      const kind: 'movie' | 'series' = p[1] === 'movie' ? 'movie' : 'series';
+      const item = store.data.items.find(i => i.tmdbId === tmdbId && i.type === kind);
+      return item ? { item, kind, season: Number(p[2]), ep: Number(p[3]) } : null;
+    };
+    setWatchedBridge({
+      // Vai JUNTO na abertura do player: sem isto ele nasce achando que o ep não está
+      // assistido e, ao fechar, devolveria `false` — desmarcando um ep já marcado.
+      get: (key) => {
+        const a = acha(key);
+        if (!a) return false;
+        return a.kind === 'series'
+          ? isEpisodeWatched(a.item, a.season, a.ep)
+          : !!a.item.completed;
+      },
+      set: (key, v) => {
+        const a = acha(key);
+        if (!a) return;
+        if (a.kind === 'series') {
+          if (a.season && a.ep) store.setEpisodeWatched(a.item.id, a.season, a.ep, v);
+          return;
+        }
+        store.updateItem(a.item.id, v
+          ? { completed: true, lastWatchedAt: new Date().toISOString() }
+          : { completed: false });
+      },
+    });
+    return () => setWatchedBridge(null);
+  }, [store]);
+
   const [tab, setTab] = useState<Tab>('inicio');
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]>; cacheKey?: string }>(null);

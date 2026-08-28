@@ -72,6 +72,10 @@ public class PlayerActivity extends Activity {
     public static final String RESULT_SERVER = "server";
     public static final String RESULT_RECAPTURE = "recapture";
     public static final String RESULT_WATCHED = "watched";
+    // De QUAL episódio o "assistido" acima está falando (tmdbId:type:season:ep). Sem
+    // isto o JS aplicava a marcação no ep que ABRIU o player: depois de um "Próximo"
+    // (in-place ou reabrindo), marcar o ep novo marcava — ou DESMARCAVA — o anterior.
+    public static final String RESULT_WATCHED_KEY = "watchedKey";
 
     // Activity VIVA (só existe uma). O "Próximo episódio" NÃO fecha mais o player:
     // o JS resolve o link do próximo ep e entrega aqui (loadNextInPlace) — assim a
@@ -489,8 +493,12 @@ public class PlayerActivity extends Activity {
         });
 
         // Abrindo já espelhando: NÃO inicia o vídeo local — os dois puxariam o MESMO
-        // HLS pelo MESMO proxy e a TV perdia banda/conexão logo após a troca.
-        castSilentStart = castFollowNext && activeCastMode != CAST_NONE;
+        // HLS pelo MESMO proxy e a TV perdia banda/conexão logo após a troca. Vale pra
+        // QUALQUER sessão viva, não só a que veio do "Próximo": abrir um episódio
+        // diferente do espelhado deixava celular e TV tocando em paralelo.
+        // DLNA sem controller é sessão fantasma (não dá pra mandar mídia) → local toca.
+        castSilentStart = activeCastMode != CAST_NONE
+            && (activeCastMode != CAST_DLNA || activeDlnaCtrl != null);
         playUrl(currentUrl, mMime, resolvedStart);
 
         // Veio do "Próximo episódio" com a TV conectada: reenvia a NOVA mídia pro mesmo
@@ -525,6 +533,35 @@ public class PlayerActivity extends Activity {
                 } catch (Exception ignored) {}
             }
         }
+        // Episódio DIFERENTE do que está na TV (abriu o próximo pela lista, sem passar
+        // pelo "Próximo episódio"): antes isto não caía em ramo NENHUM — a TV continuava
+        // no episódio velho, o celular tocava o novo em paralelo e `activeCastKey` ficava
+        // mentindo pro app inteiro (castStatus/getCastNow → tag "Espelhado" e o "Marcar
+        // como concluído" do overlay falavam do ep errado). Agora reaponta a sessão.
+        else if (activeCastMode != CAST_NONE && resumeKey != null) {
+            boolean assumiu = false;
+            if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
+                startCasting(CAST_DLNA, activeDlnaCtrl);   // regrava activeCastKey = resumeKey
+                recastCurrent(resolvedStart);              // …e manda a NOVA mídia pra TV
+                assumiu = true;
+            } else if (activeCastMode == CAST_CC) {
+                try {
+                    com.google.android.gms.cast.framework.CastSession cs = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession();
+                    if (cs != null && cs.isConnected()) {
+                        startCasting(CAST_CC, null);
+                        recastCurrent(resolvedStart);
+                        assumiu = true;
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (!assumiu) {
+                // Sessão fantasma (Chromecast já desconectado): sem isto a tela ficaria
+                // muda e parada, porque o local foi silenciado lá em cima.
+                activeCastMode = CAST_NONE; activeCastKey = null; activeCastTitle = null;
+                castSilentStart = false;
+                if (player != null) { player.setVolume(1f); player.setPlayWhenReady(true); }
+            }
+        }
     }
 
     // Toggle do botão "assistido": marca (e pula p/ faltar 1 min, como pedido) ou
@@ -548,7 +585,7 @@ public class PlayerActivity extends Activity {
         watched = w;
         if (watchedBtn != null) watchedBtn.setColorFilter(w ? Color.parseColor("#4ADE80") : Color.WHITE);
         updateWatchedUi();
-        NativePlayerPlugin.reportWatched(w);
+        NativePlayerPlugin.reportWatched(w, resumeKey);   // sempre com a chave do ep ATUAL
     }
 
     private void updateWatchedUi() {
@@ -1663,6 +1700,7 @@ public class PlayerActivity extends Activity {
         data.putExtra(RESULT_SERVER, server);
         data.putExtra(RESULT_RECAPTURE, recapture);
         data.putExtra(RESULT_WATCHED, watched); // estado final do "assistido" (fonte da verdade no fechar)
+        data.putExtra(RESULT_WATCHED_KEY, resumeKey);   // …e de qual episódio ele é
         setResult(RESULT_OK, data);
         resultSaved = true;
         finish();
@@ -1681,6 +1719,7 @@ public class PlayerActivity extends Activity {
             data.putExtra(RESULT_POSITION, player.getCurrentPosition());
             data.putExtra(RESULT_URL, currentUrl);
             data.putExtra(RESULT_WATCHED, watched);
+            data.putExtra(RESULT_WATCHED_KEY, resumeKey);
             setResult(RESULT_OK, data);
         }
         super.onPause();

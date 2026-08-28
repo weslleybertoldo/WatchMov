@@ -1,7 +1,10 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
 interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string> }
-interface PlayResult { positionMs: number; url?: string; next?: boolean; server?: boolean; recapture?: boolean; watched?: boolean }
+// `watchedKey` = de QUAL episódio o `watched` fala (tmdbId:type:season:ep). O player
+// troca de episódio sem recriar a Activity, então o estado final do "assistido" pode
+// ser de um ep diferente do que abriu o player. APK antigo não manda → undefined.
+interface PlayResult { positionMs: number; url?: string; next?: boolean; server?: boolean; recapture?: boolean; watched?: boolean; watchedKey?: string }
 
 interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
@@ -11,7 +14,7 @@ interface NativePlayerPlugin {
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
-  addListener(event: 'playerWatched', cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'playerWatched', cb: (d: { watched: boolean; key?: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerError', cb: (d: PlayerErrorEvent) => void): Promise<PluginListenerHandle>;
 }
 
@@ -35,8 +38,9 @@ export function onPlayerQuality(cb: (d: { url: string; quality: string }) => voi
   return NativePlayer.addListener('playerQuality', cb);
 }
 
-// "Assistido" vindo do player nativo (botão, ou faltando 1 min pro fim).
-export function onPlayerWatched(cb: (d: { watched: boolean }) => void): Promise<PluginListenerHandle> | null {
+// "Assistido" vindo do player nativo (botão, ou faltando 1 min pro fim). `key` diz
+// de qual episódio — sem ela a marcação caía no ep que abriu o player.
+export function onPlayerWatched(cb: (d: { watched: boolean; key?: string }) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerWatched', cb);
 }
