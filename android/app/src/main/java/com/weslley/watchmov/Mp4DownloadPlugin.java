@@ -114,7 +114,28 @@ public class Mp4DownloadPlugin extends Plugin {
         com.getcapacitor.JSArray q = new com.getcapacitor.JSArray();
         for (String k : ExportUtil.queuedKeys()) q.put(k);
         ret.put("queued", q);
+        // Falhas gravadas em disco enquanto o app estava fechado: o evento `mp4Changed`
+        // só existe ao vivo, então sem isto a tarefa sumia sem virar aviso nem linha no
+        // painel de bugs. O JS registra e chama clearFailed().
+        com.getcapacitor.JSArray fails = new com.getcapacitor.JSArray();
+        for (java.util.Map.Entry<String, String> e : ExportUtil.failedEntries(getContext()).entrySet()) {
+            String[] p = e.getValue().split("\\|", 3);
+            JSObject f = new JSObject();
+            f.put("key", e.getKey());
+            f.put("name", p.length > 0 ? p[0] : "");
+            f.put("at", p.length > 1 ? p[1] : "");
+            f.put("error", p.length > 2 ? p[2] : "erro");
+            fails.put(f);
+        }
+        ret.put("failed", fails);
         call.resolve(ret);
+    }
+
+    // O JS já transformou esta falha em aviso/linha no painel de bugs → pode esquecer.
+    @PluginMethod
+    public void clearFailed(PluginCall call) {
+        ExportUtil.clearFail(getContext(), call.getString("key"));
+        call.resolve();
     }
 
     // Converte um título JÁ BAIXADO (cache do Media3) pra MP4 — mesmo caminho do

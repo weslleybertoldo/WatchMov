@@ -24,6 +24,18 @@ function labelOf(key: string, title?: string): string {
   return p[0] === 'e' && p.length >= 4 ? `${base} — T${p[2]}E${p[3]}` : base;
 }
 
+// ── "Assistido" vindo do player aberto AQUI ──────────────────────────────────
+// Episódio baixado NÃO passa pelo VideoPlayer: `playEpisode` desvia pro
+// playDownloaded(), que chama o player nativo direto. Só que aqui não existe store —
+// então o `watched` que o player devolvia era jogado fora, e marcar "assistido" num
+// episódio baixado nunca pegava, por caminho nenhum. O Index registra o aplicador.
+// Chave de resume/"assistido" do player nativo — a MESMA que o VideoPlayer usa.
+const resumeKeyOf = (m: DownloadMeta) => `${m.tmdbId}:${m.type}:${m.season ?? 0}:${m.ep ?? 0}`;
+let watchedReporter: ((key: string, watched: boolean) => void) | null = null;
+export function setWatchedReporter(fn: ((key: string, watched: boolean) => void) | null) {
+  watchedReporter = fn;
+}
+
 export const movieKey = (tmdbId: number) => `m:${tmdbId}`;
 export const epKey = (tmdbId: number, season: number, ep: number) => `e:${tmdbId}:${season}:${ep}`;
 
@@ -264,6 +276,9 @@ export async function playDownloaded(key: string): Promise<boolean> {
         key: `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`,
       });
       if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+      // `watchedKey` diz de qual ep o player está falando (ele troca de episódio sem
+      // fechar); sem ela, cai na chave deste.
+      if (res && typeof res.watched === 'boolean') watchedReporter?.(res.watchedKey || resumeKeyOf(meta), res.watched);
       notify();
       return true;
     }
@@ -289,6 +304,9 @@ export async function playDownloaded(key: string): Promise<boolean> {
       startMs, offline: true, key: resumeKey, hasNext,
     });
     if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+    // Idem do ramo do MP4: sem isto, marcar "assistido" num episódio baixado sumia.
+    // Aqui a chave importa DE VERDADE — o encadeamento abaixo troca de episódio.
+    if (res && typeof res.watched === 'boolean') watchedReporter?.(res.watchedKey || resumeKey, res.watched);
     // "Próximo" no player → toca o episódio seguinte JÁ BAIXADO (encadeia offline).
     if (res?.next && nextKey) { handle?.remove(); handle = null; await playDownloaded(nextKey); }
   } finally {

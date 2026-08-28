@@ -20,7 +20,7 @@ import SettingsView, { type WatchedStats } from '@/components/streaming/Settings
 import NoticesView from '@/components/streaming/NoticesView';
 import { useNotices } from '@/lib/appNotices';
 import { startMp4Listener, useMp4All } from '@/lib/mp4Download';
-import { useDownloadList } from '@/lib/downloads';
+import { useDownloadList, setWatchedReporter } from '@/lib/downloads';
 import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
@@ -89,6 +89,28 @@ const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
 export default function Index() {
   const { signOut, user } = useAuth();
   const store = useWatchStore(user?.id);
+  // Episódio BAIXADO abre o player por downloads.ts, fora do VideoPlayer — lá não há
+  // store, então o "assistido" que o player devolvia era descartado. Aqui o store fica
+  // acessível pra ele aplicar, sempre pela chave que o NATIVO mandou.
+  useEffect(() => {
+    setWatchedReporter((key, v) => {
+      const p = (key || '').split(':');
+      const tmdbId = Number(p[0]);
+      const kind: 'movie' | 'series' = p[1] === 'movie' ? 'movie' : 'series';
+      const item = store.data.items.find(i => i.tmdbId === tmdbId && i.type === kind);
+      if (!item) return;
+      if (kind === 'series') {
+        const s = Number(p[2]), ep = Number(p[3]);
+        if (s && ep) store.setEpisodeWatched(item.id, s, ep, v);
+        return;
+      }
+      store.updateItem(item.id, v
+        ? { completed: true, lastWatchedAt: new Date().toISOString() }
+        : { completed: false });
+    });
+    return () => setWatchedReporter(null);
+  }, [store]);
+
   const [tab, setTab] = useState<Tab>('inicio');
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]>; cacheKey?: string }>(null);

@@ -13,6 +13,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
 
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Clock;
@@ -95,6 +96,7 @@ public final class ExportUtil {
     }
 
     private static final String PREFS = "wm_exports";      // key -> "<uri>|<nome>"
+    private static final String FAILS = "wm_export_fails"; // key -> "<nome>|<epochMs>|<motivo>"
     private static final String TMP_DIR = "exports";
 
     private static final Handler main = new Handler(Looper.getMainLooper());
@@ -114,6 +116,44 @@ public final class ExportUtil {
 
     private static SharedPreferences prefs(Context ctx) {
         return ctx.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    // ── Falhas persistidas ────────────────────────────────────────────────────────
+    // O aviso de falha (toast + sino + insert em wm_playback_errors) mora TODO no
+    // listener JS. Com o app fechado — o caso normal de um download/conversão longa —
+    // o `emit` não chega em ninguém e a tarefa some sem deixar rastro: nem pronta, nem
+    // rodando, nem com erro (o list() só devolve done/running/queued). Era por isso que
+    // "chegou em 99% e sumiu" não aparecia na aba de bugs. Aqui a falha vai pro disco e
+    // o JS drena no próximo boot.
+    private static SharedPreferences failPrefs(Context ctx) {
+        return ctx.getApplicationContext().getSharedPreferences(FAILS, Context.MODE_PRIVATE);
+    }
+
+    /** Guarda a falha desta chave como "<nome>|<epochMs>|<motivo>". */
+    static void rememberFail(Context ctx, String key, String name, String why) {
+        if (ctx == null || key == null) return;
+        String nome = name == null ? "" : name.replace(".mp4", "");
+        String motivo = why == null ? "erro" : why.replace('|', '/');   // '|' é o separador
+        try {
+            failPrefs(ctx).edit().putString(key, nome + "|" + System.currentTimeMillis() + "|" + motivo).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    /** Falhas ainda não mostradas ao usuário (chave → "<nome>|<epochMs>|<motivo>"). */
+    public static java.util.Map<String, String> failedEntries(Context ctx) {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        try {
+            for (java.util.Map.Entry<String, ?> e : failPrefs(ctx).getAll().entrySet()) {
+                if (e.getValue() instanceof String) out.put(e.getKey(), (String) e.getValue());
+            }
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    /** O JS já registrou esta falha → pode esquecer. */
+    public static void clearFail(Context ctx, String key) {
+        if (ctx == null || key == null) return;
+        try { failPrefs(ctx).edit().remove(key).apply(); } catch (Throwable ignored) {}
     }
 
     /** URI do MP4 já exportado dessa chave, ou null. Some se o arquivo foi apagado por fora. */
@@ -302,6 +342,7 @@ public final class ExportUtil {
         runningName = name;
         runningExpected = expectedBytes;
         cb = callback;
+        clearFail(ctx, key);   // tentativa nova: a falha antiga não deve ser reportada de novo
         // Guardados pro RETRY sem ap=pt (ver onError): o proxy remove as faixas de
         // áudio não-PT do master e, em alguns títulos, o que sobra não casa com o
         // grupo AUDIO= das variantes → o parser HLS recusa a playlist.
@@ -320,6 +361,17 @@ public final class ExportUtil {
                     // MediaMuxer nativo → não há SIGSEGV; formato não suportado vira
                     // MuxerException → onError (erro tratável, sem fechar o app).
                     .setMuxerFactory(new androidx.media3.transformer.InAppMuxer.Factory.Builder().build())
+                    // CAUSA RAIZ do "chega em 99% e morre" (ERROR_CODE_MUXING_TIMEOUT,
+                    // 7002 · "Abort: no output sample written in the last 10000 ms"): o
+                    // MuxerWrapper do Media3 aborta o export se ficar 10s sem escrever
+                    // amostra (DEFAULT_MAX_DELAY_BETWEEN_MUXER_SAMPLES_MS). Não é erro de
+                    // mídia, é watchdog — e a cauda do HLS (último segmento vindo devagar
+                    // do CDN atrás do anti-hotlink) + o InAppMuxer em Java puro, que é bem
+                    // mais lento que o MediaMuxer nativo que ele substituiu, estouram esse
+                    // limite com facilidade em arquivo grande. Desligado como o próprio
+                    // Media3 faz no ExperimentalAnalyzerModeFactory; erro REAL continua
+                    // chegando pelo onError e o usuário continua podendo cancelar na mão.
+                    .setMaxDelayBetweenMuxerSamplesMs(C.TIME_UNSET)
                     .addListener(new Transformer.Listener() {
                         @Override public void onCompleted(Composition c, ExportResult r) { publishAsync(ctx); }
                         @Override public void onError(Composition c, ExportResult r, ExportException e) { onExportError(e); }
@@ -450,7 +502,12 @@ public final class ExportUtil {
 
     private static void fail(String why) {
         Cb c = cb;
+        // Capturar ANTES do cleanup(), que zera runningKey/runningName.
+        final String key = runningKey != null ? runningKey : lastKey;
+        final String name = runningName != null ? runningName : lastName;
+        final Context ctx = lastCtx;
         cleanup();
+        rememberFail(ctx, key, name, why);   // sobrevive ao app fechado (ver failPrefs)
         if (c != null) c.failed(why);
         pump();     // libera a vez pro próximo da fila
     }
@@ -486,8 +543,15 @@ public final class ExportUtil {
                 if (livre > 0 && livre < precisa + (64L << 20))
                     throw new Exception("sem espaço no aparelho — o vídeo tem " + (precisa >> 20)
                         + " MB e só há " + (livre >> 20) + " MB livres; libere espaço e tente de novo");
+                // O poll morre aqui (publishAsync zera o `transformer`), então a barra e a
+                // notificação congelavam em 99% durante toda a cópia — que é a parte mais
+                // pesada. Diz o que está acontecendo em vez de parecer travado.
+                final String rotulo = name == null ? "" : name.replace(".mp4", "");
+                ConvertService.update(ctx, rotulo + " · salvando em Movies…", 100);
+                if (c != null) main.post(() -> c.progress(100));
                 Uri uri = publish(ctx, src, name);
                 prefs(ctx).edit().putString(key, uri.toString() + "|" + name).apply();
+                clearFail(ctx, key);
                 main.post(() -> {
                     cleanup();
                     if (c != null) c.done(uri, name);
@@ -497,9 +561,11 @@ public final class ExportUtil {
                     pump();     // próximo da fila
                 });
             } catch (Throwable t) {
+                final String motivo = "não consegui salvar em Movies: " + t.getMessage();
+                rememberFail(ctx, key, name, motivo);   // idem: pode falhar com o app fechado
                 main.post(() -> {
                     cleanup();
-                    if (c != null) c.failed("não consegui salvar em Movies: " + t.getMessage());
+                    if (c != null) c.failed(motivo);
                     pump();
                 });
             }

@@ -36,10 +36,14 @@ public class NativePlayerPlugin extends Plugin {
     }
 
     // Episódio/filme marcado como assistido (faltando 1 min pro fim, ou pelo botão).
-    public static void reportWatched(boolean watched) {
+    // `key` = tmdbId:type:season:ep do ep ATUAL: o player troca de episódio sem
+    // recriar a Activity (loadNextInPlace), então "assistido" sem chave chegava no JS
+    // e era aplicado no ep que abriu o player — marcando/desmarcando o errado.
+    public static void reportWatched(boolean watched, String key) {
         if (instance == null) return;
         JSObject d = new JSObject();
         d.put("watched", watched);
+        d.put("key", key);
         instance.notifyListeners("playerWatched", d);
     }
 
@@ -178,8 +182,12 @@ public class NativePlayerPlugin extends Plugin {
             res.put("next", result.getData().getBooleanExtra(PlayerActivity.RESULT_NEXT, false));
             res.put("server", result.getData().getBooleanExtra(PlayerActivity.RESULT_SERVER, false));
             res.put("recapture", result.getData().getBooleanExtra(PlayerActivity.RESULT_RECAPTURE, false));
-            if (result.getData().hasExtra(PlayerActivity.RESULT_WATCHED))
+            if (result.getData().hasExtra(PlayerActivity.RESULT_WATCHED)) {
                 res.put("watched", result.getData().getBooleanExtra(PlayerActivity.RESULT_WATCHED, false));
+                // A qual episódio o "watched" acima pertence — pode NÃO ser o que abriu
+                // o player (troca in-place). O JS grava nessa chave, não no ep de origem.
+                res.put("watchedKey", result.getData().getStringExtra(PlayerActivity.RESULT_WATCHED_KEY));
+            }
         }
         res.put("positionMs", pos);
         call.resolve(res);

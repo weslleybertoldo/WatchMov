@@ -289,6 +289,25 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     if (libItem) store.updateItem(libItem.id, { completed: true, watchedDuration: libItem.totalDuration, lastWatchedAt: new Date().toISOString() });
     setPlayer(null);
   };
+  // "Assistido" que o player NATIVO reportou, endereçado pela chave que ele mandou
+  // (`tmdbId:type:season:ep`) em vez de "o episódio que está no state". O player troca
+  // de episódio sem re-renderizar o React, então usar o state marcava o ep errado.
+  const setWatchedForKey = useCallback(async (key: string, v: boolean) => {
+    const p = (key || '').split(':');
+    if (Number(p[0]) !== media.tmdbId) return;   // evento de outro título → ignora
+    if (p[1] === 'tv') {
+      const seasonNum = Number(p[2]), ep = Number(p[3]);
+      if (!liveItem || !seasonNum || !ep) return;
+      store.setEpisodeWatched(liveItem.id, seasonNum, ep, v);
+      return;
+    }
+    const it = await ensureLib();
+    if (!it) return;
+    store.updateItem(it.id, v
+      ? { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() }
+      : { completed: false });
+  }, [media.tmdbId, liveItem, store, ensureLib]);
+
   const onSeriesCompleted = () => {
     if (!player?.season || !liveItem) { setPlayer(null); return; }
     store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true); // marca o atual
@@ -624,6 +643,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                   if (it) store.updateItem(it.id, v ? { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() } : { completed: false });
                 }
           }
+          onSetWatchedFor={setWatchedForKey}
           onNext={isSeries && hasNextEp ? onSeriesCompleted : undefined}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
