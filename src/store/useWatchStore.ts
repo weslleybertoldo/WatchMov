@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AppData, Section, WatchItem, Season, DashboardStats } from '@/types/watch';
 import { supabase } from '@/lib/supabase';
+import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
 
 // ── Helpers ──
@@ -365,6 +366,21 @@ export function useWatchStore(userId?: string) {
   const setEpisodeWatched = useCallback(async (itemId: string, seasonNumber: number, episode: number, watched: boolean) => {
     let updatedSeasons: Season[] | undefined;
     const lastWatchedAt = new Date().toISOString();
+    // A marcação abaixo é um NO-OP SILENCIOSO quando a ficha não tem a temporada: o
+    // map devolve tudo igual, sem erro e sem aviso, e o usuário fica achando que
+    // clicou errado. Acontece com ficha nascida antes de a TMDB carregar as temporadas
+    // (upsertLibraryItem nunca completa uma ficha existente). Não dá pra criar a
+    // temporada aqui — não sabemos o total de episódios — mas dá pra PARAR de sumir.
+    const fichaAtual = itemsRef.current.find(i => i.id === itemId);
+    if (fichaAtual && !(fichaAtual.seasons || []).some(s => s.number === seasonNumber)) {
+      supabase.from('wm_playback_errors').insert({
+        title: fichaAtual.title || itemId,
+        error_name: 'MARCAR_EP_SEM_TEMPORADA',
+        error_cause: `temporada ${seasonNumber} não existe na ficha (tentando ${watched ? 'marcar' : 'desmarcar'} o ep ${episode}) — marcação ignorada; a ficha nasceu sem a lista de temporadas`,
+        app_version: __APP_VERSION__,
+        platform: Capacitor.isNativePlatform() ? 'android' : 'web',
+      }).then(({ error }) => { if (error) console.warn('[bugs] log temporada ausente falhou', error.message); });
+    }
     setData(prev => {
       const items = prev.items.map(item => {
         if (item.id !== itemId || !item.seasons) return item;

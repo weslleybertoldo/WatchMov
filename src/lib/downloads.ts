@@ -31,10 +31,13 @@ function labelOf(key: string, title?: string): string {
 // episódio baixado nunca pegava, por caminho nenhum. O Index registra o aplicador.
 // Chave de resume/"assistido" do player nativo — a MESMA que o VideoPlayer usa.
 const resumeKeyOf = (m: DownloadMeta) => `${m.tmdbId}:${m.type}:${m.season ?? 0}:${m.ep ?? 0}`;
-let watchedReporter: ((key: string, watched: boolean) => void) | null = null;
-export function setWatchedReporter(fn: ((key: string, watched: boolean) => void) | null) {
-  watchedReporter = fn;
-}
+// ⚠️ A ponte é de MÃO DUPLA de propósito. Só aplicar o resultado (`set`) sem mandar o
+// estado atual (`get`) seria PIOR que não fazer nada: o nativo assume `watched=false`
+// ao abrir, e fechar um episódio já marcado devolveria `false` — desmarcando ele.
+// Com o `get`, o player abre com o ✓ certo, o primeiro toque desmarca (em vez de
+// marcar e pular pro fim) e o resultado do fechamento é confiável.
+let watchedBridge: { get: (key: string) => boolean; set: (key: string, watched: boolean) => void } | null = null;
+export function setWatchedBridge(b: typeof watchedBridge) { watchedBridge = b; }
 
 export const movieKey = (tmdbId: number) => `m:${tmdbId}`;
 export const epKey = (tmdbId: number, season: number, ep: number) => `e:${tmdbId}:${season}:${ep}`;
@@ -273,12 +276,13 @@ export async function playDownloaded(key: string): Promise<boolean> {
         // via proxy local; aqui a URI JÁ é o arquivo. downloaded só acende o rótulo.
         url: uri, mime: 'video/mp4', title: meta.title, startMs: start,
         offline: false, downloaded: true,
-        key: `${meta.tmdbId}:${meta.type}:${meta.season ?? 0}:${meta.ep ?? 0}`,
+        key: resumeKeyOf(meta),
+        watched: watchedBridge?.get(resumeKeyOf(meta)) ?? false,
       });
       if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
       // `watchedKey` diz de qual ep o player está falando (ele troca de episódio sem
       // fechar); sem ela, cai na chave deste.
-      if (res && typeof res.watched === 'boolean') watchedReporter?.(res.watchedKey || resumeKeyOf(meta), res.watched);
+      if (res && typeof res.watched === 'boolean') watchedBridge?.set(res.watchedKey || resumeKeyOf(meta), res.watched);
       notify();
       return true;
     }
@@ -302,11 +306,12 @@ export async function playDownloaded(key: string): Promise<boolean> {
     const res = await playNative({
       url: meta.url, referer: meta.referer, mime: meta.mime, title: meta.title,
       startMs, offline: true, key: resumeKey, hasNext,
+      watched: watchedBridge?.get(resumeKey) ?? false,
     });
     if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
     // Idem do ramo do MP4: sem isto, marcar "assistido" num episódio baixado sumia.
     // Aqui a chave importa DE VERDADE — o encadeamento abaixo troca de episódio.
-    if (res && typeof res.watched === 'boolean') watchedReporter?.(res.watchedKey || resumeKey, res.watched);
+    if (res && typeof res.watched === 'boolean') watchedBridge?.set(res.watchedKey || resumeKey, res.watched);
     // "Próximo" no player → toca o episódio seguinte JÁ BAIXADO (encadeia offline).
     if (res?.next && nextKey) { handle?.remove(); handle = null; await playDownloaded(nextKey); }
   } finally {
