@@ -68,7 +68,11 @@ public class NativePlayerPlugin extends Plugin {
     // sem fechar a Activity (a sessão de espelhamento continua viva). Devolve false
     // se não há JS escutando — aí o player usa o fluxo antigo (fecha devolvendo next).
     public static boolean requestNext() {
-        if (instance == null) return false;
+        // `instance != null` só diz que o plugin carregou, NÃO que alguém escuta — e o
+        // player usava esse true pra esperar 9s por uma resposta que podia não vir
+        // nunca. Agora só promete resposta se houver ouvinte de fato; sem ouvinte, o
+        // player cai NA HORA no fluxo antigo em vez de congelar.
+        if (instance == null || !instance.hasListeners("playerNext")) return false;
         instance.notifyListeners("playerNext", new JSObject());
         return true;
     }

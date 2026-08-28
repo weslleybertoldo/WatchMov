@@ -2,7 +2,7 @@ import { useEffect, useReducer } from 'react';
 import { Downloader, downloadsNative, type DownloadItem } from './downloader';
 import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
-import { playNative, onPlayerProgress } from './nativePlayer';
+import { playNative, onPlayerProgress, onPlayerNext, loadNextNative } from './nativePlayer';
 import { upsertNotice } from './appNotices';
 import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4, reconcileMp4 } from './mp4Download';
 
@@ -296,26 +296,68 @@ export async function playDownloaded(key: string): Promise<boolean> {
   // — sem isso, quem abre pela aba Download nunca via a opção (nem no espelhamento).
   const nextKey = (meta.type === 'tv' && meta.season != null && meta.ep != null)
     ? epKey(meta.tmdbId, meta.season, meta.ep + 1) : null;
-  const hasNext = !!nextKey && items.get(nextKey)?.state === 'completed';
+  const hasNext = !!nextKey && completedSet().has(nextKey);
+  // Episódio que o player está tocando AGORA. Muda no handoff in-place abaixo — sem
+  // isto o progresso do ep novo era gravado na chave do ep que abriu o player.
+  let atual = meta;
+  let atualKey = resumeKey;
   // Salva a posição a cada ~5s (igual ao fluxo normal): se o app morrer, não perde.
   let handle: { remove: () => void } | null = null;
   onPlayerProgress?.(({ positionMs, durationMs }) => {
-    if (positionMs > 0) setStreamPosition(positionMs, meta.tmdbId, meta.type, meta.season, meta.ep, durationMs);
+    if (positionMs > 0) setStreamPosition(positionMs, atual.tmdbId, atual.type, atual.season, atual.ep, durationMs);
   })?.then(h => { handle = h; }).catch(() => {});
+
+  // CAUSA RAIZ do "Próximo trava 9s e derruba o espelhamento": ao tocar em Próximo, o
+  // player pergunta ao JS qual é o link do próximo ep (evento playerNext) e ESPERA a
+  // resposta. Só que quem respondia era o VideoPlayer — e episódio baixado não passa
+  // por ele (playEpisode desvia pra cá). Ninguém respondia, o player ficava 9s parado
+  // até o nextTimeout desistir, e então FECHAVA pra reabrir: Activity nova, sessão de
+  // cast largada pra trás (activeCastKey velho, celular tocando em paralelo com a TV).
+  // Respondendo aqui, a troca é in-place: sem espera, sem Activity nova, cast vivo.
+  let nextHandle: { remove: () => void } | null = null;
+  onPlayerNext?.(() => {
+    const k = (atual.type === 'tv' && atual.season != null && atual.ep != null)
+      ? epKey(atual.tmdbId, atual.season, atual.ep + 1) : null;
+    const m = k ? getDownloadMeta()[k] : undefined;
+    // Handoff in-place exige o cache do Media3 (a URL é http e o proxy serve do disco).
+    // Baixado SÓ em MP4 é content:// e precisa de resolução async → responde "não achei"
+    // e o player cai NA HORA no fluxo antigo, que o encadeamento abaixo cobre.
+    if (!k || !m?.url || items.get(k)?.state !== 'completed') { loadNextNative({}); return; }
+    const seguinte = (m.season != null && m.ep != null) ? epKey(m.tmdbId, m.season, m.ep + 1) : null;
+    const kNovo = `${m.tmdbId}:${m.type}:${m.season ?? 0}:${m.ep ?? 0}`;
+    loadNextNative({
+      url: m.url, referer: m.referer, mime: m.mime, title: m.title,
+      key: kNovo, startMs: 0, offline: true, downloaded: true,
+      hasNext: !!seguinte && completedSet().has(seguinte),
+      watched: watchedBridge?.get(kNovo) ?? false,
+    });
+    atual = m; atualKey = kNovo;   // daqui pra frente posição/assistido são DESTE ep
+  })?.then(h => { nextHandle = h; }).catch(() => {});
+
   try {
     const res = await playNative({
       url: meta.url, referer: meta.referer, mime: meta.mime, title: meta.title,
       startMs, offline: true, key: resumeKey, hasNext,
       watched: watchedBridge?.get(resumeKey) ?? false,
     });
-    if (res && res.positionMs > 0) setStreamPosition(res.positionMs, meta.tmdbId, meta.type, meta.season, meta.ep);
+    if (res && res.positionMs > 0) setStreamPosition(res.positionMs, atual.tmdbId, atual.type, atual.season, atual.ep);
     // Idem do ramo do MP4: sem isto, marcar "assistido" num episódio baixado sumia.
-    // Aqui a chave importa DE VERDADE — o encadeamento abaixo troca de episódio.
-    if (res && typeof res.watched === 'boolean') watchedBridge?.set(res.watchedKey || resumeKey, res.watched);
-    // "Próximo" no player → toca o episódio seguinte JÁ BAIXADO (encadeia offline).
-    if (res?.next && nextKey) { handle?.remove(); handle = null; await playDownloaded(nextKey); }
+    // Aqui a chave importa DE VERDADE — o handoff acima troca de episódio.
+    if (res && typeof res.watched === 'boolean') watchedBridge?.set(res.watchedKey || atualKey, res.watched);
+    // Fluxo antigo (o player fechou pedindo o próximo): só sobra pro caso que o handoff
+    // recusou — próximo ep baixado apenas em MP4. Segue a partir do ep ATUAL.
+    if (res?.next) {
+      const k = (atual.type === 'tv' && atual.season != null && atual.ep != null)
+        ? epKey(atual.tmdbId, atual.season, atual.ep + 1) : null;
+      if (k && completedSet().has(k)) {
+        handle?.remove(); handle = null;
+        nextHandle?.remove(); nextHandle = null;
+        await playDownloaded(k);
+      }
+    }
   } finally {
     handle?.remove();
+    nextHandle?.remove();
     notify();   // atualiza a barra da aba na volta
   }
   return true;
