@@ -20,6 +20,7 @@ import SettingsView, { type WatchedStats } from '@/components/streaming/Settings
 import NoticesView from '@/components/streaming/NoticesView';
 import { useNotices } from '@/lib/appNotices';
 import { startMp4Listener, useMp4All } from '@/lib/mp4Download';
+import { startPlaybackErrorLog } from '@/lib/playbackLog';
 import { useDownloadList, setWatchedBridge } from '@/lib/downloads';
 import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
@@ -137,6 +138,10 @@ export default function Index() {
   const [noticesOpen, setNoticesOpen] = useState(false);
   const { unread: unreadNotices } = useNotices();
   useEffect(() => { startMp4Listener(); }, []);     // avisos de conversão desde o boot
+  // Registro da aba Bugs desde o boot. Antes vivia dentro do VideoPlayer, que
+  // episódio BAIXADO nunca monta — então erro de reprodução (e os diagnósticos de
+  // cast) daquele caminho se perdiam e a aba vazia parecia "não deu erro".
+  useEffect(() => { startPlaybackErrorLog(); }, []);
   // Badge do sino = avisos não lidos + o que está EM ANDAMENTO. Abrir o sino zera
   // os lidos, mas enquanto um download/conversão roda o número continua lá — some
   // só quando termina E o aviso de conclusão é visto.

@@ -13,7 +13,7 @@ import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlay
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { downloadAsMp4, useMp4, removeMp4 } from '@/lib/mp4Download';
-import { supabase } from '@/lib/supabase';
+import { setLogProvider } from '@/lib/playbackLog';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
 // no reprodutor se já tiver link capturado.
@@ -211,6 +211,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     return available.find(p => p.id === 'superflix')?.id ?? available[0]?.id ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
+  // O provedor é escolha do JS — o registro global (playbackLog) não tem como saber.
+  // Zera ao fechar pra não carimbar erro de episódio BAIXADO com a fonte antiga.
+  useEffect(() => { setLogProvider(open ? (providerId ?? null) : null); }, [open, providerId]);
 
   const directMode = !!directUrl || !!torrent;
 
@@ -486,18 +489,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         removeStream(e.url, tmdbId, type, season, episode);
         setCapturedList(prev => prev.filter(s => streamKey(s.url) !== streamKey(e.url!)));
       }
-      supabase.from('wm_playback_errors').insert({
-        title: e.title ?? title ?? null,
-        provider: providerId ?? null,
-        url: e.url ?? null,
-        referer: e.referer ?? null,
-        mime: e.mime ?? null,
-        error_code: typeof e.code === 'number' ? e.code : null,
-        error_name: e.name ?? null,
-        error_cause: e.cause ?? null,
-        app_version: __APP_VERSION__,
-        platform: 'android',
-      }).then(({ error }) => { if (error) console.warn('[bugs] log falhou', error.message); });
+      // O INSERT na aba Bugs saiu daqui: mora em playbackLog.ts, registrado no boot
+      // pelo Index. Ficando só aqui, todo erro de episódio BAIXADO se perdia — o
+      // playDownloaded abre o player sem montar este componente. Aqui sobra só a
+      // lógica de lista, que é do picker e não faz sentido fora dele.
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
     // tmdbId/type/season/episode nas deps: o callback usa essas chaves pra remover o
