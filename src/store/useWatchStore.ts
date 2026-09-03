@@ -364,7 +364,6 @@ export function useWatchStore(userId?: string) {
   // Marca/desmarca um episódio específico (por número de temporada + episódio).
   // Mantém watchedEpisodes = watchedList.length pra stats/seletor de "continuar".
   const setEpisodeWatched = useCallback(async (itemId: string, seasonNumber: number, episode: number, watched: boolean) => {
-    let updatedSeasons: Season[] | undefined;
     const lastWatchedAt = new Date().toISOString();
     // A marcação abaixo é um NO-OP SILENCIOSO quando a ficha não tem a temporada: o
     // map devolve tudo igual, sem erro e sem aviso, e o usuário fica achando que
@@ -381,29 +380,44 @@ export function useWatchStore(userId?: string) {
         platform: Capacitor.isNativePlatform() ? 'android' : 'web',
       }).then(({ error }) => { if (error) console.warn('[bugs] log temporada ausente falhou', error.message); });
     }
+    // Aplica a marcação de forma PURA — a mesma função serve pro state e pro banco.
+    const aplicar = (seasons: Season[] | undefined): Season[] | undefined => seasons?.map(s => {
+      if (s.number !== seasonNumber) return s;
+      const base = s.watchedList ?? Array.from({ length: s.watchedEpisodes || 0 }, (_, i) => i + 1);
+      const set = new Set(base);
+      if (watched) set.add(episode); else set.delete(episode);
+      const list = Array.from(set).sort((a, b) => a - b);
+      return { ...s, watchedList: list, watchedEpisodes: list.length };
+    });
+    // ⚠️ O payload do banco é calculado AQUI (último estado conhecido + esta marcação) e o
+    // itemsRef é atualizado NA HORA. Antes o payload era lido de itemsRef DENTRO da fila de
+    // escrita, e o ref só é sincronizado num useEffect (depois do render): chamado por
+    // evento do player NATIVO (Capacitor, fora de evento React), a escrita rodava ANTES do
+    // render e mandava a lista VELHA de episódios pro banco — o ✓ aparecia na tela e no
+    // cache local, mas o Supabase ficava sem ele, e ao reabrir/atualizar o app o banco
+    // vencia ("o E37 estava concluído e quando atualizei saiu", 03/09). Clique na web
+    // (evento React) não sofria: o effect é flushado na hora — por isso remarcar à mão
+    // "funcionava". Com a fila serializada por item, mandar o snapshot desta chamada é
+    // seguro: a próxima marcação parte do ref já atualizado (superconjunto).
+    let nextSeasons = fichaAtual ? aplicar(fichaAtual.seasons) : undefined;
+    if (fichaAtual && nextSeasons) {
+      const atualizadas = nextSeasons;
+      itemsRef.current = itemsRef.current.map(i => i.id === itemId ? { ...i, seasons: atualizadas, lastWatchedAt } : i);
+    }
     setData(prev => {
       const items = prev.items.map(item => {
         if (item.id !== itemId || !item.seasons) return item;
-        const seasons = item.seasons.map(s => {
-          if (s.number !== seasonNumber) return s;
-          const base = s.watchedList ?? Array.from({ length: s.watchedEpisodes || 0 }, (_, i) => i + 1);
-          const set = new Set(base);
-          if (watched) set.add(episode); else set.delete(episode);
-          const list = Array.from(set).sort((a, b) => a - b);
-          return { ...s, watchedList: list, watchedEpisodes: list.length };
-        });
-        updatedSeasons = seasons;
+        const seasons = aplicar(item.seasons) ?? item.seasons;
+        if (!nextSeasons) nextSeasons = seasons;   // ficha recém-criada, ainda fora do ref
         return { ...item, seasons, lastWatchedAt };
       });
       return { ...prev, items };
     });
-    if (updatedSeasons) {
-      const snapshot = updatedSeasons;
+    if (nextSeasons) {
+      const snapshot = nextSeasons;
       enqueueItemWrite(itemId, async () => {
-        const current = itemsRef.current.find(i => i.id === itemId);
-        const seasons = current?.seasons ?? snapshot;
         const { error } = await supabase.from('wm_items')
-          .update({ seasons, last_watched_at: lastWatchedAt }).eq('id', itemId);
+          .update({ seasons: snapshot, last_watched_at: lastWatchedAt }).eq('id', itemId);
         if (error) { reportDbError('salvar episodio', error); loadFromDB(); }
       });
     }

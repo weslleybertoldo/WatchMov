@@ -121,14 +121,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         @Override public void run() {
             // Salva a posição a cada 5s (robusto — não depende só do fechar).
             saveResume();
-            if (player != null && player.getCurrentPosition() > 0) {
-                NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition(), player.getDuration());
-            }
-            // "Assistido" automático: quando falta ≤1 min pro fim.
-            if (!watched && !userUnwatched && player != null) {
-                long dur = player.getDuration(), pos = player.getCurrentPosition();
-                if (dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
-            }
+            // Espelhando, posição/duração são as da TV (curPosMs/curDurMs) — o player local
+            // fica pausado onde o cast começou; reportar ELE deixava o episódio "na metade"
+            // no app mesmo com a TV nos minutos finais (bug 03/09).
+            long pos = curPosMs(), dur = curDurMs();
+            if (pos > 0) NativePlayerPlugin.reportProgress(currentUrl, pos, dur);
+            // "Assistido" automático: quando falta ≤1 min pro fim (na TV também).
+            if (!watched && !userUnwatched && dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
             refreshMediaNotification();   // posição fresca na barra de progresso da notificação
             progressHandler.postDelayed(this, 5000);
         }
@@ -673,9 +672,22 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     }
 
     private void saveResume() {
-        if (resumeKey == null || resumePrefs == null || player == null) return;
-        long pos = player.getCurrentPosition();
+        if (resumeKey == null || resumePrefs == null) return;
+        long pos = curPosMs();
         if (pos > 3000) resumePrefs.edit().putLong(resumeKey, pos).apply();
+    }
+
+    // Posição/duração do que o usuário está VENDO: a TV quando espelhando (o player local
+    // fica pausado/mudo onde o cast começou), senão o player local. É o que vale pra salvar
+    // o "continuar de onde parou", reportar progresso ao app e marcar assistido automático.
+    private long curPosMs() {
+        if (castMode != CAST_NONE && lastRemotePosMs > 0) return lastRemotePosMs;
+        return player != null ? Math.max(0, player.getCurrentPosition()) : 0;
+    }
+
+    private long curDurMs() {
+        if (castMode != CAST_NONE && lastRemoteDurMs > 0) return lastRemoteDurMs;
+        return player != null && player.getDuration() > 0 ? player.getDuration() : 0;
     }
 
     // Posição (0-based) do link atual dentro de urls[] — pro contador "X/N".
@@ -2232,7 +2244,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void finishWithResult(boolean next, boolean server, boolean recapture) {
         saveResume();
         Intent data = new Intent();
-        if (player != null) data.putExtra(RESULT_POSITION, player.getCurrentPosition());
+        data.putExtra(RESULT_POSITION, curPosMs());   // espelhando = posição da TV
         data.putExtra(RESULT_URL, currentUrl);
         data.putExtra(RESULT_NEXT, next);
         data.putExtra(RESULT_SERVER, server);
@@ -2252,9 +2264,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         saveResume();
         // Back moderno/gesto/home nem sempre chama onBackPressed → salva aqui também.
         if (!resultSaved && player != null) {
-            NativePlayerPlugin.reportProgress(currentUrl, player.getCurrentPosition(), player.getDuration());
+            NativePlayerPlugin.reportProgress(currentUrl, curPosMs(), curDurMs());
             Intent data = new Intent();
-            data.putExtra(RESULT_POSITION, player.getCurrentPosition());
+            data.putExtra(RESULT_POSITION, curPosMs());
             data.putExtra(RESULT_URL, currentUrl);
             data.putExtra(RESULT_WATCHED, watched);
             data.putExtra(RESULT_WATCHED_KEY, resumeKey);
