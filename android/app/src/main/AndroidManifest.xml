@@ -71,6 +71,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Notificação de mídia do player/espelhamento: ⏯ (+ ⏭ em série) na barra e
+             na tela bloqueada; mantém o processo vivo enquanto a TV toca em background -->
+        <service
+            android:name=".MediaNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -92,6 +99,8 @@
     <!-- Downloads offline (foreground service Media3) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Notificação de mídia (Android 14+ exige o tipo do foreground service) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Exportar o baixado pra Movies/WatchMov: só Android ≤ 9 precisa (10+ usa MediaStore) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"

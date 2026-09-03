@@ -308,14 +308,22 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
       : { completed: false });
   }, [media.tmdbId, liveItem, store, ensureLib]);
 
-  const onSeriesCompleted = () => {
+  // Avança pro próximo episódio. `markCurrent` = marcar o ATUAL como assistido antes de
+  // seguir — só quando o vídeo terminou de verdade (onCompleted). O ⏭ (onNext) NÃO
+  // marca: pular pro próximo não é ter assistido. Quem baixava episódio por episódio
+  // no modo servidor (⤓ na lista de links → ⏭ pro seguinte) ficava com a temporada
+  // "concluída" sem ter visto nada (Shangri-La E36/37/39/40, 03/09). Assistido =
+  // faltar 1 min no player nativo, ✓ manual ou fim real do vídeo.
+  const advanceEpisode = (markCurrent: boolean) => {
     if (!player?.season || !liveItem) { setPlayer(null); return; }
-    store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true); // marca o atual
+    if (markCurrent) store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true);
     const season = liveItem.seasons?.find(s => s.number === player.season);
     const nextEp = (player.episode || 1) + 1;
-    if (season && nextEp <= season.totalEpisodes) playEpisode(player.season, nextEp); // abre+marca o próximo
+    if (season && nextEp <= season.totalEpisodes) playEpisode(player.season, nextEp);
     else setPlayer(null);
   };
+  const onSeriesCompleted = () => advanceEpisode(true);   // vídeo acabou → marca e segue
+  const onSeriesNext = () => advanceEpisode(false);       // ⏭ → só segue
 
   const movieWatched = !isSeries && !!liveItem?.completed;
 
@@ -644,7 +652,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                 }
           }
           onSetWatchedFor={setWatchedForKey}
-          onNext={isSeries && hasNextEp ? onSeriesCompleted : undefined}
+          onNext={isSeries && hasNextEp ? onSeriesNext : undefined}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />

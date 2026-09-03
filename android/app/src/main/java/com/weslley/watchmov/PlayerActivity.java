@@ -48,7 +48,7 @@ import java.util.Map;
  * que some junto com os controles e um seletor pra trocar de link sem sair.
  */
 @UnstableApi
-public class PlayerActivity extends Activity {
+public class PlayerActivity extends Activity implements MediaNotificationService.Controller {
 
     public static final String EXTRA_URL = "url";
     public static final String EXTRA_URLS = "urls";
@@ -129,6 +129,7 @@ public class PlayerActivity extends Activity {
                 long dur = player.getDuration(), pos = player.getCurrentPosition();
                 if (dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
             }
+            refreshMediaNotification();   // posição fresca na barra de progresso da notificação
             progressHandler.postDelayed(this, 5000);
         }
     };
@@ -458,9 +459,11 @@ public class PlayerActivity extends Activity {
             @Override public void onVideoSizeChanged(VideoSize size) {
                 if (size.height > 0) {
                     qualityBtn.setText(size.height + "p");
+                    localVideoH = size.height;   // MP4 no cast: é a altura do arquivo (não tem variantes)
                     NativePlayerPlugin.reportQuality(currentUrl, size.height);
                 }
             }
+            @Override public void onIsPlayingChanged(boolean isPlaying) { refreshMediaNotification(); }
             @Override public void onPlayerError(PlaybackException error) {
                 // Detalha o motivo (código + causa: ex. "Response code: 403", codec, etc.)
                 // pra diagnosticar o SuperFlix — o Weslley manda esse texto.
@@ -515,6 +518,7 @@ public class PlayerActivity extends Activity {
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
+                refreshMediaNotification();
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
                 else if (state == androidx.media3.common.Player.STATE_BUFFERING) {
                     int i = linkIndex(), n = urls != null ? urls.length : 0;
@@ -594,6 +598,12 @@ public class PlayerActivity extends Activity {
                 if (player != null) { player.setVolume(1f); player.setPlayWhenReady(true); }
             }
         }
+
+        // Notificação de mídia (barra + tela bloqueada): ⏯ e, em série, ⏭ — controla o
+        // local OU a TV com o celular bloqueado/em outro app. Vive enquanto o player vive.
+        MediaNotificationService.setController(this);
+        ensureNotifPermission();
+        refreshMediaNotification();
     }
 
     // Toggle do botão "assistido": marca (e pula p/ faltar 1 min, como pedido) ou
@@ -658,6 +668,9 @@ public class PlayerActivity extends Activity {
         currentUrl = url;
         ProxyServer.currentTitle = mTitle;   // rótulo dos eventos que o proxy emite (CAST_MASTER_INFO)
         errorHandled = false; // novo link → volta a permitir tratar erro
+        // Link novo = qualidade entregue desconhecida até o proxy/player dizerem.
+        localVideoH = 0; castDeliveredH = 0; fileHeightPending = false;
+        updateCastQualityLabel();
         // O mime capturado nem sempre chega certo (SuperFlix/EmbedPlay servem HLS como
         // text/plain em master.txt/`/m3/` sem extensão). Se o mime já diz HLS/DASH,
         // usa direto; senão SNIFFA os bytes reais (OkHttp descomprime gzip) e decide
@@ -1063,6 +1076,9 @@ public class PlayerActivity extends Activity {
     private Button castPlayBtn;
     private Button castQualityBtn;             // "Qualidade: Máx/720p" no overlay do cast
     private int castQualityH = 0;              // altura escolhida pro cast (0 = maior bandwidth)
+    private int castDeliveredH = 0;            // altura que a TV está RECEBENDO (proxy no HLS; arquivo no MP4)
+    private int localVideoH = 0;               // altura reportada pelo player local (onVideoSizeChanged)
+    private boolean fileHeightPending = false; // já tem thread lendo a altura do arquivo (MediaMetadataRetriever)
     private Button volBtn;                     // "🔊 Volume" — mostra/esconde a barra
     private android.widget.SeekBar volSeek;    // 0–100 → volume da TV
     private boolean volSeeking = false;
@@ -1129,6 +1145,8 @@ public class PlayerActivity extends Activity {
         updatePlayIcon(true);
         progressHandler.removeCallbacks(castPoll);
         progressHandler.postDelayed(castPoll, 800);
+        refreshCastDeliveredHeight();   // "Qualidade: 720p" assim que o proxy/arquivo souber
+        refreshMediaNotification();     // notificação passa a falar da TV
     }
 
     // Seek no DLNA COM CONFIRMAÇÃO. Um Seek logo após o Play é recusado/ignorado
@@ -1286,6 +1304,8 @@ public class PlayerActivity extends Activity {
         castSilentStart = false;                  // sem espelho, o local volta a tocar
         if (player != null) player.setVolume(1f); // restaura o áudio local
         if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
+        castDeliveredH = 0; updateCastQualityLabel();   // próximo cast recomeça sem valor velho
+        refreshMediaNotification();               // notificação volta a falar do local
     }
 
     private void remotePlayPause() {
@@ -1528,8 +1548,60 @@ public class PlayerActivity extends Activity {
         }).start();
     }
 
+    // Rótulo do botão = qualidade ATUAL na TV: a variante que o proxy ENTREGOU (HLS) ou
+    // a altura do arquivo (MP4). Enquanto ninguém confirmou (segundos após o envio) cai
+    // na escolhida pelo usuário; sem nada = "Máx" (padrão: maior bandwidth). Antes
+    // mostrava "Máx" fixo — não dizia se a TV estava em 720p ou 360p.
     private void updateCastQualityLabel() {
-        if (castQualityBtn != null) castQualityBtn.setText(castQualityH > 0 ? "Qualidade: " + castQualityH + "p" : "Qualidade: Máx");
+        if (castQualityBtn == null) return;
+        String q = castDeliveredH > 0 ? castDeliveredH + "p" : castQualityH > 0 ? castQualityH + "p" : "Máx";
+        castQualityBtn.setText("Qualidade: " + q);
+    }
+
+    // Descobre a altura que a TV está recebendo e atualiza o rótulo quando mudar.
+    // HLS: o proxy registra a variante que serviu no master do cast (prewarm já
+    // preenche; a TV pede o master logo após o SetAVTransportURI). MP4/arquivo: não há
+    // variantes — usa a altura que o player local reportou ou lê o arquivo (thread).
+    private void refreshCastDeliveredHeight() {
+        if (castMode == CAST_NONE || currentUrl == null) return;
+        int h = ProxyServer.deliveredHeight(currentUrl);
+        if (h <= 0 && !isHlsCurrent()) {
+            if (localVideoH > 0) h = localVideoH;
+            else if (!fileHeightPending) { fileHeightPending = true; readFileHeightAsync(currentUrl); }
+        }
+        if (h != castDeliveredH) { castDeliveredH = h; updateCastQualityLabel(); }
+    }
+
+    private void readFileHeightAsync(final String url) {
+        new Thread(() -> {
+            int h = 0;
+            android.media.MediaMetadataRetriever mr = new android.media.MediaMetadataRetriever();
+            try {
+                if (url.startsWith("content://")) mr.setDataSource(this, android.net.Uri.parse(url));
+                else if (url.startsWith("file://")) mr.setDataSource(new java.net.URI(url).getPath());
+                else return;   // MP4 de rede: ler custaria baixar — fica com o player local (onVideoSizeChanged)
+                String s = mr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+                if (s != null) h = Integer.parseInt(s.trim());
+            } catch (Exception ignored) {
+            } finally {
+                try { mr.release(); } catch (Exception ignored) {}
+                final int fh = h;
+                runOnUiThread(() -> {
+                    fileHeightPending = false;
+                    if (fh > 0 && url.equals(currentUrl) && castMode != CAST_NONE && localVideoH <= 0) localVideoH = fh;
+                    refreshCastDeliveredHeight();
+                });
+            }
+        }).start();
+    }
+
+    // O link ATUAL é HLS (master com variantes) ou arquivo único (MP4/content://)?
+    private boolean isHlsCurrent() {
+        String url = currentUrl;
+        boolean rede = url != null && (url.startsWith("http://") || url.startsWith("https://"));
+        String lu = url != null ? url.toLowerCase() : "";
+        return rede && ((mMime != null && mMime.toLowerCase().contains("mpegurl"))
+            || lu.contains(".m3u8") || lu.contains("master") || lu.contains("/m3/") || lu.contains(".txt") || lu.contains("playlist"));
     }
 
     // Qualidade NA TV. O proxy entrega UMA variante pro cast (a TV não faz ABR):
@@ -1539,11 +1611,10 @@ public class PlayerActivity extends Activity {
     private void showCastQuality() {
         if (castMode == CAST_NONE) { castMsg("Só vale com a TV conectada", 2500); return; }
         final String url = currentUrl;
-        boolean rede = url != null && (url.startsWith("http://") || url.startsWith("https://"));
-        String lu = url != null ? url.toLowerCase() : "";
-        boolean hls = rede && ((mMime != null && mMime.toLowerCase().contains("mpegurl"))
-            || lu.contains(".m3u8") || lu.contains("master") || lu.contains("/m3/") || lu.contains(".txt") || lu.contains("playlist"));
-        if (!hls) { castMsg("Este vídeo é arquivo único (MP4) — não tem variantes de qualidade", 4000); return; }
+        if (!isHlsCurrent()) {
+            castMsg("Este vídeo é arquivo único (MP4" + (castDeliveredH > 0 ? " em " + castDeliveredH + "p" : "") + ") — não tem variantes de qualidade", 4000);
+            return;
+        }
         castMsg("Lendo qualidades do vídeo…", 0);
         final String ref = mReferer;
         new Thread(() -> {
@@ -1555,7 +1626,7 @@ public class PlayerActivity extends Activity {
                 if (castMsgTv != null) castMsgTv.setVisibility(View.GONE);
                 if (fv.isEmpty()) { castMsg("Não achei variantes no master deste link", 4000); return; }
                 final String[] labels = new String[fv.size() + 1];
-                labels[0] = "Máxima (padrão)" + (castQualityH == 0 ? "   ✓" : "");
+                labels[0] = "Máxima (padrão)" + (castQualityH == 0 && castDeliveredH > 0 ? " = " + castDeliveredH + "p" : "") + (castQualityH == 0 ? "   ✓" : "");
                 for (int i = 0; i < fv.size(); i++) {
                     int[] v = fv.get(i);
                     labels[i + 1] = (v[0] > 0 ? v[0] + "p" : "?") + "  ·  " + (v[1] / 1000) + " kbps" + (castQualityH == v[0] ? "   ✓" : "");
@@ -1564,6 +1635,9 @@ public class PlayerActivity extends Activity {
                     int h = i == 0 ? 0 : fv.get(i - 1)[0];
                     if (h == castQualityH) return;
                     castQualityH = h;
+                    // Até a TV pedir o master de novo, o valor "entregue" é o da qualidade
+                    // anterior → esquece e mostra a escolhida; o poll confirma depois.
+                    castDeliveredH = 0; ProxyServer.forgetDelivered(url);
                     updateCastQualityLabel();
                     castMsg("Trocando qualidade na TV…", 4000);
                     NativePlayerPlugin.reportError(url, 0, 0, "CAST_QUALIDADE",
@@ -1575,7 +1649,10 @@ public class PlayerActivity extends Activity {
         }).start();
     }
 
-    private void updatePlayIcon(boolean playing) { if (castPlayBtn != null) castPlayBtn.setText(playing ? "⏸" : "▶"); }
+    private void updatePlayIcon(boolean playing) {
+        if (castPlayBtn != null) castPlayBtn.setText(playing ? "⏸" : "▶");
+        refreshMediaNotification();   // ⏯ da notificação acompanha o estado real da TV
+    }
 
     // Reflete a posição do remoto na barra (em segundos); não mexe enquanto o user arrasta.
     private void updateCastSeek() {
@@ -1597,6 +1674,7 @@ public class PlayerActivity extends Activity {
                 if (r != null) { lastRemotePosMs = r.getApproximateStreamPosition(); lastRemoteDurMs = r.getStreamDuration(); updatePlayIcon(r.isPlaying()); }
                 if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
                 updateCastSeek();
+                refreshCastDeliveredHeight();
                 progressHandler.postDelayed(this, 1000);
             } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
                 final String c = dlnaCtrl;
@@ -1638,6 +1716,7 @@ public class PlayerActivity extends Activity {
                         if (watchdogTick(fst, fstatus, f)) return;   // reenviou → startCasting já reagendou o poll
                         if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
                         updateCastSeek();
+                        refreshCastDeliveredHeight();   // proxy já serviu o master → "Qualidade: 720p"
                         progressHandler.postDelayed(castPoll, 1500); // próximo ciclo só agora
                     });
                 }).start();
@@ -2031,6 +2110,7 @@ public class PlayerActivity extends Activity {
             castSilentStart = activeCastMode != CAST_NONE;
             playUrl(url, mime, start);
             if (activeCastMode != CAST_NONE) recastCurrent(start);
+            refreshMediaNotification();   // título/⏭ do novo episódio
         });
     }
 
@@ -2073,6 +2153,9 @@ public class PlayerActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (current == this) current = null;
+        // Fechou o player → some a notificação (mesmo com o espelhamento seguindo na TV).
+        MediaNotificationService.clearController(this);
+        MediaNotificationService.hide(this);
         awaitingNext = false;
         progressHandler.removeCallbacks(nextTimeout);
         progressHandler.removeCallbacks(progressTick);
@@ -2082,6 +2165,64 @@ public class PlayerActivity extends Activity {
             castSessionManager.removeSessionManagerListener(castSessionListener, com.google.android.gms.cast.framework.CastSession.class);
         }
         super.onDestroy();
+    }
+
+    // ---- Notificação de mídia (MediaNotificationService.Controller) ----
+    // Os botões da notificação/tela bloqueada caem aqui, na UI thread.
+
+    @Override public void onNotifSetPlaying(boolean play) {
+        if (castMode == CAST_CC) {
+            com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+            if (r != null) { if (play) r.play(); else r.pause(); }
+        } else if (castMode == CAST_DLNA) {
+            if (play == dlnaPaused) remotePlayPause();   // remotePlayPause é toggle → só quando muda
+        } else if (player != null) {
+            if (play) { player.setVolume(1f); player.play(); } else player.pause();
+        }
+        refreshMediaNotification();
+    }
+
+    @Override public void onNotifNext() {
+        if (!hasNext) return;
+        requestNext(castMode != CAST_NONE);
+    }
+
+    @Override public void onNotifSeekTo(long positionMs) {
+        if (castMode != CAST_NONE) { remoteSeekTo(positionMs); lastRemotePosMs = Math.max(0, positionMs); updateCastSeek(); }
+        else if (player != null) player.seekTo(Math.max(0, positionMs));
+        refreshMediaNotification();
+    }
+
+    // Estado atual → notificação. Barato de chamar (só re-posta quando algo visível muda).
+    private void refreshMediaNotification() {
+        if (isFinishing() || isDestroyed()) return;
+        boolean cast = castMode != CAST_NONE;
+        boolean playing; long pos, dur; String sub;
+        if (cast) {
+            if (castMode == CAST_DLNA) playing = !dlnaPaused;
+            else { com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc(); playing = r != null && r.isPlaying(); }
+            pos = lastRemotePosMs; dur = lastRemoteDurMs;
+            String onde = castMode == CAST_CC ? "no Chromecast" : "na TV (DLNA)";
+            sub = (playing ? "Reproduzindo " : "Pausado ") + onde;
+        } else {
+            if (player == null) return;
+            int st = player.getPlaybackState();
+            playing = player.getPlayWhenReady() && st != androidx.media3.common.Player.STATE_ENDED && st != androidx.media3.common.Player.STATE_IDLE;
+            pos = player.getCurrentPosition();
+            dur = player.getDuration() > 0 ? player.getDuration() : 0;
+            sub = playing ? "Reproduzindo" : "Pausado";
+        }
+        MediaNotificationService.update(this, mTitle, sub, playing, hasNext, cast, pos, dur);
+    }
+
+    // Android 13+: sem POST_NOTIFICATIONS a notificação de mídia não aparece. O app já
+    // pede no boot (push); aqui só garante — se já foi negada de vez, não abre nada.
+    private void ensureNotifPermission() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        try {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                requestPermissions(new String[]{ android.Manifest.permission.POST_NOTIFICATIONS }, 7331);
+        } catch (Exception ignored) {}
     }
 
     private Button pill(String text, View.OnClickListener onClick) {
