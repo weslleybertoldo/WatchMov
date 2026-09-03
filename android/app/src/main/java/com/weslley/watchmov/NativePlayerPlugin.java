@@ -112,6 +112,20 @@ public class NativePlayerPlugin extends Plugin {
     // no topo e usa a key (tmdbId:type:season:ep) pra reabrir o mesmo episódio.
     @PluginMethod
     public void castStatus(final PluginCall call) {
+        if (!PlayerActivity.isCasting()) {
+            // Processo NOVO (o app foi fechado com a TV tocando): há sessão gravada? Se a
+            // TV ainda está na nossa mídia, restaura os estáticos e religa o serviço
+            // headless — o atalho "espelhando na TV" volta neste mesmo tick.
+            final android.content.Context ctx = getContext();
+            if (CastSessionStore.load(ctx) != null) {
+                MediaNotificationService.restoreIfAlive(ctx, ok -> resolveCastStatus(call));
+                return;
+            }
+        }
+        resolveCastStatus(call);
+    }
+
+    private static void resolveCastStatus(PluginCall call) {
         JSObject r = new JSObject();
         r.put("active", PlayerActivity.isCasting());
         r.put("key", PlayerActivity.castKey());

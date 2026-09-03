@@ -213,6 +213,16 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    @Override
+    public void onResume() {   // BridgeActivity declara public
+        super.onResume();
+        // App (re)aberto: se a TV ainda está tocando o que espelhamos antes de fechar o
+        // app, religa o proxy e o serviço headless já aqui — antes da web perguntar no
+        // castStatus (4 s). Idempotente; sem sessão gravada não faz nada.
+        try { ProxyServer.ensure(getApplicationContext()); } catch (Exception ignored) {}
+        try { MediaNotificationService.restoreIfAlive(this, null); } catch (Exception ignored) {}
+    }
+
     // Liga/desliga tela cheia imersiva. NÃO mexe no layoutInDisplayCutoutMode pra
     // não deixar faixa cinza residual ao sair (o sistema faz letterbox preto no
     // entalhe em paisagem, sem resíduo).
