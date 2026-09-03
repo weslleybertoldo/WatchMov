@@ -80,6 +80,12 @@ public class ProxyServer extends NanoHTTPD {
     // ---------------------------------------------------------------------------
     public static final class Access {
         public final long ts; public final String ip, method, kind, range, note; public final int status; public final long bytes, ms;
+        // Bytes que REALMENTE saíram pro cliente (contados no stream enquanto o NanoHTTPD
+        // escreve). `bytes` é o tamanho DECLARADO da resposta — num Range aberto
+        // ("bytes=X-") é total−X, e a TV fecha a conexão depois de um pedaço: somar o
+        // declarado inflava o CAST_TRAFEGO_TV pra 33 GB num MP4 de 375 MB. -1 = ainda
+        // não começou a enviar.
+        public volatile long sent = -1;
         Access(long ts, String ip, String method, String kind, String range, int status, long bytes, long ms, String note) {
             this.ts = ts; this.ip = ip; this.method = method; this.kind = kind; this.range = range;
             this.status = status; this.bytes = bytes; this.ms = ms; this.note = note;
@@ -95,14 +101,17 @@ public class ProxyServer extends NanoHTTPD {
     /** Resumo do tráfego desde `sinceMs` (epoch), opcionalmente só de um IP (a TV). */
     public static String trafficSummary(long sinceMs, String ipFilter) {
         int req = 0, master = 0, variante = 0, seg = 0, arquivo = 0, head = 0, ranged = 0, erros = 0, outros = 0;
-        long bytes = 0, maxMs = 0; Access lastErr = null, last = null;
+        long bytes = 0, decl = 0, maxMs = 0; Access lastErr = null, last = null;
         java.util.Set<String> ips = new java.util.TreeSet<>();
         java.util.List<Access> snap;
         synchronized (LOG) { snap = new java.util.ArrayList<>(LOG); }
         for (Access a : snap) {
             if (a.ts < sinceMs) continue;
             if (ipFilter != null && !ipFilter.equals(a.ip)) continue;
-            req++; ips.add(a.ip); bytes += Math.max(0, a.bytes); maxMs = Math.max(maxMs, a.ms); last = a;
+            req++; ips.add(a.ip); maxMs = Math.max(maxMs, a.ms); last = a;
+            // bytes = o que foi de fato transmitido; decl = o declarado (só pra comparar).
+            decl += Math.max(0, a.bytes);
+            bytes += a.sent >= 0 ? a.sent : Math.max(0, a.bytes);
             if ("HEAD".equals(a.method)) head++;
             if (a.range != null) ranged++;
             switch (a.kind) {
@@ -119,7 +128,7 @@ public class ProxyServer extends NanoHTTPD {
           .append(" master=").append(master).append(" variante=").append(variante)
           .append(" seg=").append(seg).append(" arquivo=").append(arquivo).append(" outros=").append(outros)
           .append(" head=").append(head).append(" range=").append(ranged)
-          .append(" bytes=").append(bytes / 1024).append("KB maxMs=").append(maxMs).append(" erros=").append(erros);
+          .append(" bytes=").append(bytes / 1024).append("KB decl=").append(decl / 1024).append("KB maxMs=").append(maxMs).append(" erros=").append(erros);
         if (lastErr != null) sb.append(" ultErro=[").append(lastErr.kind).append(' ').append(lastErr.status).append(' ').append(lastErr.note).append(']');
         if (last != null) sb.append(" ult=[").append(last.kind).append(' ').append(last.status).append(" +").append((System.currentTimeMillis() - last.ts) / 1000).append("s]");
         return sb.toString();
@@ -295,7 +304,8 @@ public class ProxyServer extends NanoHTTPD {
         // sondagem atrasa a resposta e corrompe a conexão keep-alive (o cliente lê o
         // corpo como início da PRÓXIMA resposta → "Invalid Http response"). Troca o
         // corpo por vazio mantendo o Content-Length declarado (flagrado no smoke).
-        if (Method.HEAD.equals(session.getMethod())) {
+        boolean head = Method.HEAD.equals(session.getMethod());
+        if (head) {
             try {
                 java.io.InputStream d = resp.getData();
                 if (d != null) { try { d.close(); } catch (Exception ignored) {} resp.setData(new java.io.ByteArrayInputStream(new byte[0])); }
@@ -305,7 +315,12 @@ public class ProxyServer extends NanoHTTPD {
             int st = resp.getStatus() != null ? resp.getStatus().getRequestStatus() : 0;
             String range = session.getHeaders() != null ? session.getHeaders().get("range") : null;
             String m = session.getMethod() != null ? session.getMethod().name() : "?";
-            logAccess(new Access(t0, clientIp(session), m, rq.kind, range, st, rq.bytes, System.currentTimeMillis() - t0, rq.note));
+            Access a = new Access(t0, clientIp(session), m, rq.kind, range, st, rq.bytes, System.currentTimeMillis() - t0, rq.note);
+            logAccess(a);
+            // O corpo ainda vai ser escrito pelo NanoHTTPD DEPOIS deste return → conta os
+            // bytes reais no caminho (a.sent), em vez de confiar no tamanho declarado.
+            if (head) a.sent = 0;
+            else { java.io.InputStream d = resp.getData(); if (d != null) resp.setData(new CountingStream(d, a)); }
         } catch (Throwable ignored) {}
         return resp;
     }
@@ -606,12 +621,40 @@ public class ProxyServer extends NanoHTTPD {
         }
     }
 
+    // Conta os bytes que o NanoHTTPD leu deste stream (= o que saiu pro cliente) e vai
+    // atualizando o Access a cada leitura — assim o total vale mesmo se a TV fechar a
+    // conexão no meio (o close() nem sempre chega). FilterInputStream.read(byte[])
+    // delega pro read(buf,off,len), então cada byte é contado UMA vez.
+    private static final class CountingStream extends java.io.FilterInputStream {
+        private final Access a; private long n = 0;
+        CountingStream(java.io.InputStream in, Access a) { super(in); this.a = a; a.sent = 0; }
+        @Override public int read() throws IOException { int b = in.read(); if (b >= 0) { n++; a.sent = n; } return b; }
+        @Override public int read(byte[] buf, int off, int len) throws IOException {
+            int r = in.read(buf, off, len);
+            if (r > 0) { n += r; a.sent = n; }
+            return r;
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // Variantes do master (por URL) — pro overlay listar as qualidades disponíveis e
     // pro CAST_MASTER_INFO dizer qual foi entregue. {altura, bandwidth}.
     // ---------------------------------------------------------------------------
     private static final java.util.Map<String, java.util.List<int[]>> MASTERS = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.Map<String, Long> INFO_TS = new java.util.concurrent.ConcurrentHashMap<>();
+    // Variante ENTREGUE à TV por master (só no cast): altura da EXT-X-STREAM-INF que
+    // sobrou no rewrite. É o que o botão "Qualidade" do overlay mostra ("720p", não
+    // "Máx") — o proxy é quem decide de fato, então é ele quem sabe.
+    private static final java.util.Map<String, Integer> DELIVERED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Altura da variante que o proxy serviu pra TV nesse master (0 = ainda não serviu / sem RESOLUTION). */
+    public static int deliveredHeight(String masterUrl) {
+        Integer h = masterUrl != null ? DELIVERED.get(masterUrl) : null;
+        return h != null ? h : 0;
+    }
+
+    /** Esquece a entrega (troca de qualidade: até a TV pedir o master de novo não há valor certo). */
+    public static void forgetDelivered(String masterUrl) { if (masterUrl != null) DELIVERED.remove(masterUrl); }
 
     /** Variantes conhecidas do master dessa URL ({altura, bandwidth}, maior primeiro) — vazio se ainda não foi buscado. */
     public static java.util.List<int[]> variantsOf(String masterUrl) {
@@ -680,7 +723,10 @@ public class ProxyServer extends NanoHTTPD {
         int keep = -1;
         if (!vars.isEmpty()) {
             MASTERS.put(baseUrl, vars);
-            if (cast) keep = chooseVariant(vars, qH);
+            if (cast) {
+                keep = chooseVariant(vars, qH);
+                if (keep >= 0) DELIVERED.put(baseUrl, vars.get(keep)[1]);   // o overlay mostra esta altura
+            }
         }
         StringBuilder out = new StringBuilder();
         boolean skipUri = false;
