@@ -233,11 +233,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         qualityBtn = pill("Auto", v -> showQuality());
         Button fwd60 = pill("+60s", v -> { if (player != null) player.seekTo(player.getCurrentPosition() + 60000); });
         nextBtn = pill("Próximo ⏭", v -> requestNext(false));
-        Button speed = pill("1x", null);
-        speed.setOnClickListener(v -> {
+        Button speed = pill("1x", v -> {
             speedIdx = (speedIdx + 1) % speeds.length;
-            player.setPlaybackParameters(new PlaybackParameters(speeds[speedIdx]));
-            speed.setText(speeds[speedIdx] + "x");
+            if (player != null) player.setPlaybackParameters(new PlaybackParameters(speeds[speedIdx]));
+            ((Button) v).setText(speeds[speedIdx] + "x");
         });
         Button resize = pill("Tela: " + resizeNames[resizeIdx], v -> {
             resizeIdx = (resizeIdx + 1) % resizeModes.length;
@@ -312,24 +311,45 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // Linha 2 (abaixo de voltar/pausar/avançar): QUALIDADE na TV + VOLUME da TV.
         // Qualidade: o proxy entrega UMA variante pro cast (a TV não faz ABR) — por
         // padrão a maior; aqui dá pra BAIXAR se a internet não sustentar e voltar pra Máx.
-        // Volume: 🔊 mostra/esconde a barra; soltar a barra manda pra TV (RenderingControl
-        // no DLNA, CastSession no Chromecast).
+        // Volume: "−"/"+" = ±10 % direto na TV; "Volume" mostra/esconde a barra; soltar a
+        // barra manda pra TV (RenderingControl no DLNA, CastSession no Chromecast).
+        // Layout pedido: [Qualidade: 720p]   (afastado)   [−] [Volume] [+]
         castQualityBtn = pill("Qualidade: Máx", v -> showCastQuality());
-        volBtn = pill("🔊 Volume", v -> toggleVolumeBar());
+        volDownBtn = pill("−", v -> remoteVolumeBy(-10));
+        volBtn = pill("Volume", v -> toggleVolumeBar());
+        volUpBtn = pill("+", v -> remoteVolumeBy(10));
         LinearLayout castRow2 = new LinearLayout(this);
         castRow2.setOrientation(LinearLayout.HORIZONTAL); castRow2.setGravity(Gravity.CENTER);
-        for (Button b : new Button[]{ castQualityBtn, volBtn }) {
+        for (Button b : new Button[]{ castQualityBtn, volDownBtn, volBtn, volUpBtn }) {
             b.setTextSize(16); b.setPadding(28, 18, 28, 18);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.setMargins(8, 18, 8, 0); b.setLayoutParams(lp);
         }
-        castRow2.addView(castQualityBtn); castRow2.addView(volBtn);
+        // −/+ colados no "Volume" (leem como um grupo) e mais largos pra acertar com o dedo.
+        for (Button b : new Button[]{ volDownBtn, volUpBtn }) {
+            b.setPadding(40, 18, 40, 18);
+            ((LinearLayout.LayoutParams) b.getLayoutParams()).setMargins(4, 18, 4, 0);
+        }
+        View volGap = new View(this);   // afasta o grupo Qualidade do grupo Volume
+        castRow2.addView(castQualityBtn);
+        castRow2.addView(volGap, new LinearLayout.LayoutParams(56, 1));
+        castRow2.addView(volDownBtn); castRow2.addView(volBtn); castRow2.addView(volUpBtn);
+        // Rolável como a linha 1 (não cortar o "+" em tela estreita); fillViewport centraliza.
+        android.widget.HorizontalScrollView castRow2Scroll = new android.widget.HorizontalScrollView(this);
+        castRow2Scroll.setHorizontalScrollBarEnabled(false);
+        castRow2Scroll.setFillViewport(true);
+        castRow2Scroll.addView(castRow2);
         volSeek = new android.widget.SeekBar(this);
         volSeek.setMax(100);
         volSeek.setVisibility(View.GONE);
         volSeek.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
             @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { volSeeking = true; }
-            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) { volSeeking = false; remoteVolumeSet(sb.getProgress()); }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                volSeeking = false;
+                // Soltou a barra → esse passa a ser o volume conhecido; um "+" logo depois soma daqui.
+                volKnown = true; remoteVolTarget = sb.getProgress(); remoteVolAppliedAt = android.os.SystemClock.elapsedRealtime();
+                remoteVolumeSet(sb.getProgress());
+            }
             @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) { if (fromUser) castMsg("Volume " + p, 900); }
         });
         // Próximo episódio SEM derrubar a TV: NÃO fecha mais a Activity. Pede o link do
@@ -377,7 +397,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // episódio (série) → concluído → parar espelhamento.
         LinearLayout.LayoutParams volLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.6), ViewGroup.LayoutParams.WRAP_CONTENT);
         volLp.topMargin = 14;
-        castCol.addView(castRowScroll); castCol.addView(castRow2); castCol.addView(volSeek, volLp);
+        castCol.addView(castRowScroll); castCol.addView(castRow2Scroll); castCol.addView(volSeek, volLp);
         castCol.addView(nextCastBtn); castCol.addView(castWatchedBtn); castCol.addView(stopCast);
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1079,9 +1099,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private int castDeliveredH = 0;            // altura que a TV está RECEBENDO (proxy no HLS; arquivo no MP4)
     private int localVideoH = 0;               // altura reportada pelo player local (onVideoSizeChanged)
     private boolean fileHeightPending = false; // já tem thread lendo a altura do arquivo (MediaMetadataRetriever)
-    private Button volBtn;                     // "🔊 Volume" — mostra/esconde a barra
+    private Button volBtn;                     // "Volume" — mostra/esconde a barra
+    private Button volDownBtn, volUpBtn;       // "−"/"+" do overlay: ±10 % do volume da TV
     private android.widget.SeekBar volSeek;    // 0–100 → volume da TV
     private boolean volSeeking = false;
+    private boolean volKnown = false;          // volSeek já reflete o volume REAL da TV nesta sessão
+    // Volume relativo (−/+): alvo do último ajuste e quando foi aplicado — toques em
+    // sequência SOMAM a partir do alvo (mesmo padrão de remoteSeekTarget/remoteSeekAppliedAt).
+    private volatile int remoteVolTarget = -1;
+    private volatile long remoteVolAppliedAt = 0;
     private String dlnaRenderCtrl;             // controlURL do RenderingControl (volume) da sessão atual
     private static String activeDlnaRenderCtrl;
     // ---- Vigia do envio (1º cast e recast) — diagnóstico do "conecta e fica carregando" ----
@@ -1124,6 +1150,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         dlnaRenderCtrl = mode == CAST_DLNA ? activeDlnaRenderCtrl : null;   // volume (RenderingControl) da TV escolhida
         castTvIp = mode == CAST_DLNA ? hostOf(ctrl) : null;   // pra filtrar o tráfego da TV no proxy
         remoteSeekTarget = 0; remoteSeekAppliedAt = 0;
+        remoteVolTarget = -1; remoteVolAppliedAt = 0; volKnown = false;   // volume relativo recomeça na sessão nova
         if (volSeek != null) volSeek.setVisibility(View.GONE);
         activeCastMode = mode; activeDlnaCtrl = (mode == CAST_DLNA ? ctrl : null); activeCastKey = resumeKey; // p/ retomar ao voltar
         activeCastTitle = mTitle;
@@ -1293,6 +1320,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         castMode = CAST_NONE; dlnaCtrl = null;
         castSentAtMs = 0; recastAtMs = 0; castTvIp = null;   // desarma o vigia
         dlnaRenderCtrl = null; activeDlnaRenderCtrl = null;
+        remoteVolTarget = -1; remoteVolAppliedAt = 0; volKnown = false;
         if (volSeek != null) volSeek.setVisibility(View.GONE);
         activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; // sessão encerrada
         updateCastButton(false); // volta o botão pro branco (desconectado)
@@ -1487,7 +1515,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         castStatusTv.setText(t + s);
     }
 
-    // 🔊: mostra a barra já com o volume ATUAL da TV (GetVolume); esconder = tocar de
+    // "Volume": mostra a barra já com o volume ATUAL da TV (GetVolume); esconder = tocar de
     // novo. Soltar a barra → remoteVolumeSet.
     private void toggleVolumeBar() {
         if (volSeek == null) return;
@@ -1502,7 +1530,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (castMode == CAST_CC) {
             try {
                 com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
-                if (s != null) volSeek.setProgress((int) Math.round(s.getVolume() * 100));
+                if (s != null) { volSeek.setProgress((int) Math.round(s.getVolume() * 100)); volKnown = true; }
             } catch (Exception ignored) {}
             return;
         }
@@ -1514,7 +1542,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             final int fv = v; final String fe = err;
             runOnUiThread(() -> {
                 if (gen != castGen || volSeek == null) return;
-                if (fv >= 0) { if (!volSeeking) volSeek.setProgress(fv); castMsg("Volume da TV: " + fv, 1500); }
+                if (fv >= 0) { if (!volSeeking) volSeek.setProgress(fv); volKnown = true; castMsg("Volume da TV: " + fv, 1500); }
                 else if (fe != null) {
                     castMsg("Não consegui ler o volume: " + fe, 4000);
                     NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_FALHOU", "[volume] GetVolume erro=" + fe, mMime, mReferer, mTitle);
@@ -1546,6 +1574,54 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 }
             });
         }).start();
+    }
+
+    // "−"/"+" do overlay: ±10 % do volume da TV sem abrir a barra. Base = alvo do último
+    // toque (se foi há <4s → toques em sequência SOMAM), senão a barra (se já reflete a
+    // TV), senão lê na TV antes de aplicar. Mesmas guardas do toggleVolumeBar.
+    private void remoteVolumeBy(final int delta) {
+        if (castMode == CAST_NONE) { castMsg("Só vale com a TV conectada", 2500); return; }
+        if (castMode == CAST_DLNA && dlnaRenderCtrl == null) {
+            castMsg("Esta TV não expõe controle de volume por DLNA (RenderingControl) — use o controle dela", 6000);
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_INDISPONIVEL", "[volume] TV sem RenderingControl ctrl=" + dlnaCtrl, mMime, mReferer, mTitle);
+            return;
+        }
+        long agora = android.os.SystemClock.elapsedRealtime();
+        if (remoteVolTarget >= 0 && agora - remoteVolAppliedAt < 4000) { applyVolumeDelta(remoteVolTarget, delta); return; }
+        if (volKnown && volSeek != null) { applyVolumeDelta(volSeek.getProgress(), delta); return; }
+        if (castMode == CAST_CC) {
+            int cur = 50;
+            try {
+                com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
+                if (s != null) cur = (int) Math.round(s.getVolume() * 100);
+            } catch (Exception ignored) {}
+            applyVolumeDelta(cur, delta);
+            return;
+        }
+        castMsg("Lendo volume da TV…", 1500);
+        final String rc = dlnaRenderCtrl; final int gen = castGen;
+        new Thread(() -> {
+            int v = -1; String err = null;
+            try { v = DlnaCastPlugin.getVolumeSync(rc); } catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+            final int fv = v; final String fe = err;
+            runOnUiThread(() -> {
+                if (gen != castGen) return;
+                if (fv >= 0) applyVolumeDelta(fv, delta);
+                else {
+                    castMsg("Não consegui ler o volume: " + fe, 4000);
+                    NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_FALHOU", "[volume] GetVolume (−/+) erro=" + fe, mMime, mReferer, mTitle);
+                }
+            });
+        }).start();
+    }
+
+    private void applyVolumeDelta(int base, int delta) {
+        final int target = Math.max(0, Math.min(100, base + delta));
+        remoteVolTarget = target; remoteVolAppliedAt = android.os.SystemClock.elapsedRealtime();
+        volKnown = true;
+        if (volSeek != null && !volSeeking) volSeek.setProgress(target);
+        castMsg("Volume " + target, 1200);   // remoteVolumeSet repete o mesmo texto ao confirmar (sem piscar) ou mostra "TV recusou volume"
+        remoteVolumeSet(target);
     }
 
     // Rótulo do botão = qualidade ATUAL na TV: a variante que o proxy ENTREGOU (HLS) ou
@@ -2231,12 +2307,36 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         b.setAllCaps(false);
         b.setTextColor(Color.WHITE);
         b.setTextSize(18);
-        b.setBackgroundColor(Color.parseColor("#99000000"));
+        b.setBackground(pillBg());
         b.setPadding(48, 26, 48, 26);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.leftMargin = 14;
         b.setLayoutParams(lp);
-        if (onClick != null) b.setOnClickListener(onClick);
+        // Toda pill dá feedback de clique: pressed muda o fundo (pillBg) e o clique dá um
+        // "pulso" de escala — o pressed sozinho dura ~64ms num toque rápido e não se vê.
+        if (onClick != null) b.setOnClickListener(v -> { clickPulse(v); onClick.onClick(v); });
         return b;
+    }
+
+    // Fundo dos botões com estado PRESSIONADO visível: normal = preto translúcido (como
+    // antes); pressionado/focado = roxo + borda branca. Antes era setBackgroundColor
+    // fixo → "não dá sensação de clique" (pedido dele 03/09).
+    private android.graphics.drawable.Drawable pillBg() {
+        android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
+        normal.setColor(Color.parseColor("#99000000")); normal.setCornerRadius(12);
+        android.graphics.drawable.GradientDrawable pressed = new android.graphics.drawable.GradientDrawable();
+        pressed.setColor(Color.parseColor("#CC7C3AED")); pressed.setCornerRadius(12); pressed.setStroke(3, Color.WHITE);
+        android.graphics.drawable.StateListDrawable sl = new android.graphics.drawable.StateListDrawable();
+        sl.addState(new int[]{ android.R.attr.state_pressed }, pressed);
+        sl.addState(new int[]{ android.R.attr.state_focused }, pressed);
+        sl.addState(new int[]{}, normal);
+        return sl;
+    }
+
+    private static void clickPulse(View v) {
+        v.animate().cancel();
+        v.setScaleX(1f); v.setScaleY(1f);
+        v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(70)
+            .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f).setDuration(130).start()).start();
     }
 }
