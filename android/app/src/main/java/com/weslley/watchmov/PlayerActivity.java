@@ -164,6 +164,10 @@ public class PlayerActivity extends Activity {
         if (currentUrl == null) { finish(); return; }
         mMime = getIntent().getStringExtra(EXTRA_MIME);
         mTitle = getIntent().getStringExtra(EXTRA_TITLE);
+        // O proxy precisa do Context pra servir content:// (MP4 exportado) pra TV, e do
+        // título só pra rotular os eventos que ele mesmo emite na aba Bugs.
+        ProxyServer.ensure(getApplicationContext());
+        ProxyServer.currentTitle = mTitle;
         urls = getIntent().getStringArrayExtra(EXTRA_URLS);
         mimes = getIntent().getStringArrayExtra(EXTRA_MIMES);
         qualities = getIntent().getStringArrayExtra(EXTRA_QUALITIES);
@@ -281,6 +285,7 @@ public class PlayerActivity extends Activity {
         castCol.setGravity(Gravity.CENTER);
         castStatusTv = new TextView(this);
         castStatusTv.setTextColor(Color.WHITE); castStatusTv.setTextSize(18); castStatusTv.setGravity(Gravity.CENTER);
+        castStatusTv.setMaxWidth((int) (getResources().getDisplayMetrics().widthPixels * 0.92));   // "<título> — Reproduzindo…" quebra linha em vez de cortar
         castTimeTv = new TextView(this);
         castTimeTv.setTextColor(Color.parseColor("#B0FFFFFF")); castTimeTv.setTextSize(14); castTimeTv.setGravity(Gravity.CENTER);
         castTimeTv.setPadding(0, 12, 0, 24);
@@ -303,6 +308,29 @@ public class PlayerActivity extends Activity {
         android.widget.HorizontalScrollView castRowScroll = new android.widget.HorizontalScrollView(this);
         castRowScroll.setHorizontalScrollBarEnabled(false);
         castRowScroll.addView(castRow);
+        // Linha 2 (abaixo de voltar/pausar/avançar): QUALIDADE na TV + VOLUME da TV.
+        // Qualidade: o proxy entrega UMA variante pro cast (a TV não faz ABR) — por
+        // padrão a maior; aqui dá pra BAIXAR se a internet não sustentar e voltar pra Máx.
+        // Volume: 🔊 mostra/esconde a barra; soltar a barra manda pra TV (RenderingControl
+        // no DLNA, CastSession no Chromecast).
+        castQualityBtn = pill("Qualidade: Máx", v -> showCastQuality());
+        volBtn = pill("🔊 Volume", v -> toggleVolumeBar());
+        LinearLayout castRow2 = new LinearLayout(this);
+        castRow2.setOrientation(LinearLayout.HORIZONTAL); castRow2.setGravity(Gravity.CENTER);
+        for (Button b : new Button[]{ castQualityBtn, volBtn }) {
+            b.setTextSize(16); b.setPadding(28, 18, 28, 18);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(8, 18, 8, 0); b.setLayoutParams(lp);
+        }
+        castRow2.addView(castQualityBtn); castRow2.addView(volBtn);
+        volSeek = new android.widget.SeekBar(this);
+        volSeek.setMax(100);
+        volSeek.setVisibility(View.GONE);
+        volSeek.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { volSeeking = true; }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) { volSeeking = false; remoteVolumeSet(sb.getProgress()); }
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) { if (fromUser) castMsg("Volume " + p, 900); }
+        });
         // Próximo episódio SEM derrubar a TV: NÃO fecha mais a Activity. Pede o link do
         // próximo ep ao JS (evento playerNext) e troca a mídia AQUI (loadNextInPlace) —
         // a sessão DLNA/Chromecast continua viva, então não tem o que "reconectar".
@@ -344,8 +372,12 @@ public class PlayerActivity extends Activity {
         LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         doneLp.gravity = Gravity.CENTER_HORIZONTAL; doneLp.topMargin = 16;
         castWatchedBtn.setLayoutParams(doneLp);
-        castCol.addView(castRowScroll); castCol.addView(nextCastBtn);
-        castCol.addView(castWatchedBtn); castCol.addView(stopCast);
+        // Ordem pedida: avançar/pausar → qualidade + volume (barra abaixo) → próximo
+        // episódio (série) → concluído → parar espelhamento.
+        LinearLayout.LayoutParams volLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.6), ViewGroup.LayoutParams.WRAP_CONTENT);
+        volLp.topMargin = 14;
+        castCol.addView(castRowScroll); castCol.addView(castRow2); castCol.addView(volSeek, volLp);
+        castCol.addView(nextCastBtn); castCol.addView(castWatchedBtn); castCol.addView(stopCast);
         castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -624,6 +656,7 @@ public class PlayerActivity extends Activity {
 
     private void playUrl(String url, String mime, long startMs) {
         currentUrl = url;
+        ProxyServer.currentTitle = mTitle;   // rótulo dos eventos que o proxy emite (CAST_MASTER_INFO)
         errorHandled = false; // novo link → volta a permitir tratar erro
         // O mime capturado nem sempre chega certo (SuperFlix/EmbedPlay servem HLS como
         // text/plain em master.txt/`/m3/` sem extensão). Se o mime já diz HLS/DASH,
@@ -1028,6 +1061,26 @@ public class PlayerActivity extends Activity {
     private FrameLayout castOverlay;
     private TextView castStatusTv, castTimeTv;
     private Button castPlayBtn;
+    private Button castQualityBtn;             // "Qualidade: Máx/720p" no overlay do cast
+    private int castQualityH = 0;              // altura escolhida pro cast (0 = maior bandwidth)
+    private Button volBtn;                     // "🔊 Volume" — mostra/esconde a barra
+    private android.widget.SeekBar volSeek;    // 0–100 → volume da TV
+    private boolean volSeeking = false;
+    private String dlnaRenderCtrl;             // controlURL do RenderingControl (volume) da sessão atual
+    private static String activeDlnaRenderCtrl;
+    // ---- Vigia do envio (1º cast e recast) — diagnóstico do "conecta e fica carregando" ----
+    private long castSentAtMs = 0;             // elapsedRealtime em que a TV ACEITOU o envio (0 = nada em vigia)
+    private long castSentWallMs = 0;           // mesmo instante em epoch (o log de acesso do proxy usa epoch)
+    private String castSentOrigem = "";        // "inicial" | "recast"
+    private String castTvIp = null;            // IP da TV (host do controlUrl) → filtra o tráfego dela no proxy
+    private final StringBuilder castStateLog = new StringBuilder();   // "+0.8s TRANSITIONING, +4.1s PLAYING"
+    private String castLastState = null;
+    private boolean castStateReported = false, castTrafficReported = false, castStuckHandled = false;
+    private boolean recastStopFirst = false;   // próximo recast manda Stop antes (reenvio de TV travada)
+    // Seek relativo (±10s/±60s): alvo do último seek e quando foi aplicado — toques em
+    // sequência somam a partir do alvo, e o poll não sobrescreve a posição por ~3s.
+    private volatile long remoteSeekTarget = 0, remoteSeekAppliedAt = 0;
+    private final Object remoteSeekLock = new Object();
     private TextView castMsgTv;                 // faixa de avisos do cast (topo da tela)
     private final Runnable hideCastMsg = () -> { if (castMsgTv != null) castMsgTv.setVisibility(View.GONE); };
 
@@ -1052,13 +1105,17 @@ public class PlayerActivity extends Activity {
     private void startCasting(int mode, String ctrl) {
         castGen++; // nova sessão — invalida qualquer poll da sessão anterior
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
+        dlnaRenderCtrl = mode == CAST_DLNA ? activeDlnaRenderCtrl : null;   // volume (RenderingControl) da TV escolhida
+        castTvIp = mode == CAST_DLNA ? hostOf(ctrl) : null;   // pra filtrar o tráfego da TV no proxy
+        remoteSeekTarget = 0; remoteSeekAppliedAt = 0;
+        if (volSeek != null) volSeek.setVisibility(View.GONE);
         activeCastMode = mode; activeDlnaCtrl = (mode == CAST_DLNA ? ctrl : null); activeCastKey = resumeKey; // p/ retomar ao voltar
         activeCastTitle = mTitle;
         // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
         // o áudio do celular disputava foco com a TV → oscilava. Mudo garante silêncio.
         if (player != null) { player.pause(); player.setPlayWhenReady(false); player.setVolume(0f); }
         updateCastButton(true); // botão verde (conectado) nos 2 modos
-        if (castStatusTv != null) castStatusTv.setText(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
+        if (castStatusTv != null) setCastStatus(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
         // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
         String ip = localIp();
         // Sem IP de Wi-Fi a TV não alcança o celular → aviso ACIONÁVEL. O endereço do
@@ -1084,11 +1141,27 @@ public class PlayerActivity extends Activity {
         // morrer: ele insiste ~10s e estava arrastando o episódio NOVO de volta pro
         // tempo do anterior (o vídeo "brigava" entre 00:00 e o tempo herdado).
         final int gen = castGen;
+        // Espera a TV SAIR de TRANSITIONING (até ~15s) antes do 1º Seek: seek durante o
+        // carregamento reinicia o pipeline em várias TVs (tela preta por segundos) e é
+        // recusado à toa — o laço antigo mandava o 1º Seek 1,2s após o Play.
+        long waitStart = android.os.SystemClock.elapsedRealtime();
+        String estado = "?";
+        for (int w = 0; w < 15; w++) {
+            if (gen != castGen) return;
+            try {
+                String[] ti = DlnaCastPlugin.getTransportInfoSync(ctrl);
+                estado = ti[0] + (ti[1] != null && !ti[1].isEmpty() && !"OK".equals(ti[1]) ? "/" + ti[1] : "");
+                if ("PLAYING".equals(ti[0]) || "PAUSED_PLAYBACK".equals(ti[0])) break;
+                if (ti[1] != null && ti[1].toUpperCase().contains("ERROR")) break;   // não vai tocar — não insiste
+            } catch (Exception e) { estado = "sem-resposta"; }
+            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+        }
+        long esperou = android.os.SystemClock.elapsedRealtime() - waitStart;
         NativePlayerPlugin.reportError(currentUrl, 0, 0, "SEEK_TV",
-            "[seek] origem=" + origem + " alvo=" + targetMs + "ms gen=" + gen, mMime, mReferer, mTitle);
+            "[seek] origem=" + origem + " alvo=" + targetMs + "ms gen=" + gen + " esperouPlaying=" + esperou + "ms estadoTV=" + estado, mMime, mReferer, mTitle);
         String lastErr = null;
         for (int i = 0; i < 6; i++) {
-            try { Thread.sleep(i == 0 ? 1200 : 1800); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(i == 0 ? 500 : 1800); } catch (InterruptedException ignored) {}
             if (gen != castGen) {   // trocou de episódio/sessão → este seek é do ep anterior
                 NativePlayerPlugin.reportError(currentUrl, 0, 0, "SEEK_TV_CANCELADO",
                     "[seek] origem=" + origem + " alvo=" + targetMs + "ms abortado (gen " + gen + "→" + castGen + ")",
@@ -1120,15 +1193,19 @@ public class PlayerActivity extends Activity {
         if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
             final String ctrl = activeDlnaCtrl;
             final String ip = localIp();
-            final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
+            final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip, castQualityH) : currentUrl;
             final String tt = mTitle;
             final String t = tt != null ? tt : "WatchMov";
+            final String srcUrl = currentUrl, srcRef = mReferer;
+            final int qH = castQualityH;
+            // Reenvio de TV travada/parada: manda Stop antes (reseta o transporte da TV).
+            final boolean stopFirstNow = recastStopFirst; recastStopFirst = false;
             startCasting(CAST_DLNA, ctrl);                 // overlay + pausa o local já
             // Zera o tempo do remoto (senão o overlay mostra o do episódio anterior) e
-            // só arma o watchdog DEPOIS que o castSync foi aceito — antes ele lia a TV
+            // só arma o vigia DEPOIS que o castSync foi aceito — antes ele lia a TV
             // no meio do próprio Stop→SetAVTransportURI→Play e logava "STOPPED" à toa.
             lastRemotePosMs = 0; lastRemoteDurMs = 0;
-            recastAtMs = 0;
+            recastAtMs = 0; castSentAtMs = 0;
             recastDropReported = false;
             recastTargetMs = startFromMs;
             // Enquanto o recast está em voo a TV ainda responde pela mídia ANTERIOR:
@@ -1136,36 +1213,43 @@ public class PlayerActivity extends Activity {
             // DO ANTERIOR (o vídeo "brigava": ia pro 0 e voltava pro tempo herdado).
             recastPending = true;
             NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_ENVIADO",
-                "[recast] alvo=" + startFromMs + "ms retries=" + recastRetries, mMime, mReferer, mTitle);
-            if (castStatusTv != null) castStatusTv.setText("Enviando próximo episódio pra TV…");
+                "[recast] alvo=" + startFromMs + "ms retries=" + recastRetries + " stopFirst=" + stopFirstNow + " q=" + (qH > 0 ? qH + "p" : "max") + " url=" + castUrl, mMime, mReferer, mTitle);
+            if (castStatusTv != null) setCastStatus("Enviando próximo episódio pra TV…");
             new Thread(() -> {
+                // Pré-aquece o master pelo proxy: a LG SONDA a URL antes de responder o
+                // SetAVTransportURI — com stream online frio isso estourava o timeout
+                // ("[recast] timeout" com a TV em "Loading media resource…").
+                final String warm = ProxyServer.prewarm(srcUrl, srcRef, qH);
                 // A TV costuma recusar logo após o Stop do episódio anterior
                 // ("Transition not available"): espera e TENTA DE NOVO. NÃO derruba a
                 // conexão em falha — o usuário não deve precisar reconectar.
-                String err = null;
+                String err = null; String res = "";
                 for (int i = 0; i < 3; i++) {
                     try { Thread.sleep(i == 0 ? 900 : 2000); } catch (InterruptedException ignored) {}
                     // stopFirst=false: troca a mídia SEM parar a TV (o Stop é o que a
                     // fazia "cair e reconectar"); só para se ela recusar a troca.
-                    try { DlnaCastPlugin.castSync(ctrl, castUrl, t, false); err = null; break; }
+                    try { DlnaCastPlugin.CastResult cr = DlnaCastPlugin.castSync(ctrl, castUrl, t, stopFirstNow); res = cr.toString(); err = null; break; }
+                    catch (DlnaCastPlugin.CastException ce) { err = ce.getMessage(); res = ce.result.toString(); }
                     catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
                 }
-                if (err == null && startFromMs > 3000) seekWithRetry(ctrl, startFromMs, "recast");
-                recastPending = false;
-                final String fe = err;
+                final String fe = err, fres = res;
                 runOnUiThread(() -> {
                     if (fe == null) {
-                        recastAtMs = android.os.SystemClock.elapsedRealtime();  // relógio do watchdog
-                        if (castStatusTv != null) castStatusTv.setText("Reproduzindo na TV (DLNA)");
+                        armCastWatchdog("recast", startFromMs);   // vigia: estado/tráfego/travou
+                        NativePlayerPlugin.reportError(srcUrl, 0, 0, "RECAST_ACEITO",
+                            "[recast] " + fres + " " + warm, mMime, srcRef, tt);
+                        if (castStatusTv != null) setCastStatus("Reproduzindo na TV (DLNA)");
                     } else {
                         // Mantém o espelhamento ativo (a TV segue pareada) e registra o
                         // motivo real pra diagnóstico — o usuário pode tocar de novo.
-                        if (castStatusTv != null) castStatusTv.setText("A TV recusou o próximo episódio — toque em Próximo de novo");
+                        if (castStatusTv != null) setCastStatus("A TV recusou o próximo episódio — toque em Próximo de novo");
                         castMsg("TV recusou o episódio: " + fe + " — toque em Próximo de novo", 8000);
-                        NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_DLNA_FALHOU",
-                            "[recast] " + fe, mMime, mReferer, tt);
+                        NativePlayerPlugin.reportError(srcUrl, 0, 0, "RECAST_DLNA_FALHOU",
+                            "[recast] " + fe + " | " + fres + " " + warm, mMime, srcRef, tt);
                     }
                 });
+                if (err == null && startFromMs > 3000) seekWithRetry(ctrl, startFromMs, "recast");
+                recastPending = false;
             }).start();
         } else if (activeCastMode == CAST_CC) {
             try {
@@ -1189,6 +1273,9 @@ public class PlayerActivity extends Activity {
         }
         castGen++; // encerra a sessão — o poll em voo não reagenda
         castMode = CAST_NONE; dlnaCtrl = null;
+        castSentAtMs = 0; recastAtMs = 0; castTvIp = null;   // desarma o vigia
+        dlnaRenderCtrl = null; activeDlnaRenderCtrl = null;
+        if (volSeek != null) volSeek.setVisibility(View.GONE);
         activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; // sessão encerrada
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
@@ -1223,10 +1310,38 @@ public class PlayerActivity extends Activity {
             long target = Math.max(0, r.getApproximateStreamPosition() + deltaMs);
             r.seek(new com.google.android.gms.cast.MediaSeekOptions.Builder().setPosition(target).build());
         } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
-            final String c = dlnaCtrl; final long target = Math.max(0, lastRemotePosMs + deltaMs);
+            final String c = dlnaCtrl; final int gen = castGen;
             new Thread(() -> {
-                try { DlnaCastPlugin.seekSync(c, target); }
-                catch (Exception e) { final String m = String.valueOf(e.getMessage()); runOnUiThread(() -> castMsg("TV recusou avançar/voltar: " + m, 6000)); }
+                // Serializado: toques em sequência SOMAM (+10 +10 = +20) a partir do alvo
+                // anterior, em vez de recalcular todos do mesmo ponto velho.
+                synchronized (remoteSeekLock) {
+                    if (gen != castGen) return;
+                    long base = lastRemotePosMs; String fonte = "poll";
+                    long agora = android.os.SystemClock.elapsedRealtime();
+                    if (remoteSeekTarget > 0 && agora - remoteSeekAppliedAt < 4000) { base = remoteSeekTarget; fonte = "alvo-anterior"; }
+                    else {
+                        // Posição FRESCA da TV: a do poll tinha até ~3s de atraso (ou era 0 logo
+                        // após conectar) → −10s virava "voltar pro início" e +10s às vezes
+                        // andava PRA TRÁS. Era o "botão de 10s não funciona".
+                        try { long[] pd = DlnaCastPlugin.getPositionSync(c); if (pd != null && pd[0] > 0) { base = pd[0]; fonte = "tv"; } } catch (Exception ignored) {}
+                    }
+                    final long target = Math.max(0, base + deltaMs);
+                    String err = null;
+                    try { DlnaCastPlugin.seekSync(c, target); remoteSeekTarget = target; remoteSeekAppliedAt = android.os.SystemClock.elapsedRealtime(); }
+                    catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+                    final long fb = base; final String ff = fonte, fe = err;
+                    runOnUiThread(() -> {
+                        if (gen != castGen) return;
+                        if (fe == null) {
+                            lastRemotePosMs = target;   // otimista: a UI acompanha na hora
+                            if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                            updateCastSeek();
+                        } else castMsg("TV recusou avançar/voltar: " + fe, 6000);
+                        NativePlayerPlugin.reportError(currentUrl, 0, 0, "SEEK_REMOTO",
+                            "[seek] delta=" + deltaMs + "ms base=" + fb + "ms(" + ff + ") alvo=" + target + "ms " + (fe == null ? "ok" : "erro=" + fe),
+                            mMime, mReferer, mTitle);
+                    });
+                }
             }).start();
         }
     }
@@ -1239,6 +1354,225 @@ public class PlayerActivity extends Activity {
             final String c = dlnaCtrl; final long t = Math.max(0, absMs);
             new Thread(() -> { try { DlnaCastPlugin.seekSync(c, t); } catch (Exception ignored) {} }).start();
         }
+    }
+
+    private static String hostOf(String url) {
+        try { return url != null ? new java.net.URL(url).getHost() : null; } catch (Exception e) { return null; }
+    }
+
+    // Arma o vigia depois que a TV ACEITOU um envio (SetAVTransportURI+Play OK) —
+    // no 1º cast E na troca de episódio. Antes só o recast tinha vigia: tela preta ou
+    // "carregando" pra sempre no primeiro espelhamento não deixava rastro.
+    private void armCastWatchdog(String origem, long targetMs) {
+        castSentAtMs = android.os.SystemClock.elapsedRealtime();
+        castSentWallMs = System.currentTimeMillis();
+        recastAtMs = castSentAtMs;
+        castSentOrigem = origem;
+        recastTargetMs = targetMs;
+        recastDropReported = false;
+        castStateLog.setLength(0); castLastState = null;
+        castStateReported = false; castTrafficReported = false; castStuckHandled = false;
+    }
+
+    // Um ciclo do vigia (chamado pelo poll DLNA, na UI). Registra a linha do tempo de
+    // estados da TV, o tráfego que ela fez no proxy e reage:
+    //  • TV PAROU (STOPPED/NO_MEDIA…) após 6s de carência → RECAST_TV_PAROU + reenvia 1x
+    //  • TV PRESA em "carregando" (TRANSITIONING/sem resposta/ERROR) por 30s →
+    //    CAST_TV_TRAVADA + reenvia 1x COM Stop
+    //  • TV não pediu NADA ao celular em 20s → aviso de rede (IP/roteador isolando)
+    // Devolve true quando disparou um reenvio (o chamador não reagenda o poll: o
+    // startCasting do recast já faz isso).
+    private boolean watchdogTick(String fst, String fstatus, long[] f) {
+        if (castSentAtMs <= 0) return false;
+        long since = android.os.SystemClock.elapsedRealtime() - castSentAtMs;
+        boolean erroTv = fstatus != null && fstatus.toUpperCase().contains("ERROR");
+        String cur = (fst == null ? "sem-resposta" : (fst.isEmpty() ? "vazio" : fst))
+            + (fstatus != null && !fstatus.isEmpty() && !"OK".equals(fstatus) ? "/" + fstatus : "");
+        if (!cur.equals(castLastState)) {
+            castLastState = cur;
+            if (castStateLog.length() > 0) castStateLog.append(", ");
+            castStateLog.append('+').append(since / 1000).append('.').append((since % 1000) / 100).append("s ").append(cur);
+        }
+        boolean playingOk = "PLAYING".equals(fst) && !erroTv;
+        long pos = f != null ? f[0] : -1, dur = f != null ? f[1] : -1;
+        // Linha do tempo: fecha quando a TV está tocando de verdade (posição andando),
+        // em 30s, ou quando ela reporta erro.
+        if (!castStateReported && ((playingOk && pos > 1000 && since > 2000) || since > 30000 || erroTv)) {
+            castStateReported = true;
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_TV_ESTADO",
+                "[tv] origem=" + castSentOrigem + " " + castStateLog + " | pos=" + pos + "ms dur=" + dur + "ms" + (erroTv ? " ⚠ TV reportou erro" : ""),
+                mMime, mReferer, mTitle);
+        }
+        // Tráfego da TV no proxy — 20s após o envio (ou já, se a TV reportou erro).
+        // Nenhum pedido = TV não alcança o celular (rede). Só master = não engoliu a
+        // playlist. Master+variante sem segmentos = host dos segmentos. Segmentos e
+        // sem PLAYING = formato/Content-Type.
+        if (!castTrafficReported && (since > 20000 || erroTv)) {
+            castTrafficReported = true;
+            String tr = ProxyServer.trafficSummary(castSentWallMs - 3000, castTvIp);
+            String trAll = ProxyServer.trafficSummary(castSentWallMs - 3000, null);
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_TRAFEGO_TV",
+                "[proxy] origem=" + castSentOrigem + " tvIp=" + castTvIp + " estadoTV=" + cur + " || tv{" + tr + "} || todos{" + trAll + "}",
+                mMime, mReferer, mTitle);
+            if (!playingOk && tr.startsWith("req=0")) {
+                String ipL = localIp();
+                castMsg("A TV não buscou o vídeo no celular (IP " + ipL + "). Confira se os dois estão no mesmo Wi-Fi; teste http://" + ipL + ":8099/ping no navegador da TV", 12000);
+            }
+        }
+        // PAROU de verdade após carência de 6s (o próprio castSync faz Stop→Set→Play,
+        // então logo depois a TV reporta STOPPED sem ter caído) → reenvia 1x.
+        if (!recastDropReported && since > 6000 && since < 40000
+            && fst != null && !fst.isEmpty() && !"PLAYING".equals(fst) && !"TRANSITIONING".equals(fst)
+            && !"PAUSED_PLAYBACK".equals(fst)) {
+            recastDropReported = true;
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_TV_PAROU",
+                "[" + castSentOrigem + "] TV state=" + cur + " apos " + since + "ms pos=" + lastRemotePosMs + " | " + castStateLog,
+                mMime, mReferer, mTitle);
+            if (recastRetries < 1) {
+                recastRetries++;
+                castMsg("A TV parou o vídeo — reenviando…", 5000);
+                // Reenvia no ALVO que pedimos (0 na troca de episódio) — usar
+                // lastRemotePosMs levava o ep novo pro tempo do anterior.
+                recastStopFirst = true;
+                recastCurrent(recastTargetMs);
+                return true;
+            }
+            castMsg("A TV parou o vídeo — toque em Próximo/Espelhar de novo", 8000);
+        }
+        // PRESA em "carregando" (TRANSITIONING, sem resposta ou erro) por 30s sem
+        // nunca tocar → reenvia 1x com Stop (reseta o transporte da TV).
+        if (!castStuckHandled && since > 30000 && since < 90000 && !playingOk && !"PAUSED_PLAYBACK".equals(fst)
+            && (fst == null || fst.isEmpty() || "TRANSITIONING".equals(fst) || erroTv)) {
+            castStuckHandled = true;
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_TV_TRAVADA",
+                "[" + castSentOrigem + "] TV em " + cur + " ha " + since + "ms sem tocar | " + castStateLog,
+                mMime, mReferer, mTitle);
+            if (recastRetries < 1) {
+                recastRetries++;
+                castMsg("A TV ficou carregando — reenviando com Stop…", 5000);
+                recastStopFirst = true;
+                recastCurrent(recastTargetMs);
+                return true;
+            }
+            castMsg("A TV não começou a tocar — toque em Espelhar de novo ou baixe a qualidade", 8000);
+        }
+        return false;
+    }
+
+    // Status do overlay COM o título do que está na TV:
+    // "Shangri-La Frontier — T1 E35 — Reproduzindo na TV (DLNA)".
+    private void setCastStatus(String s) {
+        if (castStatusTv == null) return;
+        String t = mTitle != null && !mTitle.isEmpty() ? mTitle + " — " : "";
+        castStatusTv.setText(t + s);
+    }
+
+    // 🔊: mostra a barra já com o volume ATUAL da TV (GetVolume); esconder = tocar de
+    // novo. Soltar a barra → remoteVolumeSet.
+    private void toggleVolumeBar() {
+        if (volSeek == null) return;
+        if (castMode == CAST_NONE) { castMsg("Só vale com a TV conectada", 2500); return; }
+        if (volSeek.getVisibility() == View.VISIBLE) { volSeek.setVisibility(View.GONE); return; }
+        if (castMode == CAST_DLNA && dlnaRenderCtrl == null) {
+            castMsg("Esta TV não expõe controle de volume por DLNA (RenderingControl) — use o controle dela", 6000);
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_INDISPONIVEL", "[volume] TV sem RenderingControl ctrl=" + dlnaCtrl, mMime, mReferer, mTitle);
+            return;
+        }
+        volSeek.setVisibility(View.VISIBLE);
+        if (castMode == CAST_CC) {
+            try {
+                com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
+                if (s != null) volSeek.setProgress((int) Math.round(s.getVolume() * 100));
+            } catch (Exception ignored) {}
+            return;
+        }
+        castMsg("Lendo volume da TV…", 1500);
+        final String rc = dlnaRenderCtrl; final int gen = castGen;
+        new Thread(() -> {
+            int v = -1; String err = null;
+            try { v = DlnaCastPlugin.getVolumeSync(rc); } catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+            final int fv = v; final String fe = err;
+            runOnUiThread(() -> {
+                if (gen != castGen || volSeek == null) return;
+                if (fv >= 0) { if (!volSeeking) volSeek.setProgress(fv); castMsg("Volume da TV: " + fv, 1500); }
+                else if (fe != null) {
+                    castMsg("Não consegui ler o volume: " + fe, 4000);
+                    NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_FALHOU", "[volume] GetVolume erro=" + fe, mMime, mReferer, mTitle);
+                }
+            });
+        }).start();
+    }
+
+    private void remoteVolumeSet(final int vol) {
+        if (castMode == CAST_CC) {
+            try {
+                com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
+                if (s != null) s.setVolume(vol / 100.0);
+                castMsg("Volume " + vol, 1200);
+            } catch (Exception e) { castMsg("Chromecast recusou volume: " + e.getMessage(), 4000); }
+            return;
+        }
+        if (castMode != CAST_DLNA || dlnaRenderCtrl == null) return;
+        final String rc = dlnaRenderCtrl;
+        new Thread(() -> {
+            String err = null;
+            try { DlnaCastPlugin.setVolumeSync(rc, vol); } catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
+            final String fe = err;
+            runOnUiThread(() -> {
+                if (fe == null) castMsg("Volume " + vol, 1200);
+                else {
+                    castMsg("TV recusou volume: " + fe, 5000);
+                    NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_FALHOU", "[volume] SetVolume " + vol + " erro=" + fe, mMime, mReferer, mTitle);
+                }
+            });
+        }).start();
+    }
+
+    private void updateCastQualityLabel() {
+        if (castQualityBtn != null) castQualityBtn.setText(castQualityH > 0 ? "Qualidade: " + castQualityH + "p" : "Qualidade: Máx");
+    }
+
+    // Qualidade NA TV. O proxy entrega UMA variante pro cast (a TV não faz ABR):
+    // padrão = maior bandwidth. Aqui lista as alturas do master + "Máxima"; escolher
+    // reenvia a mídia atual pra TV (mesma sessão) na posição em que ela está, com
+    // q=<altura> na URL — a TV recarrega já na qualidade nova.
+    private void showCastQuality() {
+        if (castMode == CAST_NONE) { castMsg("Só vale com a TV conectada", 2500); return; }
+        final String url = currentUrl;
+        boolean rede = url != null && (url.startsWith("http://") || url.startsWith("https://"));
+        String lu = url != null ? url.toLowerCase() : "";
+        boolean hls = rede && ((mMime != null && mMime.toLowerCase().contains("mpegurl"))
+            || lu.contains(".m3u8") || lu.contains("master") || lu.contains("/m3/") || lu.contains(".txt") || lu.contains("playlist"));
+        if (!hls) { castMsg("Este vídeo é arquivo único (MP4) — não tem variantes de qualidade", 4000); return; }
+        castMsg("Lendo qualidades do vídeo…", 0);
+        final String ref = mReferer;
+        new Thread(() -> {
+            java.util.List<int[]> vars = ProxyServer.variantsOf(url);
+            if (vars.isEmpty()) { ProxyServer.prewarm(url, ref, 0); vars = ProxyServer.variantsOf(url); }
+            final java.util.List<int[]> fv = vars;
+            runOnUiThread(() -> {
+                progressHandler.removeCallbacks(hideCastMsg);
+                if (castMsgTv != null) castMsgTv.setVisibility(View.GONE);
+                if (fv.isEmpty()) { castMsg("Não achei variantes no master deste link", 4000); return; }
+                final String[] labels = new String[fv.size() + 1];
+                labels[0] = "Máxima (padrão)" + (castQualityH == 0 ? "   ✓" : "");
+                for (int i = 0; i < fv.size(); i++) {
+                    int[] v = fv.get(i);
+                    labels[i + 1] = (v[0] > 0 ? v[0] + "p" : "?") + "  ·  " + (v[1] / 1000) + " kbps" + (castQualityH == v[0] ? "   ✓" : "");
+                }
+                new AlertDialog.Builder(this).setTitle("Qualidade na TV").setItems(labels, (d, i) -> {
+                    int h = i == 0 ? 0 : fv.get(i - 1)[0];
+                    if (h == castQualityH) return;
+                    castQualityH = h;
+                    updateCastQualityLabel();
+                    castMsg("Trocando qualidade na TV…", 4000);
+                    NativePlayerPlugin.reportError(url, 0, 0, "CAST_QUALIDADE",
+                        "[qualidade] escolhida=" + (h > 0 ? h + "p" : "max") + " posTV=" + lastRemotePosMs + "ms castMode=" + castMode, mMime, ref, mTitle);
+                    // Mesma sessão, nova URL (q=) — DLNA via recast; Chromecast via load().
+                    recastCurrent(lastRemotePosMs);
+                }).show();
+            });
+        }).start();
     }
 
     private void updatePlayIcon(boolean playing) { if (castPlayBtn != null) castPlayBtn.setText(playing ? "⏸" : "▶"); }
@@ -1274,10 +1608,15 @@ public class PlayerActivity extends Activity {
                 // no máximo 1 par de chamadas fica em voo por vez.
                 new Thread(() -> {
                     long[] pd; try { pd = DlnaCastPlugin.getPositionSync(c); } catch (Exception e) { pd = null; }
-                    String st; try { st = DlnaCastPlugin.getStateSync(c); } catch (Exception e) { st = null; }
-                    final long[] f = pd; final String fst = st;
+                    // Estado + STATUS: "ERROR_OCCURRED" é a TV dizendo que tentou e falhou
+                    // (formato/rede) — separa "carregando" de "quebrou".
+                    String[] ti; try { ti = DlnaCastPlugin.getTransportInfoSync(c); } catch (Exception e) { ti = null; }
+                    final long[] f = pd; final String fst = ti != null ? ti[0] : null; final String fstatus = ti != null ? ti[1] : null;
                     runOnUiThread(() -> {
                         if (castMode != CAST_DLNA || gen != castGen) return; // sessão trocou/encerrou
+                        // Logo após um ±10s/±60s a TV ainda devolve a posição antiga por 1–2
+                        // ciclos → não deixa o poll puxar a barra de volta.
+                        boolean seekRecente = remoteSeekAppliedAt > 0 && android.os.SystemClock.elapsedRealtime() - remoteSeekAppliedAt < 3000;
                         if (recastPending) {
                             // Posição que a TV devolve aqui é da mídia ANTERIOR — descarta.
                             if (f != null && f[0] > 0 && !posVelhaReportada) {
@@ -1286,36 +1625,17 @@ public class PlayerActivity extends Activity {
                                     "[recast] TV ainda reportando " + f[0] + "ms (mídia anterior) — ignorado",
                                     mMime, mReferer, mTitle);
                             }
-                        } else if (f != null && (f[0] > 0 || f[1] > 0)) { lastRemotePosMs = f[0]; lastRemoteDurMs = f[1]; }
+                        } else if (f != null && (f[0] > 0 || f[1] > 0)) {
+                            if (!seekRecente) lastRemotePosMs = f[0];
+                            if (f[1] > 0) lastRemoteDurMs = f[1];
+                        }
                         // Só PAUSED_PLAYBACK é pausa real. PLAYING e TRANSITIONING (a TV
                         // ainda carregando) contam como tocando — senão o ícone virava ▶
                         // no início enquanto a TV só estava abrindo o stream.
                         if (fst != null && !fst.isEmpty()) { dlnaPaused = "PAUSED_PLAYBACK".equals(fst); updatePlayIcon(!dlnaPaused); }
-                        // A TV parou logo após a troca de episódio? registra o estado
-                        // real que ela reportou (STOPPED/NO_MEDIA_PRESENT/…) pra saber
-                        // POR QUE cai, em vez de adivinhar.
-                        // CARÊNCIA de 6s: o próprio castSync manda Stop→SetAVTransportURI→
-                        // Play, então logo depois a TV reporta STOPPED sem ter caído. Só
-                        // depois disso é queda de verdade — e aí REENVIA uma vez (a TV
-                        // segue pareada) em vez de só registrar e deixar o usuário na mão.
-                        long since = android.os.SystemClock.elapsedRealtime() - recastAtMs;
-                        if (!recastDropReported && recastAtMs > 0 && since > 6000 && since < 40000
-                            && fst != null && !"PLAYING".equals(fst) && !"TRANSITIONING".equals(fst)
-                            && !"PAUSED_PLAYBACK".equals(fst)) {
-                            recastDropReported = true;
-                            NativePlayerPlugin.reportError(currentUrl, 0, 0, "RECAST_TV_PAROU",
-                                "[recast] TV state=" + fst + " apos " + since + "ms pos=" + lastRemotePosMs,
-                                mMime, mReferer, mTitle);
-                            if (recastRetries < 1) {
-                                recastRetries++;
-                                castMsg("A TV parou o episódio — reenviando…", 5000);
-                                // Reenvia no ALVO que pedimos (0 na troca de episódio) —
-                                // usar lastRemotePosMs levava o ep novo pro tempo do anterior.
-                                recastCurrent(recastTargetMs);
-                                return;   // startCasting já reagendou o poll — não duplicar
-                            }
-                            castMsg("A TV parou o episódio — toque em Próximo/Espelhar de novo", 8000);
-                        }
+                        // Vigia do envio (1º cast E troca de episódio): linha do tempo de
+                        // estados, tráfego da TV no proxy, reenvio se parou/travou.
+                        if (watchdogTick(fst, fstatus, f)) return;   // reenviou → startCasting já reagendou o poll
                         if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
                         updateCastSeek();
                         progressHandler.postDelayed(castPoll, 1500); // próximo ciclo só agora
@@ -1420,7 +1740,8 @@ public class PlayerActivity extends Activity {
         // pela LAN: o Chromecast busca do celular (refaz fetch com headers, descomprime
         // gzip, reescreve o HLS). Fallback = URL direta se não achar o IP.
         final String ip = localIp();
-        final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
+        // content:// (MP4 exportado) também passa pelo proxy: o Chromecast só fala HTTP.
+        final String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip, castQualityH) : currentUrl;
         final String castCt = castContentType(currentUrl);
         final long startPos = player != null ? player.getCurrentPosition() : 0;
         castMsg("Enviando vídeo pro Chromecast…", 0);
@@ -1507,39 +1828,62 @@ public class PlayerActivity extends Activity {
         castMsg("Procurando TVs na rede…", 0);
         new Thread(() -> {
             final java.util.List<DlnaCastPlugin.Device> devs = DlnaCastPlugin.discoverSync(this, 6000);
+            final String ipCel = localIp();
+            // Registra SEMPRE (achou ou não). Era o buraco: a tentativa de conectar não
+            // deixava rastro nenhum na aba Bugs — só Toast que sumia.
+            NativePlayerPlugin.reportError(currentUrl, 0, 0, "DLNA_DESCOBERTA",
+                "[dlna] " + DlnaCastPlugin.lastDiscoverySummary + " ipCelular=" + ipCel + (ipCel == null ? " (SEM Wi-Fi: a TV não alcança o celular)" : ""),
+                mMime, mReferer, mTitle);
             runOnUiThread(() -> {
                 if (devs.isEmpty()) {
                     String msg = DlnaCastPlugin.lastRawResponses == 0
                         ? "Nenhuma resposta na rede — ative o compartilhamento/DLNA na TV e use o mesmo Wi-Fi (roteador pode isolar dispositivos)."
                         : "Recebi " + DlnaCastPlugin.lastRawResponses + " respostas, mas nenhuma TV com DLNA compatível.";
-                    android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show();
+                    castMsg(msg, 9000);
                     return;
                 }
                 String[] names = new String[devs.size()];
-                for (int i = 0; i < devs.size(); i++) names[i] = devs.get(i).name;
+                for (int i = 0; i < devs.size(); i++) names[i] = devs.get(i).name + "  (" + devs.get(i).ip() + ")";
                 new AlertDialog.Builder(this).setTitle("Enviar para a TV").setItems(names, (d, i) -> {
                     final DlnaCastPlugin.Device dev = devs.get(i);
                     final long castFromMs = player != null ? player.getCurrentPosition() : 0; // continua de onde estava
+                    final String srcUrl = currentUrl, srcRef = mReferer, srcTitle = mTitle;
+                    final int qH = castQualityH;
                     castMsg("Enviando para " + dev.name + "…", 0);
                     new Thread(() -> {
-                        String err = null;
-                        // A TV não alcança a URL do CDN (punycode/HLS) → "resource not found".
-                        // Serve pela LAN: a TV busca do celular (que refaz o fetch com headers,
-                        // descomprime gzip e reescreve o HLS). Fallback = URL direta.
-                        String ip = localIp();
-                        String castUrl = ip != null ? ProxyServer.lan(currentUrl, mReferer, ip) : currentUrl;
-                        try { DlnaCastPlugin.castSync(dev.controlUrl, castUrl, mTitle != null ? mTitle : "WatchMov"); }
+                        // A TV não alcança a URL do CDN (punycode/HLS) nem um content:// →
+                        // serve pela LAN: a TV busca do celular (que refaz o fetch com headers,
+                        // descomprime gzip, reescreve o HLS e fatia o MP4 exportado com Range).
+                        // Fallback = URL direta.
+                        final String ip = localIp();
+                        final String castUrl = ip != null ? ProxyServer.lan(srcUrl, srcRef, ip, qH) : srcUrl;
+                        // Pré-aquece o master pelo proxy: a LG sonda a URL ANTES de responder o
+                        // SetAVTransportURI — frio, estourava o timeout ("Read timed out").
+                        final String warm = ProxyServer.prewarm(srcUrl, srcRef, qH);
+                        runOnUiThread(() -> castMsg("Enviando para " + dev.name + "… (a TV está lendo o vídeo)", 0));
+                        String err = null; DlnaCastPlugin.CastResult cr = null;
+                        long tSend = System.currentTimeMillis();
+                        try { cr = DlnaCastPlugin.castSync(dev.controlUrl, castUrl, srcTitle != null ? srcTitle : "WatchMov"); }
+                        catch (DlnaCastPlugin.CastException ce) { err = ce.getMessage(); cr = ce.result; }
                         catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
-                        final String ferr = err;
+                        final long ms = System.currentTimeMillis() - tSend;
+                        final String ferr = err, fres = cr != null ? cr.toString() : "";
+                        String base = "[dlna] tv=" + dev.name + "@" + dev.ip() + " ipCelular=" + ip + " q=" + (qH > 0 ? qH + "p" : "max")
+                            + " volume=" + (dev.renderUrl != null ? "sim" : "NAO(sem RenderingControl)")
+                            + " posLocal=" + castFromMs + "ms " + fres + " total=" + ms + "ms " + warm + " url=" + castUrl;
+                        if (ferr == null) NativePlayerPlugin.reportError(srcUrl, 0, 0, "DLNA_CONECTADO", base, mMime, srcRef, srcTitle);
+                        else NativePlayerPlugin.reportError(srcUrl, 0, 0, "DLNA_FALHOU", "erro=" + ferr + " " + base, mMime, srcRef, srcTitle);
                         // Mostra o overlay JÁ (o seek leva alguns segundos) e SÓ DEPOIS
                         // dispara o seek: o startCasting incrementa o castGen, e o
                         // seekWithRetry usa esse gen como guarda — disparado antes, ele
                         // abortava sozinho e a TV começava do zero (o 1º espelhamento
                         // tem que continuar de onde o celular estava).
                         runOnUiThread(() -> {
-                            castMsg(ferr == null ? "Tocando na TV — o app vira controle" : ferr, ferr == null ? 4000 : 8000);
+                            castMsg(ferr == null ? "Tocando na TV — o app vira controle" : "TV recusou: " + ferr, ferr == null ? 4000 : 10000);
                             if (ferr != null) return;
+                            activeDlnaRenderCtrl = dev.renderUrl;      // volume da TV (RenderingControl), se ela expõe
                             startCasting(CAST_DLNA, dev.controlUrl);
+                            armCastWatchdog("inicial", castFromMs);   // vigia: estado/tráfego/travou (antes só no recast)
                             // Continua na posição atual do reprodutor (ex.: 30min → abre em
                             // 30min). COM retry+confirmação: o Seek logo após o Play é
                             // recusado enquanto a TV carrega — sem insistir, ela tocava do 0.
@@ -1622,7 +1966,7 @@ public class PlayerActivity extends Activity {
         awaitingNext = true;
         status.setText("Carregando próximo episódio…");
         status.setVisibility(View.VISIBLE);
-        if (castStatusTv != null && castMode != CAST_NONE) castStatusTv.setText("Carregando próximo episódio…");
+        if (castStatusTv != null && castMode != CAST_NONE) setCastStatus("Carregando próximo episódio…");
         progressHandler.postDelayed(nextTimeout, 9000);
     }
 
@@ -1679,6 +2023,7 @@ public class PlayerActivity extends Activity {
             // devolve 0/0 enquanto carrega e o poll só sobrescreve com valor > 0).
             lastRemotePosMs = 0; lastRemoteDurMs = 0; recastRetries = 0;
             recastTargetMs = 0; posVelhaReportada = false;
+            remoteSeekTarget = 0; remoteSeekAppliedAt = 0;
             if (castTimeTv != null) castTimeTv.setText(fmtClock(0) + " / " + fmtClock(0));
             updateCastSeek();
             // Espelhando: o local NÃO toca (os dois puxariam o mesmo HLS pelo mesmo
