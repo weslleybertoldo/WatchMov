@@ -2,7 +2,7 @@ import { useEffect, useReducer } from 'react';
 import { Downloader, downloadsNative, type DownloadItem } from './downloader';
 import { getPosition, setStreamPosition } from './streamCache';
 import { fmtClock } from './watchProgress';
-import { playNative, onPlayerProgress, onPlayerNext, loadNextNative } from './nativePlayer';
+import { playNative, onPlayerProgress, onPlayerNext, onPlayerWatched, loadNextNative } from './nativePlayer';
 import { upsertNotice } from './appNotices';
 import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4, reconcileMp4 } from './mp4Download';
 
@@ -266,6 +266,26 @@ export async function playDownloaded(key: string): Promise<boolean> {
   // chave (m:tmdbId / e:tmdbId:s:e) basta pra tocar e pra guardar a posição.
   const meta = getDownloadMeta()[key] ?? metaFromKey(key);
   if (!meta) return false;
+  // Episódio que o player está tocando AGORA (muda no handoff in-place do "Próximo") —
+  // posição/assistido são sempre DESTE ep, não do que abriu o player.
+  let atual = meta;
+  let atualKey = resumeKeyOf(meta);
+  // Posição a cada ~5s (igual ao fluxo normal; se o app morrer, não perde). Vale pro MP4
+  // também — antes só o ramo do cache salvava e o MP4 dependia do resultado ao fechar.
+  let handle: { remove: () => void } | null = null;
+  onPlayerProgress?.(({ positionMs, durationMs }) => {
+    if (positionMs > 0) setStreamPosition(positionMs, atual.tmdbId, atual.type, atual.season, atual.ep, durationMs);
+  })?.then(h => { handle = h; }).catch(() => {});
+  // "Assistido" tocado DENTRO do player (✓ do overlay do cast, ou automático faltando 1 min)
+  // chega como EVENTO com a chave do episódio. Antes só o `watched` do resultado ao fechar
+  // era lido — e ele fala do ep aberto NO FECHAMENTO: marcar e tocar em "Próximo" perdia a
+  // marcação do anterior (bug real 03/09, espelhando ep baixado). O VideoPlayer já escutava;
+  // aqui (baixado) não.
+  let watchedHandle: { remove: () => void } | null = null;
+  onPlayerWatched?.(({ watched, key: k }) => {
+    watchedBridge?.set(k || atualKey, watched);
+  })?.then(h => { watchedHandle = h; }).catch(() => {});
+  let nextHandle: { remove: () => void } | null = null;
   // Baixado em MP4 (sem cache do Media3): toca o arquivo direto do MediaStore.
   if (items.get(key)?.state !== 'completed') {
     const uri = await mp4UriOf(key, tituloDoArquivo(meta));
@@ -283,6 +303,7 @@ export async function playDownloaded(key: string): Promise<boolean> {
       // `watchedKey` diz de qual ep o player está falando (ele troca de episódio sem
       // fechar); sem ela, cai na chave deste.
       if (res && typeof res.watched === 'boolean') watchedBridge?.set(res.watchedKey || resumeKeyOf(meta), res.watched);
+      handle?.remove(); watchedHandle?.remove(); nextHandle?.remove();
       notify();
       return true;
     }
@@ -297,15 +318,7 @@ export async function playDownloaded(key: string): Promise<boolean> {
   const nextKey = (meta.type === 'tv' && meta.season != null && meta.ep != null)
     ? epKey(meta.tmdbId, meta.season, meta.ep + 1) : null;
   const hasNext = !!nextKey && completedSet().has(nextKey);
-  // Episódio que o player está tocando AGORA. Muda no handoff in-place abaixo — sem
-  // isto o progresso do ep novo era gravado na chave do ep que abriu o player.
-  let atual = meta;
-  let atualKey = resumeKey;
-  // Salva a posição a cada ~5s (igual ao fluxo normal): se o app morrer, não perde.
-  let handle: { remove: () => void } | null = null;
-  onPlayerProgress?.(({ positionMs, durationMs }) => {
-    if (positionMs > 0) setStreamPosition(positionMs, atual.tmdbId, atual.type, atual.season, atual.ep, durationMs);
-  })?.then(h => { handle = h; }).catch(() => {});
+  // (`atual`/`atualKey` e os listeners de progresso/assistido já foram registrados no topo.)
 
   // CAUSA RAIZ do "Próximo trava 9s e derruba o espelhamento": ao tocar em Próximo, o
   // player pergunta ao JS qual é o link do próximo ep (evento playerNext) e ESPERA a
@@ -314,7 +327,6 @@ export async function playDownloaded(key: string): Promise<boolean> {
   // até o nextTimeout desistir, e então FECHAVA pra reabrir: Activity nova, sessão de
   // cast largada pra trás (activeCastKey velho, celular tocando em paralelo com a TV).
   // Respondendo aqui, a troca é in-place: sem espera, sem Activity nova, cast vivo.
-  let nextHandle: { remove: () => void } | null = null;
   onPlayerNext?.(() => {
     const k = (atual.type === 'tv' && atual.season != null && atual.ep != null)
       ? epKey(atual.tmdbId, atual.season, atual.ep + 1) : null;
@@ -358,6 +370,7 @@ export async function playDownloaded(key: string): Promise<boolean> {
   } finally {
     handle?.remove();
     nextHandle?.remove();
+    watchedHandle?.remove();
     notify();   // atualiza a barra da aba na volta
   }
   return true;
