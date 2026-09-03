@@ -614,6 +614,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 // Sessão fantasma (Chromecast já desconectado): sem isto a tela ficaria
                 // muda e parada, porque o local foi silenciado lá em cima.
                 activeCastMode = CAST_NONE; activeCastKey = null; activeCastTitle = null;
+                CastSessionStore.clear(this);
                 castSilentStart = false;
                 if (player != null) { player.setVolume(1f); player.setPlayWhenReady(true); }
             }
@@ -1061,7 +1062,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     }
 
     // ---- Espelhamento: controle remoto da TV (o player local pausa) ----
-    private static final int CAST_NONE = 0, CAST_CC = 1, CAST_DLNA = 2;
+    static final int CAST_NONE = 0, CAST_CC = 1, CAST_DLNA = 2;   // package-private: CastSessionStore/MediaNotificationService leem
     private int castMode = CAST_NONE;
     // Sessão de cast ATIVA no nível do app (sobrevive ao fechar o player): permite
     // retomar o overlay/controles ao reabrir o MESMO título, sem re-castar.
@@ -1074,6 +1075,40 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static boolean isCasting() { return activeCastMode != CAST_NONE; }
     public static String castKey() { return activeCastKey; }
     public static String castTitle() { return activeCastTitle; }
+
+    /**
+     * Processo NOVO com a TV ainda tocando (MediaNotificationService.restoreIfAlive): repõe
+     * os estáticos que castSilentStart/castStatus leem — o app volta a mostrar "espelhando
+     * na TV" e o player, ao abrir o mesmo episódio, reassume sem re-castar.
+     */
+    static void restoreCastSession(CastSessionStore.Session s) {
+        if (s == null) return;
+        activeCastMode = s.mode;
+        activeDlnaCtrl = s.mode == CAST_DLNA ? s.dlnaCtrl : null;
+        activeDlnaRenderCtrl = s.renderCtrl;
+        activeCastKey = s.key; activeCastTitle = s.title;
+    }
+
+    /** "Parar" na notificação com o app fechado / TV parou sozinha: sessão encerrada. */
+    static void clearActiveCast() {
+        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeDlnaRenderCtrl = null;
+        activeCastKey = null; activeCastTitle = null;
+    }
+
+    // Grava a sessão de cast em prefs (CastSessionStore): é o que deixa o serviço seguir
+    // sozinho com o app fechado e o app reassumir num processo novo. Chamado em todo
+    // startCasting (1º cast, recast, troca de episódio) — sempre com a URL/chave atuais.
+    private void saveCastSession() {
+        if (castMode == CAST_NONE || currentUrl == null) return;
+        CastSessionStore.Session s = new CastSessionStore.Session();
+        s.mode = castMode;
+        s.dlnaCtrl = castMode == CAST_DLNA ? dlnaCtrl : null;
+        s.renderCtrl = activeDlnaRenderCtrl;
+        s.url = currentUrl; s.referer = mReferer; s.mime = mMime; s.title = mTitle; s.key = resumeKey;
+        s.tvIp = castTvIp; s.qualityH = castQualityH; s.hasNext = hasNext;
+        s.offline = offline; s.downloaded = downloaded;
+        CastSessionStore.save(this, s);
+    }
     // "Próximo episódio" tocado no overlay do cast: a TV NÃO é desconectada — ao
     // reabrir com o novo episódio, reenviamos a mídia pro mesmo dispositivo.
     private static boolean castFollowNext = false;
@@ -1154,6 +1189,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (volSeek != null) volSeek.setVisibility(View.GONE);
         activeCastMode = mode; activeDlnaCtrl = (mode == CAST_DLNA ? ctrl : null); activeCastKey = resumeKey; // p/ retomar ao voltar
         activeCastTitle = mTitle;
+        saveCastSession();   // sobrevive ao fechar o app (serviço headless) e à morte do processo (reabrir)
         // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
         // o áudio do celular disputava foco com a TV → oscilava. Mudo garante silêncio.
         if (player != null) { player.pause(); player.setPlayWhenReady(false); player.setVolume(0f); }
@@ -1323,6 +1359,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         remoteVolTarget = -1; remoteVolAppliedAt = 0; volKnown = false;
         if (volSeek != null) volSeek.setVisibility(View.GONE);
         activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; // sessão encerrada
+        CastSessionStore.clear(this);             // encerrada de verdade → nada pra restaurar ao reabrir
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
         if (castOverlay != null) castOverlay.setVisibility(View.GONE);
@@ -2229,9 +2266,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     @Override
     protected void onDestroy() {
         if (current == this) current = null;
-        // Fechou o player → some a notificação (mesmo com o espelhamento seguindo na TV).
         MediaNotificationService.clearController(this);
-        MediaNotificationService.hide(this);
+        // Fechou o player COM a TV tocando → o serviço assume sozinho (headless): a
+        // notificação segue com ⏯/Parar, o proxy continua vivo e o app reassume ao
+        // reabrir. Sem espelhamento → a notificação some como antes.
+        if (isCasting()) MediaNotificationService.goHeadless(this, CastSessionStore.load(this));
+        else MediaNotificationService.hide(this);
         awaitingNext = false;
         progressHandler.removeCallbacks(nextTimeout);
         progressHandler.removeCallbacks(progressTick);
@@ -2267,6 +2307,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (castMode != CAST_NONE) { remoteSeekTo(positionMs); lastRemotePosMs = Math.max(0, positionMs); updateCastSeek(); }
         else if (player != null) player.seekTo(Math.max(0, positionMs));
         refreshMediaNotification();
+    }
+
+    // "Parar" da notificação (só aparece espelhando): mesmo efeito do "Parar espelhamento"
+    // do overlay. Sem cast (STOP da MediaSession no local) só pausa.
+    @Override public void onNotifStop() {
+        if (castMode == CAST_NONE) { if (player != null) player.pause(); refreshMediaNotification(); return; }
+        castMsg("Parando espelhamento…", 2500);
+        if (castMode == CAST_CC && castSessionManager != null) castSessionManager.endCurrentSession(true);
+        else stopCasting(true);
     }
 
     // Estado atual → notificação. Barato de chamar (só re-posta quando algo visível muda).

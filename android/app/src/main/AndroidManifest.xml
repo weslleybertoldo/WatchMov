@@ -71,11 +71,13 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Notificação de mídia do player/espelhamento: ⏯ (+ ⏭ em série) na barra e
-             na tela bloqueada; mantém o processo vivo enquanto a TV toca em background -->
+        <!-- Notificação de mídia do player/espelhamento: ⏯ (+ ⏭ em série, Parar no cast) na
+             barra e na tela bloqueada; mantém o processo (e o proxy que a TV puxa) vivo.
+             stopWithTask=false: deslizar o app dos recentes NÃO derruba o espelhamento -->
         <service
             android:name=".MediaNotificationService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="mediaPlayback" />
 
         <provider
@@ -102,6 +104,9 @@
     <!-- Notificação de mídia (Android 14+ exige o tipo do foreground service) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Espelhamento com o app fechado: WifiLock (alto desempenho) + wake lock parcial
+         enquanto a TV puxa o vídeo do proxy do celular -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Exportar o baixado pra Movies/WatchMov: só Android ≤ 9 precisa (10+ usa MediaStore) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
