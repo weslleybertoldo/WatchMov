@@ -163,10 +163,11 @@ export async function trendingToday(): Promise<MediaSummary[]> {
   return out.filter(m => m.backdropUrl).slice(0, 8);
 }
 
-// Recentes: filmes em cartaz / séries no ar
-export async function recent(type: TmdbMediaType): Promise<MediaSummary[]> {
+// Recentes: filmes em cartaz / séries no ar. `page` = paginação do "Carregar mais" da
+// aba Lançamentos (antes ignorava a página → o botão repetia a página 1 e "não carregava").
+export async function recent(type: TmdbMediaType, page = 1): Promise<MediaSummary[]> {
   const path = type === 'movie' ? '/movie/now_playing' : '/tv/on_the_air';
-  const d = await tmdbFetch<{ results: RawListItem[] }>(path, { region: 'BR', page: '1' });
+  const d = await tmdbFetch<{ results: RawListItem[] }>(path, { region: 'BR', page: String(page) });
   return dedupeWithPoster((d.results || []).map(r => toSummary(r, type)));
 }
 

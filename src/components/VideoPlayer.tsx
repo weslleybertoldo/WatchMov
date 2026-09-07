@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
+import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
@@ -153,12 +154,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const saved = localStorage.getItem(srcKey);
       if (saved && available.some(p => p.id === saved)) return saved;
     } catch { /* ignore */ }
-    // Padrão = Fonte 6 (EmbedMovies) — pedido do Weslley 07/09/2026; antes era a 2
-    // (SuperFlix). Cai na 2 e depois na 1ª disponível se a 6 não existir pro título.
+    // Padrão = servidor FAVORITO da aba Servidores (Painel, 07/09/2026); sem favorito,
+    // Fonte 6 (EmbedMovies) → Fonte 2 (SuperFlix) → 1ª disponível pro título.
     // A fonte ESCOLHIDA pelo usuário num título (srcKey, acima) continua valendo.
-    return available.find(p => p.id === 'embedmovies')?.id
-      ?? available.find(p => p.id === 'superflix')?.id
-      ?? available[0]?.id ?? 'embedplayapi';
+    return pickDefaultServer(available, loadFavoriteServer()) ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
   // O provedor é escolha do JS — o registro global (playbackLog) não tem como saber.

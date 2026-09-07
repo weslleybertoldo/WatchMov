@@ -32,17 +32,23 @@ export default function CategoryView({ title, loadPage, onOpen, onBack, cacheKey
     catCache.set(cacheKey, { ...cur, ...next });
   }, [cacheKey]);
 
+  // Espelho síncrono dos itens: o load lê daqui (não do state) pra saber quantos
+  // entraram de novo — os loads são sequenciais (o botão some enquanto carrega).
+  const itemsRef = useRef<MediaSummary[]>(cached?.items ?? []);
   const load = useCallback(async (p: number) => {
     setLoading(true);
     try {
       const res = await loadPage(p);
-      setItems(prev => {
-        const seen = new Set(prev.map(i => `${i.type}-${i.tmdbId}`));
-        const merged = [...prev, ...res.filter(i => !seen.has(`${i.type}-${i.tmdbId}`))];
-        persist({ items: merged, page: p, done: res.length === 0 });
-        return merged;
-      });
-      if (res.length === 0) setDone(true);
+      const prev = itemsRef.current;
+      const seen = new Set(prev.map(i => `${i.type}-${i.tmdbId}`));
+      const merged = [...prev, ...res.filter(i => !seen.has(`${i.type}-${i.tmdbId}`))];
+      // Página vazia OU só repetidos (fonte sem paginação real) → acabou: some o
+      // "Carregar mais" em vez de ficar um botão que não faz nada.
+      const finished = res.length === 0 || (p > 1 && merged.length === prev.length);
+      itemsRef.current = merged;
+      setItems(merged);
+      if (finished) setDone(true);
+      persist({ items: merged, page: p, done: finished });
     } finally {
       setLoading(false);
     }

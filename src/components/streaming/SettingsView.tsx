@@ -1,4 +1,4 @@
-import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Bookmark } from 'lucide-react';
+import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Bookmark, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export interface WatchedStats {
@@ -34,12 +34,13 @@ interface SettingsViewProps {
   onList: () => void;
   onHistory: () => void;
   onDownload: () => void;
+  onServers: () => void;
   onBugs: () => void;
   onSignOut: () => void;
   onBack: () => void;
 }
 
-export default function SettingsView({ stats, onList, onHistory, onDownload, onBugs, onSignOut, onBack }: SettingsViewProps) {
+export default function SettingsView({ stats, onList, onHistory, onDownload, onServers, onBugs, onSignOut, onBack }: SettingsViewProps) {
   return (
     <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -63,6 +64,11 @@ export default function SettingsView({ stats, onList, onHistory, onDownload, onB
 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onDownload}>
         <Download className="w-4 h-4" /> Download
+      </Button>
+
+      {/* Servidores (abaixo de Download — pedido 07/09/2026): marcar a fonte favorita do Assistir. */}
+      <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onServers}>
+        <Server className="w-4 h-4" /> Servidores
       </Button>
 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onBugs}>
