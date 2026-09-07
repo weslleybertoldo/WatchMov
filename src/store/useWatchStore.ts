@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AppData, Section, WatchItem, Season, DashboardStats } from '@/types/watch';
 import { supabase } from '@/lib/supabase';
+import { isSeriesFinished } from '@/lib/watchProgress';
 import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
 
@@ -582,8 +583,10 @@ export function useWatchStore(userId?: string) {
   // Selectors de streaming
   // Inclui também itens só abertos (lastWatchedAt) — players BR não disparam evento
   // de progresso/conclusão, então séries não acumulariam watchedEpisodes.
+  // Série com TODOS os episódios assistidos sai (isSeriesFinished) — "concluída" pra
+  // série é isso; `completed` só é gravado pra filme.
   const continueWatching = data.items
-    .filter(i => !i.completed && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false) || !!i.lastWatchedAt))
+    .filter(i => !i.completed && !isSeriesFinished(i) && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false) || !!i.lastWatchedAt))
     .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0));
 
   const myList = data.items
