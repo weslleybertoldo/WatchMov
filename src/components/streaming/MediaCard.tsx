@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
-import { formatRating } from '@/lib/formatters';
+import { formatRating, upcomingLabel } from '@/lib/formatters';
 import { Star, Film, Tv } from 'lucide-react';
 
 interface MediaCardProps {
@@ -43,7 +43,7 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
       )}
       {upcoming ? (
         <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-black/70 text-white/90 backdrop-blur-sm">
-          Em breve
+          {upcomingLabel(media.date)}
         </span>
       ) : fresh ? (
         <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-primary text-primary-foreground">

@@ -2,8 +2,8 @@ import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react
 import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, type TmdbDetails, type TmdbEpisodeInfo } from '@/lib/tmdb';
 import { WatchItem, Season } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
-import { formatRating, formatAirDate } from '@/lib/formatters';
-import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpisodePage, saveEpisodePage } from '@/lib/episodePages';
+import { formatRating, upcomingLabel } from '@/lib/formatters';
+import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpisodePage, saveEpisodePage, seasonDone, loadSeason, saveSeason } from '@/lib/episodePages';
 import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -154,14 +154,19 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     return () => { alive = false; };
   }, [media.tmdbId, media.type]);
 
-  // Abre já na última temporada assistida (1x; não sobrescreve escolha manual).
+  // Abre na temporada LEMBRADA — a última que ele abriu neste título ("cliquei na T2,
+  // saí e voltei → T2", igual às abas de eps) — ou, sem registro, na última assistida.
+  // 1x; não sobrescreve escolha manual.
   const seasonInitRef = useRef(false);
   useEffect(() => {
     if (seasonInitRef.current || !details?.seasons?.length) return;
+    const saved = loadSeason(media.tmdbId);
     const ls = liveItem ? lastStopped(liveItem) : null;
-    if (ls && details.seasons.some(s => s.number === ls.season)) setSelSeason(ls.season);
+    if (saved != null && details.seasons.some(s => s.number === saved)) setSelSeason(saved);
+    else if (ls && details.seasons.some(s => s.number === ls.season)) setSelSeason(ls.season);
     seasonInitRef.current = true;
-  }, [details, liveItem]);
+  }, [details, liveItem, media.tmdbId]);
+  const pickSeason = (n: number) => { setSelSeason(n); saveSeason(media.tmdbId, n); };
 
   // A TMDB ganhou temporada/episódios novos desde que a ficha nasceu? Completa a ficha
   // (1x por abertura). `upsertLibraryItem` nunca atualiza ficha existente, então marcar
@@ -444,6 +449,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     const t = h > 0 ? (m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`) : `${m}min`;
     return isSeries ? `${t}/ep` : t;
   })();
+  // Total de episódios da série (todas as temporadas da TMDB) — vai no cabeçalho de TODA
+  // série, não só das já assistidas (que têm o "EP 3/24 | Temporada 1" do progresso).
+  const totalEps = isSeries ? (details?.seasons ?? []).reduce((a, s) => a + s.totalEpisodes, 0) : 0;
   const inList = !!liveItem?.favorite;
   const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
   const hasProgress = resumeMins > 0 || (isSeries && !!liveItem?.seasons?.some(s => episodesWatched(s).length > 0));
@@ -472,11 +480,12 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
       <div className="-mt-12 relative px-1 space-y-3">
         <h1 className="text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          {totalEps > 0 && <span>{totalEps} eps</span>}
           {/* Duração antes da data: filme = duração do filme; série/anime = por episódio. */}
           {durationLabel && <span>{durationLabel}</span>}
           {releaseLabel && <span>{releaseLabel}</span>}
           {isUpcoming(details?.releaseDate) ? (
-            <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">Em breve</span>
+            <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">{upcomingLabel(details?.releaseDate)}</span>
           ) : isNew(details?.releaseDate) ? (
             <span className="px-2 py-0.5 rounded bg-primary text-primary-foreground text-xs font-medium">Novo</span>
           ) : null}
@@ -579,15 +588,26 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
         {isSeries && details?.seasons && details.seasons.length > 0 && (
           <div className="space-y-3 pt-2">
             <div className="flex flex-wrap gap-2">
-              {details.seasons.map(s => (
-                <button
-                  key={s.number}
-                  onClick={() => setSelSeason(s.number)}
-                  className={`px-3 py-1.5 rounded-lg text-sm ${selSeason === s.number ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
-                >
-                  T{s.number}
-                </button>
-              ))}
+              {details.seasons.map(s => {
+                // Temporada 100% assistida → botão verde com ✓ (igual à aba de eps toda vista).
+                const live = liveItem?.seasons?.find(x => x.number === s.number);
+                const done = seasonDone(s.totalEpisodes, live ? episodesWatched(live) : []);
+                const active = selSeason === s.number;
+                const cls = done
+                  ? (active ? 'bg-green-600 text-white' : 'bg-green-500/15 text-green-400')
+                  : (active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground');
+                return (
+                  <button
+                    key={s.number}
+                    onClick={() => pickSeason(s.number)}
+                    data-season-done={done ? '1' : undefined}
+                    className={`px-3 py-1.5 rounded-lg text-sm inline-flex items-center gap-1 ${cls}`}
+                  >
+                    T{s.number}
+                    {done && <Check className="w-3.5 h-3.5" />}
+                  </button>
+                );
+              })}
             </div>
             {(() => {
               const s = details.seasons.find(x => x.number === selSeason) || details.seasons[0];
@@ -603,12 +623,14 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                     <div className="flex items-center gap-1">
                       <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={page === 0}
                         onClick={() => goPage(page - 1)} title="Aba anterior"><ChevronLeft className="w-4 h-4" /></Button>
-                      <div ref={tabsRef} className="relative flex-1 flex gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <div ref={tabsRef} className="relative flex-1 flex gap-1.5 overflow-x-auto py-0.5 px-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                         {Array.from({ length: pages }, (_, p) => {
                           const done = pageEpisodes(p, s.totalEpisodes).every(e => watched.includes(e));
+                          // ring-inset: o anel da aba ativa é desenhado DENTRO do botão — por
+                          // fora, o overflow da faixa cortava a borda ("1-12" saía cortado).
                           return (
                             <button key={p} type="button" onClick={() => goPage(p)} data-page-active={p === page ? '1' : undefined}
-                              className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium ${p === page ? 'bg-primary/20 text-primary ring-1 ring-primary' : 'bg-muted text-muted-foreground'}`}>
+                              className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium ${p === page ? 'bg-primary/20 text-primary ring-1 ring-inset ring-primary' : 'bg-muted text-muted-foreground'}`}>
                               {pageLabel(p, s.totalEpisodes)}
                               {done && <Check className="w-3 h-3 text-green-500" />}
                             </button>
@@ -652,10 +674,10 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                           {!selecting && espelhado && (
                             <span className="absolute top-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-t bg-primary text-primary-foreground">Espelhado</span>
                           )}
-                          {/* Ainda não saiu: mostra QUANDO sai (data da TMDB) em vez de "Em breve". */}
+                          {/* Ainda não saiu: "Em breve 12/09" (data da TMDB). */}
                           {!selecting && emBreve && (
                             <span className="absolute bottom-0 inset-x-0 z-10 flex items-center justify-center gap-1 text-[9px] font-semibold py-0.5 rounded-b bg-black/75 text-white/90">
-                              <CalendarClock className="w-2.5 h-2.5 shrink-0" /> {formatAirDate(air) || 'Em breve'}
+                              <CalendarClock className="w-2.5 h-2.5 shrink-0" /> {upcomingLabel(air)}
                             </span>
                           )}
                           {!selecting && novo && (
