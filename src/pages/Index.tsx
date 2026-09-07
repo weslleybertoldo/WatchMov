@@ -5,7 +5,7 @@ import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { WatchItem } from '@/types/watch';
 import {
   MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime, getDetails,
-  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, type TmdbMediaType,
+  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, belongsToAnimeRow, type TmdbMediaType,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
 import { getCastNow, type CastNow } from '@/lib/nativePlayer';
@@ -55,19 +55,14 @@ const TV_ROW_IDS = TV_GENRES.map(g => g.id);
 
 // Loader de linha de gênero SEM repetição: cada título aparece só na sua categoria
 // predominante (1º gênero dele que tem linha) — evita Superman em Ação+Aventura+Ficção.
-// Mesma ideia para as linhas da aba Animes, que NÃO tinham dedup: como o discover
-// exige o gênero 16 (animação), todo anime cai em "Animação" e ainda aparecia em
-// Comédia e Drama ao mesmo tempo. Aqui a "predominante" é a PRIMEIRA linha (na ordem
-// das linhas) cujo gênero o título tem — "Animação", por ficar no fim, vira o fallback
-// de quem não se encaixa em nenhuma outra.
-const ANIME_ROW_IDS = ANIME_ROWS.map(r => r.id).filter((id): id is number => id != null);
+// Aba Animes tem regra própria (`belongsToAnimeRow`, em tmdb.ts): como o discover exige
+// o gênero 16 (animação) e quase todo anime também é Ação e/ou Fantasia, "1 linha por
+// título" deixava Fantasia/Mistério VAZIAS e Família com 1 item. Cada título entra nas
+// 2 linhas mais específicas dos gêneros que tem.
 const animeRowLoader = (rowId: number | null) => async () => {
   const items = await discoverAnime(1, rowId);
   if (rowId == null) return items;            // "Populares" mostra tudo
-  return items.filter(m => {
-    const primary = ANIME_ROW_IDS.find(id => (m.genreIds || []).includes(id));
-    return primary === undefined || primary === rowId;
-  });
+  return items.filter(m => belongsToAnimeRow(m.genreIds, rowId));
 };
 
 const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => async () => {
@@ -161,19 +156,42 @@ export default function Index() {
     loadSubs();
     onPushOpen(({ tmdbId, type }) => {
       getDetails(tmdbId, type === 'tv' ? 'tv' : 'movie')
-        .then(d => setSelected({ tmdbId, title: d.title, posterUrl: d.posterUrl, type, rating: d.rating, votes: d.votes }))
+        .then(d => { setAutoPlay(null); setSelected({ tmdbId, title: d.title, posterUrl: d.posterUrl, type, rating: d.rating, votes: d.votes }); })
         .catch(() => {});
     });
   }, []);
 
-  // Preserva o scroll vertical da página ao abrir um título e voltar.
-  const homeScrollRef = useRef(0);
-  const openMedia = useCallback((m: MediaSummary) => { homeScrollRef.current = window.scrollY; setSelected(m); }, []);
+  // Atalho "espelhando na TV": abre o título já dando play no episódio que está na TV.
+  // É o ÚNICO caminho que dá play sozinho, e é consumido uma vez: qualquer outro jeito
+  // de abrir ou fechar um título zera isso. Antes ficava preso depois do botão Voltar
+  // do Android (que só fechava o detalhe), e o PRÓXIMO título aberto pela home abria o
+  // servidor sozinho com o episódio errado ("clico na série e o ep abre sozinho").
+  const [autoPlay, setAutoPlay] = useState<null | { season: number; episode: number }>(null);
+  const closeDetail = useCallback(() => { setAutoPlay(null); setSelected(null); }, []);
+
+  // Preserva o lugar da página ao abrir um título e voltar. Além do scrollY, guarda a
+  // LINHA (data-row-key) onde foi o toque e a posição dela na tela: ao voltar, a home
+  // pode ter mudado de altura (hero carregando, linha "Continuar assistindo" nova ou
+  // reordenada) e restaurar só o scrollY deixava a tela "descendo" pra outro lugar.
+  const homeScrollRef = useRef<{ y: number; rowKey?: string; rowTop?: number }>({ y: 0 });
+  const lastTapRef = useRef<{ rowKey: string; rowTop: number } | null>(null);
+  useEffect(() => {
+    const onDown = (e: Event) => {
+      const el = (e.target as Element | null)?.closest?.('[data-row-key]') as HTMLElement | null;
+      lastTapRef.current = el ? { rowKey: el.dataset.rowKey || '', rowTop: el.getBoundingClientRect().top } : null;
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, []);
+  const openMedia = useCallback((m: MediaSummary) => {
+    homeScrollRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
+    setAutoPlay(null);
+    setSelected(m);
+  }, []);
 
   // O que está espelhando na TV agora (o estado vive no nativo e sobrevive ao
   // fechar o player) → atalho no topo pra voltar pro episódio que está na TV.
   const [castNow, setCastNow] = useState<CastNow | null>(null);
-  const [autoPlay, setAutoPlay] = useState<null | { season: number; episode: number }>(null);
   useEffect(() => {
     let alive = true;
     const tick = () => { getCastNow().then(c => { if (alive) setCastNow(c); }).catch(() => {}); };
@@ -197,17 +215,36 @@ export default function Index() {
       .catch(() => {});
   }, [castNow]);
   useEffect(() => {
-    if (!selected) {
-      const y = homeScrollRef.current;
-      requestAnimationFrame(() => window.scrollTo(0, y));
-    }
+    // Abriu um título: o detalhe nasce no TOPO. Ele troca o conteúdo da home no mesmo
+    // documento e herdava o scroll dela — aparecia rolado até o fim ("clico na série e
+    // vai pro final da página" / "os eps abrem sozinhos", sem passar pelo cabeçalho).
+    if (selected) { window.scrollTo(0, 0); return; }
+    const saved = homeScrollRef.current;
+    let lastSet = -1;
+    const restore = () => {
+      // Depois da 1ª passada o usuário já rolou por conta própria? Não briga com ele.
+      if (lastSet >= 0 && Math.abs(window.scrollY - lastSet) > 1) return;
+      const row = saved.rowKey
+        ? Array.from(document.querySelectorAll<HTMLElement>('[data-row-key]')).find(el => el.dataset.rowKey === saved.rowKey)
+        : undefined;
+      const target = row && saved.rowTop != null
+        ? row.getBoundingClientRect().top + window.scrollY - saved.rowTop   // mesma linha, mesmo lugar na tela
+        : saved.y;
+      const y = Math.max(0, Math.round(target));
+      if (Math.abs(y - window.scrollY) > 1) window.scrollTo(0, y);
+      lastSet = window.scrollY;
+    };
+    const raf = requestAnimationFrame(restore);
+    // 2ª passada: pega o que ainda mudou de altura logo depois (imagem/linha que carregou).
+    const t = window.setTimeout(restore, 150);
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(t); };
   }, [selected]);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
     setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (liveChannel) { setLiveChannel(null); return true; }
-    if (selected) { setSelected(null); return true; }
+    if (selected) { closeDetail(); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
@@ -220,7 +257,7 @@ export default function Index() {
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [liveChannel, selected, historyOpen, downloadOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
+  }, [liveChannel, selected, closeDetail, historyOpen, downloadOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -267,7 +304,7 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { setTab(t); setSelected(null); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
+  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -295,7 +332,7 @@ export default function Index() {
               <Search className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => { setNoticesOpen(o => !o); setSettingsOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Notificações">
+              onClick={() => { homeScrollRef.current = { y: 0 }; setNoticesOpen(o => !o); setSettingsOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Notificações">
               <Bell className="w-4 h-4" />
               {badgeNotices > 0 && (
                 <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
@@ -303,7 +340,7 @@ export default function Index() {
                 </span>
               )}
             </Button>
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); setSelected(null); setCategory(null); setSearchOpen(false); }} title="Painel">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { homeScrollRef.current = { y: 0 }; setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
           </div>
@@ -329,11 +366,14 @@ export default function Index() {
       {/* Conteúdo */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
         {selected ? (
-          <MediaDetail media={selected} store={store} autoPlay={autoPlay} castNow={castNow}
-            onBack={() => { setAutoPlay(null); setSelected(null); }}
+          /* key por título: trocar de título (relacionados) REMONTA o detalhe — estado
+             do título anterior (ficha, temporada, aba de episódios, autoPlay já usado)
+             não vaza pro novo. */
+          <MediaDetail key={`${selected.type}-${selected.tmdbId}`} media={selected} store={store} autoPlay={autoPlay} castNow={castNow}
+            onBack={closeDetail}
             /* Relacionado NÃO passa pelo openMedia: ele grava o scroll da HOME, e aqui
                estamos dentro do detalhe — sobrescrever bagunçaria a volta. */
-            onOpen={(m) => { setSelected(m); window.scrollTo(0, 0); }} />
+            onOpen={(m) => { setAutoPlay(null); setSelected(m); window.scrollTo(0, 0); }} />
         ) : noticesOpen ? (
           <NoticesView onBack={() => setNoticesOpen(false)} />
         ) : settingsOpen ? (

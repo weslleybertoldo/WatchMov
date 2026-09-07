@@ -207,28 +207,46 @@ export async function getRecommendations(tmdbId: number, type: TmdbMediaType): P
 }
 
 // Animes = TV de animação japonesa (gênero 16 + idioma original ja).
-export const ANIME_ROWS: { id: number | null; name: string }[] = [
-  { id: null, name: 'Populares' },
-  { id: 10759, name: 'Ação & Aventura' },
-  { id: 35, name: 'Comédia' },
-  { id: 18, name: 'Drama' },
-  { id: 10765, name: 'Fantasia & Ficção' },
-  { id: 9648, name: 'Mistério' },
-  { id: 10749, name: 'Romance' },
-  { id: 16, name: 'Animação' },
-  { id: 10751, name: 'Família' },
+// `priority` = quão específico é o gênero (menor = mais raro). Um título entra só nas
+// 2 linhas mais específicas entre os gêneros que tem (`belongsToAnimeRow`): "Ação" e
+// "Fantasia" são quase universais no anime — sem isso ou elas engolem as outras linhas
+// ou ficam vazias. Validado na TMDB em 07/09/2026 (página 1 de cada gênero: todas as
+// linhas com ≥10 títulos sobrando).
+// Fora: "Animação" (16 é o gênero base do discover — a linha só mostrava o que sobrava,
+// 1 título) e "Romance" (10749 é gênero de FILME; em TV a TMDB devolve 0 resultados).
+export const ANIME_ROWS: { id: number | null; name: string; priority: number }[] = [
+  { id: null, name: 'Populares', priority: 0 },
+  { id: 10759, name: 'Ação & Aventura', priority: 5 },
+  { id: 10765, name: 'Fantasia & Ficção', priority: 6 },
+  { id: 35, name: 'Comédia', priority: 8 },
+  { id: 18, name: 'Drama', priority: 7 },
+  { id: 9648, name: 'Mistério', priority: 2 },
+  { id: 80, name: 'Crime', priority: 1 },
+  { id: 10768, name: 'Guerra & Política', priority: 3 },
+  { id: 10751, name: 'Família', priority: 4 },
 ];
 
-// Gêneros de anime para o filtro da aba Procurar (sobre TV + idioma ja).
-export const ANIME_GENRES: { id: number; name: string }[] = [
-  { id: 10759, name: 'Ação & Aventura' },
-  { id: 35, name: 'Comédia' },
-  { id: 18, name: 'Drama' },
-  { id: 10765, name: 'Fantasia & Ficção' },
-  { id: 9648, name: 'Mistério' },
-  { id: 10749, name: 'Romance' },
-  { id: 10751, name: 'Família' },
-];
+// Em quantas linhas da aba Animes o mesmo título pode aparecer.
+export const ANIME_ROWS_PER_TITLE = 2;
+const ANIME_ROW_IDS_BY_PRIORITY: number[] = ANIME_ROWS
+  .filter((r): r is { id: number; name: string; priority: number } => r.id != null)
+  .sort((a, b) => a.priority - b.priority)
+  .map(r => r.id);
+
+// O título (com estes gêneros) pertence à linha `rowId`? Sim quando ela está entre as
+// ANIME_ROWS_PER_TITLE linhas mais específicas dos gêneros dele — Detetive Conan fica
+// em Crime e Mistério (não em Comédia); Bleach em Ação e Fantasia. Título sem nenhum
+// gênero de linha fica onde o discover o devolveu.
+export function belongsToAnimeRow(genreIds: number[] | undefined, rowId: number): boolean {
+  const mine = ANIME_ROW_IDS_BY_PRIORITY.filter(id => (genreIds || []).includes(id));
+  return mine.length === 0 || mine.slice(0, ANIME_ROWS_PER_TITLE).includes(rowId);
+}
+
+// Gêneros de anime para o filtro da aba Procurar (sobre TV + idioma ja) — os mesmos
+// das linhas, sem "Populares".
+export const ANIME_GENRES: { id: number; name: string }[] = ANIME_ROWS
+  .filter((r): r is { id: number; name: string; priority: number } => r.id != null)
+  .map(r => ({ id: r.id, name: r.name }));
 
 export async function discoverAnime(page = 1, extraGenre?: number | null): Promise<MediaSummary[]> {
   const d = await tmdbFetch<{ results: RawListItem[] }>(`/discover/tv`, {

@@ -99,6 +99,9 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const force = url.searchParams.get('force');   // teste manual: ?force=s1e1 ou ?force=released
   const dry = url.searchParams.get('dry') === '1';
+  // Teste dirigido: ?only=<tmdb_id> restringe a varredura a UM título (com ?force
+  // manda 1 push de teste só pra ele, em vez de um pra cada inscrição ligada).
+  const only = url.searchParams.get('only');
 
   const { data: subs, error } = await admin
     .from('wm_notify_subs').select('*').eq('enabled', true);
@@ -111,6 +114,7 @@ Deno.serve(async (req) => {
   }
 
   for (const s of subs ?? []) {
+    if (only && String(s.tmdb_id) !== only) continue;
     let hit: { key: string; title: string; body: string } | null = null;
 
     if (s.type === 'tv') {

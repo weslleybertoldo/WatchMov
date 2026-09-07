@@ -26,6 +26,20 @@ export function totalEpisodesWatched(item: WatchItem): number {
   return (item.seasons || []).reduce((sum, s) => sum + episodesWatched(s).length, 0);
 }
 
+// Série TERMINADA pro app: todas as temporadas conhecidas com todos os episódios
+// marcados. Sai do "Continuar assistindo" (não há o que continuar — Solo Leveling
+// 25/25 ficava lá pra sempre porque `completed` só existe pra filme). Se a TMDB trouxer
+// temporada/episódio novo, a ficha é completada ao abrir o título e a série volta.
+export function isSeriesFinished(item: WatchItem): boolean {
+  if (item.type !== 'series') return false;
+  const seasons = (item.seasons || []).filter(s => s.totalEpisodes > 0);
+  if (!seasons.length) return false;
+  return seasons.every(s => {
+    const seen = new Set(episodesWatched(s).filter(e => e >= 1 && e <= s.totalEpisodes));
+    return seen.size >= s.totalEpisodes;
+  });
+}
+
 // Tempo → relógio: "9:54" ou "1:46:05".
 export function fmtClock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));

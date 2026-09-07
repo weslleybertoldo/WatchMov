@@ -87,6 +87,33 @@ describe("useWatchStore", () => {
     expect(stats.totalTimeRemaining).toBe(60); // 120-60
   });
 
+  it("continueWatching: série 100% assistida SAI, série em andamento e filme parcial FICAM", async () => {
+    const base = { user_id: USER, section_id: null, total_duration: null, watched_duration: 0, completed: false, comment: null, created_at: "2025-01-01", tmdb_id: 1, imdb_id: null, poster_url: null, synopsis: null, genre: null, favorite: false, rating: null, votes: null };
+    const items = [
+      { ...base, id: "done", title: "Solo Leveling", type: "series", tmdb_id: 127532, last_watched_at: "2026-09-06T00:00:00Z",
+        seasons: [{ id: "t1", number: 1, totalEpisodes: 25, watchedEpisodes: 25, episodeDuration: 24, watchedList: Array.from({ length: 25 }, (_, i) => i + 1) }] },
+      { ...base, id: "going", title: "Frieren", type: "series", tmdb_id: 209867, last_watched_at: "2026-09-05T00:00:00Z",
+        seasons: [{ id: "t1", number: 1, totalEpisodes: 38, watchedEpisodes: 6, episodeDuration: 25, watchedList: [1, 2, 3, 4, 5, 6] }] },
+      { ...base, id: "two", title: "Duas temporadas", type: "series", tmdb_id: 3, last_watched_at: "2026-09-04T00:00:00Z",
+        seasons: [
+          { id: "a", number: 1, totalEpisodes: 12, watchedEpisodes: 12, episodeDuration: 24, watchedList: Array.from({ length: 12 }, (_, i) => i + 1) },
+          { id: "b", number: 2, totalEpisodes: 13, watchedEpisodes: 0, episodeDuration: 24, watchedList: [] },
+        ] },
+      { ...base, id: "movie", title: "Filme", type: "movie", tmdb_id: 4, total_duration: 120, watched_duration: 30, last_watched_at: "2026-09-03T00:00:00Z", seasons: null },
+      { ...base, id: "movie-done", title: "Filme visto", type: "movie", tmdb_id: 5, total_duration: 120, watched_duration: 120, completed: true, last_watched_at: "2026-09-02T00:00:00Z", seasons: null },
+    ];
+    setResp("wm_sections", "select", { data: [{ id: "sec", user_id: USER, name: "S", icon: "📁", created_at: "2025-01-01" }], error: null });
+    setResp("wm_items", "select", { data: items, error: null });
+
+    const { result } = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ids = result.current.continueWatching.map(i => i.id);
+    expect(ids).toEqual(["going", "two", "movie"]);   // ordem = último assistido primeiro
+    expect(ids).not.toContain("done");
+    expect(ids).not.toContain("movie-done");
+  });
+
   it("addSection atualiza o estado quando o insert tem sucesso", async () => {
     setResp("wm_sections", "select", { data: [{ id: "sec", user_id: USER, name: "S", icon: "📁", created_at: "2025-01-01" }], error: null });
     setResp("wm_items", "select", { data: [], error: null });

@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Subtitles, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2, MoreVertical } from 'lucide-react';
+import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2, MoreVertical } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import Hls from 'hls.js';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
-import { getTorrentStream, destroyTorrent } from '@/lib/torrentClient';
-import { fetchSubtitles, srtUrlToVttBlob, type StremioSubtitle } from '@/lib/stremio';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
@@ -51,8 +48,6 @@ interface VideoPlayerProps {
   title?: string;
   posterUrl?: string;
   resumeAt?: number;          // segundos (só VidAPI usa)
-  directUrl?: string;         // stream HTTP direto (Stremio) — toca em <video>, ignora provedores
-  torrent?: { magnet: string; fileIdx?: number };  // WebTorrent (Stremio sem debrid)
   onProgress?: (seconds: number) => void;
   onCompleted?: () => void;
   watched?: boolean;               // assistido (episódio atual ou filme)
@@ -65,7 +60,7 @@ interface VideoPlayerProps {
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, directUrl, torrent, onProgress, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, onProgress, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -75,7 +70,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   // Captura passiva (estilo Web Video Cast): o iframe do servidor toca normal e o
   // nativo observa o tráfego, ACUMULANDO todos os vídeos detectados (o usuário
@@ -102,60 +96,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const onNextRef = useRef(onNext);
   useEffect(() => { onNextRef.current = onNext; });
 
-  // Legendas (modo <video>: directUrl/torrent). Stremio OpenSubtitles → .srt → blob VTT.
-  const [subsOpen, setSubsOpen] = useState(false);
-  const [subList, setSubList] = useState<StremioSubtitle[]>([]);
-  const [subVtt, setSubVtt] = useState<string | null>(null);   // blob URL ativo
-  const [subId, setSubId] = useState<string | null>(null);     // legenda selecionada (null = off)
-
-  // Modo torrent (WebTorrent): resolve a streamURL de forma assíncrona.
-  const [tor, setTor] = useState<{ loading: boolean; url?: string; name?: string; playable?: boolean; id?: string; error?: string }>({ loading: false });
-  useEffect(() => {
-    if (!open || !torrent) return;
-    let alive = true;
-    let torrentId: string | undefined;
-    setTor({ loading: true });
-    getTorrentStream(torrent.magnet, torrent.fileIdx)
-      .then(s => { if (alive) { torrentId = s.torrentId; setTor({ loading: false, url: s.url, name: s.name, playable: s.playable, id: s.torrentId }); } })
-      .catch(e => { if (alive) setTor({ loading: false, error: e instanceof Error ? e.message : 'Falha ao carregar torrent' }); });
-    return () => { alive = false; if (torrentId) destroyTorrent(torrentId); };
-  }, [open, torrent]);
-
-  // Buscar legendas PT só no modo <video> (directUrl/torrent) e com imdbId.
-  useEffect(() => {
-    if (!open || !(directUrl || torrent) || !imdbId) { setSubList([]); return; }
-    let alive = true;
-    fetchSubtitles({ imdbId, type, season, episode })
-      .then(list => { if (alive) setSubList(list); })
-      .catch(() => { if (alive) setSubList([]); });
-    return () => { alive = false; };
-  }, [open, directUrl, torrent, imdbId, type, season, episode]);
-
-  // Trocar legenda ativa: baixa .srt → VTT blob; revoga o anterior.
-  const pickSubtitle = async (s: StremioSubtitle | null) => {
-    setSubsOpen(false);
-    setSubVtt(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
-    setSubId(s?.id ?? null);
-    if (!s) return;
-    try {
-      const blob = await srtUrlToVttBlob(s.url);
-      setSubVtt(blob);
-    } catch {
-      toast.error('Não consegui carregar essa legenda', { description: 'Tente outra opção.' });
-      setSubId(null);
-    }
-  };
-
-  // Cleanup do blob ao desmontar/fechar.
-  useEffect(() => () => { setSubVtt(prev => { if (prev) URL.revokeObjectURL(prev); return null; }); }, []);
-
   // Auto-oculta nossos controles após 4s (libera os controles do provedor embaixo).
-  // Não esconde enquanto um dropdown (fonte/legenda) está aberto.
+  // Não esconde enquanto o dropdown de fonte está aberto.
   useEffect(() => {
-    if (!open || !fullscreen || !controlsVisible || sourceOpen || subsOpen) return;
+    if (!open || !fullscreen || !controlsVisible || sourceOpen) return;
     const t = setTimeout(() => setControlsVisible(false), 4000);
     return () => clearTimeout(t);
-  }, [open, fullscreen, controlsVisible, sourceOpen, subsOpen]);
+  }, [open, fullscreen, controlsVisible, sourceOpen]);
 
   // Ao fechar/desmontar o player, restaura orientação e barras do sistema.
   useEffect(() => {
@@ -215,19 +162,17 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Zera ao fechar pra não carimbar erro de episódio BAIXADO com a fonte antiga.
   useEffect(() => { setLogProvider(open ? (providerId ?? null) : null); }, [open, providerId]);
 
-  const directMode = !!directUrl || !!torrent;
-
   // URL do embed do servidor (iframe, como hoje).
   let embedUrl: string | null = provider ? provider.build(target) : null;
   if (embedUrl && provider?.id === 'vidapi' && resumeAt && resumeAt > 0) {
     embedUrl += `&resumeAt=${Math.floor(resumeAt)}`;
   }
 
-  // <video> HTML5 = só Stremio/torrent (directMode). O stream capturado nos
-  // servidores toca no ExoPlayer nativo (headers Referer + buffer).
-  const nativeOwn = isNative() && !!ownStream && !preferIframe && !directMode;
-  const videoSrc = torrent ? (tor.url ?? null) : directUrl ? directUrl : null;
-  const src: string | null = nativeOwn ? (ownStream?.url ?? null) : directMode ? videoSrc : embedUrl;
+  // O stream capturado nos servidores toca no ExoPlayer nativo (headers Referer +
+  // buffer); na web fica o iframe do servidor. (O <video> HTML5 do Stremio/torrent
+  // saiu em 09/2026 junto com a função torrent.)
+  const nativeOwn = isNative() && !!ownStream && !preferIframe;
+  const src: string | null = nativeOwn ? (ownStream?.url ?? null) : embedUrl;
 
   // Ao abrir: carrega a lista salva; se há um último link escolhido, reabre nele
   // (ExoPlayer). O sniffer fica SEMPRE ativo no modo servidor, acumulando links
@@ -238,7 +183,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!open) return;
     setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
-    if (directMode || !isNative()) return;
+    if (!isNative()) return;
     // Veio do "Próximo episódio": este ep começa do ZERO. Limpa a posição salva nos
     // DOIS stores (streamCache + SharedPreferences do player) — as versões antigas
     // gravavam o tempo do ep anterior na chave deste, e a TV abria em 0:50:19.
@@ -261,7 +206,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // nativo na hora (sem url) pra ele cair no fluxo antigo em vez de esperar o
     // timeout — o app volta pro servidor e captura o link do ep novo.
     if (awaitingNextRef.current && !toPlay) loadNextNative({});
-  }, [open, directMode, tmdbId, type, season, episode]);
+  }, [open, tmdbId, type, season, episode]);
 
   // "Próximo episódio" tocado DENTRO do player nativo: o player NÃO fecha mais —
   // avança o episódio aqui e devolve o link pra ele (a TV segue espelhando).
@@ -282,7 +227,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // (B) Lista salva + captura passiva — roda também ao trocar de provedor (embedUrl),
   // acumulando links sem mexer no que já está tocando/escolhido.
   useEffect(() => {
-    if (!open || directMode || !embedUrl || !isNative()) { setCapturedList([]); return; }
+    if (!open || !embedUrl || !isNative()) { setCapturedList([]); return; }
     setCapturedList(getEntry(tmdbId, type, season, episode)?.streams ?? []);
     let alive = true;
     let stop = () => {};
@@ -304,7 +249,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       addStreams([r], tmdbId, type, season, episode);
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
-  }, [open, embedUrl, directMode, tmdbId, type, season, episode]);
+  }, [open, embedUrl, tmdbId, type, season, episode]);
 
   // Players externos instalados (pra oferecer no diálogo de cast).
   useEffect(() => {
@@ -431,7 +376,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   // Salva a posição que o ExoPlayer reporta a cada ~5s (retomar de onde parou).
   useEffect(() => {
-    if (!open || directMode || !isNative()) return;
+    if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
     onPlayerProgress?.(({ url, positionMs, durationMs }) => {
       // Só salva se o progresso for DESTE episódio: ao avançar, o player ainda
@@ -442,7 +387,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode, durationMs);
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
-  }, [open, directMode, tmdbId, type, season, episode]);
+  }, [open, tmdbId, type, season, episode]);
 
   // "Assistido" reportado pelo player nativo (botão ou faltando 1 min pro fim).
   // Deps SÓ [open], de propósito: `onSetWatched` é uma arrow NOVA a cada render do
@@ -465,7 +410,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
   // Aprende a resolução real do link (do ExoPlayer) e rotula na lista.
   useEffect(() => {
-    if (!open || directMode || !isNative()) return;
+    if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
     onPlayerQuality?.(({ url, quality }) => {
       if (!quality) return;
@@ -473,12 +418,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       addStreams([{ url, quality }], tmdbId, type, season, episode);
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
-  }, [open, directMode, tmdbId, type, season, episode]);
+  }, [open, tmdbId, type, season, episode]);
 
   // Registra no banco (aba "Bugs") todo erro de reprodução do player nativo, com o
   // motivo REAL (código/causa/HTTP) — pra entender por que os links não tocam.
   useEffect(() => {
-    if (!open || directMode || !isNative()) return;
+    if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
     onPlayerError?.((e) => {
       // Tira da lista SÓ o que é morte permanente: expirado (403/410), muro
@@ -498,23 +443,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // tmdbId/type/season/episode nas deps: o callback usa essas chaves pra remover o
     // link e registrar o erro — sem elas, trocar de episódio com o player aberto
     // gravava/removia no episódio ANTERIOR.
-  }, [open, directMode, providerId, title, tmdbId, type, season, episode]);
-
-  // <video> (Stremio/torrent): anexa a fonte (hls.js pra .m3u8; src direto pro resto).
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!open || !directMode || !videoSrc || !v) return;
-    const isHls = /\.m3u8(\?|$)/i.test(videoSrc);
-    let hls: Hls | null = null;
-    if (isHls && !v.canPlayType('application/vnd.apple.mpegurl') && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true });
-      hls.loadSource(videoSrc);
-      hls.attachMedia(v);
-    } else {
-      v.src = videoSrc;
-    }
-    return () => { if (hls) hls.destroy(); };
-  }, [open, directMode, videoSrc]);
+  }, [open, providerId, title, tmdbId, type, season, episode]);
 
   useEffect(() => {
     if (!open) return;
@@ -566,10 +495,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Player externo (WVC/VLC/MX): manda o link CAPTURADO (ou direto) + Referer.
   const castExt = async (app: ExternalApp) => {
     const s = ownStream || capturedList[0] || null;
-    const url = s?.url || videoSrc || null;
+    const url = s?.url || null;
     if (!url) { toast.error('Sem link direto ainda', { description: 'Dê play no servidor uma vez pra capturar o vídeo; depois abra no app externo.' }); return; }
     const mime = url.includes('.m3u8') || url.includes('/m3/') || url.includes('master') ? 'application/x-mpegURL' : url.includes('.mpd') ? 'application/dash+xml' : 'video/*';
-    const ok = await castToExternal({ pkg: app.pkg, url, title, referer: s?.referer, ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', mime, subs: subVtt ? [subVtt] : undefined });
+    const ok = await castToExternal({ pkg: app.pkg, url, title, referer: s?.referer, ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', mime });
     if (ok) { setCastOpen(false); toast.success(`Enviado pro ${app.name}`); } else { toast.error(`Não consegui abrir no ${app.name}`); }
   };
 
@@ -615,20 +544,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
           {/* Botão SEMPRE visível: lista de links capturados (escolher / servidor). */}
-          {!directMode && (
-            <Button variant="ghost" size="icon" className="relative h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
-              title="Links do vídeo" onClick={() => setPickerOpen(true)}>
-              <ListVideo className="w-5 h-5" />
-              {capturedList.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">{capturedList.length}</span>
-              )}
-            </Button>
-          )}
-          <div className="relative" hidden={directMode}>
+          <Button variant="ghost" size="icon" className="relative h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
+            title="Links do vídeo" onClick={() => setPickerOpen(true)}>
+            <ListVideo className="w-5 h-5" />
+            {capturedList.length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">{capturedList.length}</span>
+            )}
+          </Button>
+          <div className="relative">
             <Button variant="ghost" size="icon" className="h-9 w-9 text-white/80 hover:text-white hover:bg-white/10" title="Trocar fonte" onClick={() => setSourceOpen(o => !o)}>
               <Layers className="w-5 h-5" />
             </Button>
-            {!directMode && sourceOpen && (
+            {sourceOpen && (
               <div className="fixed left-1/2 -translate-x-1/2 top-14 z-30 bg-card border border-border rounded-lg py-1 w-56 max-w-[90vw] shadow-xl">
                 <p className="px-3 py-1 text-[10px] text-muted-foreground">Fontes (troque se estiver em inglês ou não carregar)</p>
                 {available.map(p => (
@@ -640,27 +567,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               </div>
             )}
           </div>
-          {directMode && (
-            <div className="relative">
-              <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${subId ? 'text-primary' : 'text-white/80'}`} title="Legendas" onClick={() => setSubsOpen(o => !o)}>
-                <Subtitles className="w-5 h-5" />
-              </Button>
-              {subsOpen && (
-                <div className="absolute right-0 top-11 z-20 bg-card border border-border rounded-lg py-1 w-52 shadow-xl max-h-72 overflow-auto">
-                  <p className="px-3 py-1 text-[10px] text-muted-foreground">Legendas {subList.length ? `(${subList.length})` : '— buscando/sem PT'}</p>
-                  <button onClick={() => pickSubtitle(null)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
-                    Desligada {subId === null && <Check className="w-4 h-4 text-primary" />}
-                  </button>
-                  {subList.map(s => (
-                    <button key={s.id} onClick={() => pickSubtitle(s)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
-                      <span className="truncate">{s.label}</span>
-                      {s.id === subId && <Check className="w-4 h-4 text-primary shrink-0" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           {onSetWatched && (
             <Button variant="ghost" size="icon" className={`h-9 w-9 hover:text-white hover:bg-white/10 ${watched ? 'text-primary' : 'text-white/80'}`} title={watched ? 'Assistido (toque pra desmarcar)' : 'Marcar como assistido'} onClick={() => onSetWatched(!watched)}>
               {watched ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
@@ -704,23 +610,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       </div>
 
       <div className={fullscreen ? 'absolute inset-0' : 'flex-1 min-h-0'}>
-        {torrent && tor.loading ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <p>Conectando a peers (WebTorrent)…</p>
-            <p className="text-white/50 text-xs">Pode levar alguns segundos. Depende de seeders WebRTC disponíveis.</p>
-          </div>
-        ) : torrent && tor.error ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
-            <p className="text-amber-400">{tor.error}</p>
-            <p className="text-white/50 text-xs">Torrents só tocam aqui com seeders WebRTC e formato MP4/WebM. Tente outra opção, ou abra no Stremio.</p>
-          </div>
-        ) : torrent && tor.url && tor.playable === false ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/80 text-sm px-6 text-center">
-            <p className="text-amber-400">Formato não suportado no navegador: {tor.name}</p>
-            <p className="text-white/50 text-xs">O navegador só decodifica MP4 (H.264) e WebM. Este arquivo (provável .mkv/.avi) não toca aqui — escolha uma opção MP4 ou abra no Stremio.</p>
-          </div>
-        ) : nativeOwn ? (
+        {nativeOwn ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
             <Sparkles className="w-8 h-8 text-primary" />
             <p className="text-white">Tocando no seu player</p>
@@ -733,29 +623,6 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           </div>
         ) : !src ? (
           <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
-        ) : directMode ? (
-          <video
-            ref={videoRef}
-            key={videoSrc ?? 'video'}
-            className="w-full h-full bg-black"
-            controls
-            autoPlay
-            playsInline
-            onLoadedMetadata={e => {
-              if (resumeAt && resumeAt > 0 && resumeAt < e.currentTarget.duration - 5) {
-                e.currentTarget.currentTime = resumeAt;
-              }
-            }}
-            onTimeUpdate={e => {
-              const secs = Math.floor(e.currentTarget.currentTime);
-              if (secs > 0 && Math.abs(secs - lastSavedRef.current) >= 30) { lastSavedRef.current = secs; onProgress?.(secs); }
-              const dur = e.currentTarget.duration;
-              if (dur > 60 && e.currentTarget.currentTime >= dur - 60 && !watched) onSetWatched?.(true);
-            }}
-            onEnded={() => { if (!completedRef.current) { completedRef.current = true; onCompleted?.(); } }}
-          >
-            {subVtt && <track kind="subtitles" src={subVtt} srcLang="pt" label="Português" default />}
-          </video>
         ) : (
           <iframe
             key={src}
@@ -770,7 +637,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       </div>
 
       {/* Banner: vídeo(s) capturado(s) em background enquanto assiste no servidor. */}
-      {!directMode && !nativeOwn && !preferIframe && capturedList.length > 0 && (
+      {!nativeOwn && !preferIframe && capturedList.length > 0 && (
         <div className="absolute left-1/2 -translate-x-1/2 bottom-6 z-30 w-[92%] max-w-md bg-card border border-primary/40 rounded-xl shadow-2xl p-3 flex items-center gap-3 animate-fade-in">
           <Sparkles className="w-5 h-5 text-primary shrink-0" />
           <div className="flex-1 min-w-0">

@@ -2,18 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { trendingToday, type MediaSummary } from '@/lib/tmdb';
 
+// Cache em memória: ao voltar do detalhe o hero remonta JÁ com os itens (mesma altura
+// na hora). Antes nascia vazio (altura 0) e, quando a TMDB respondia, empurrava a
+// página inteira pra baixo — a posição do scroll restaurada ficava errada ("a tela
+// vai descendo"). Mesmo padrão do rowCache do MediaRow.
+let heroCache: MediaSummary[] | null = null;
+
 // Hero "Populares Hoje" (estilo Smart Play): backdrop grande em carrossel
 // auto-rotativo, com play + dots. Toque abre o título.
 export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => void }) {
-  const [items, setItems] = useState<MediaSummary[]>([]);
+  const [items, setItems] = useState<MediaSummary[]>(() => heroCache ?? []);
   const [i, setI] = useState(0);
   const startX = useRef<number | null>(null);
   const swiped = useRef(false);                 // distingue arraste de toque (não abre no swipe)
   const go = (dir: number) => setI(p => (p + dir + items.length) % items.length);
 
   useEffect(() => {
+    if (heroCache) return;
     let alive = true;
-    trendingToday().then(r => { if (alive) setItems(r); }).catch(() => {});
+    trendingToday().then(r => { heroCache = r; if (alive) setItems(r); }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
@@ -34,6 +41,7 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
       // encolhe a LARGURA e o hero fica num canto com faixa preta ao lado.
       // Em md+ solta o ratio e fixa a altura: largura total, imagem cobre.
       className="relative -mx-4 md:-mx-6 -mt-2 mb-2 aspect-video max-h-[46vh] md:aspect-auto md:h-[46vh] md:max-h-none overflow-hidden cursor-pointer animate-fade-in"
+      data-row-key="hero"
       style={{ touchAction: 'pan-y' }}
       onTouchStart={(e) => { startX.current = e.touches[0].clientX; swiped.current = false; }}
       onTouchMove={(e) => { if (startX.current != null && Math.abs(e.touches[0].clientX - startX.current) > 10) swiped.current = true; }}

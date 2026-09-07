@@ -1,13 +1,13 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, type TmdbDetails, type TmdbEpisodeInfo } from '@/lib/tmdb';
 import { WatchItem, Season } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
-import { formatRating } from '@/lib/formatters';
+import { formatRating, formatAirDate } from '@/lib/formatters';
+import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpisodePage, saveEpisodePage } from '@/lib/episodePages';
 import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
-import StremioStreamsDialog from '@/components/streaming/StremioStreamsDialog';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff, ChevronLeft, ChevronRight, CalendarClock } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
 import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
@@ -94,9 +94,15 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   );
   // Versão "viva" do store (reflete marcações de episódio/progresso em tempo real).
   const liveItem = store.data.items.find(i => i.tmdbId === media.tmdbId && i.type === storeType) ?? libItem;
-  const [player, setPlayer] = useState<null | { season?: number; episode?: number; directUrl?: string; directLabel?: string; torrent?: { magnet: string; fileIdx?: number } }>(null);
-  const [stremioOpen, setStremioOpen] = useState(false);
+  const [player, setPlayer] = useState<null | { season?: number; episode?: number }>(null);
   const [selSeason, setSelSeason] = useState(1);
+  // Aba de episódios (12 por aba) da temporada aberta — ver episodePages.ts.
+  const [epPage, setEpPage] = useState(0);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  // Sinopse fechada em 2 linhas + "ver mais" (só quando há mais texto que isso).
+  const [synOpen, setSynOpen] = useState(false);
+  const [synOverflow, setSynOverflow] = useState(false);
+  const synRef = useRef<HTMLParagraphElement>(null);
   const [loading, setLoading] = useState(true);
   const dls = useDownloads();
   const { items: dlItems } = useDownloadList();   // estado/progresso por episódio
@@ -157,10 +163,74 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     seasonInitRef.current = true;
   }, [details, liveItem]);
 
+  // A TMDB ganhou temporada/episódios novos desde que a ficha nasceu? Completa a ficha
+  // (1x por abertura). `upsertLibraryItem` nunca atualiza ficha existente, então marcar
+  // episódio de temporada nova caía no no-op MARCAR_EP_SEM_TEMPORADA, e uma série
+  // "terminada" (todos os eps vistos) não voltava pro Continuar assistindo quando saía
+  // episódio novo. Só AUMENTA totais e ACRESCENTA temporadas — nunca apaga progresso.
+  const seasonsSyncedRef = useRef(false);
+  useEffect(() => {
+    if (seasonsSyncedRef.current || !isSeries || !details?.seasons?.length || !liveItem) return;
+    seasonsSyncedRef.current = true;
+    const atuais = liveItem.seasons || [];
+    let mudou = false;
+    const merged: Season[] = atuais.map(s => {
+      const t = details.seasons?.find(x => x.number === s.number);
+      if (t && t.totalEpisodes > s.totalEpisodes) { mudou = true; return { ...s, totalEpisodes: t.totalEpisodes }; }
+      return s;
+    });
+    for (const t of details.seasons) {
+      if (atuais.some(s => s.number === t.number)) continue;
+      mudou = true;
+      merged.push({ id: generateId(), number: t.number, totalEpisodes: t.totalEpisodes, watchedEpisodes: 0, episodeDuration: t.episodeDuration, watchedList: [] });
+    }
+    if (mudou) store.updateItem(liveItem.id, { seasons: merged.sort((a, b) => a.number - b.number) });
+  }, [details, isSeries, liveItem, store]);
+
+  // Aba de episódios ao abrir a temporada: a LEMBRADA (voltou do player/da home com a
+  // aba 4 aberta → aba 4) ou, sem registro, a do primeiro episódio não assistido.
+  const liveItemRef = useRef(liveItem);
+  useEffect(() => { liveItemRef.current = liveItem; });
+  useEffect(() => {
+    const s = details?.seasons?.find(x => x.number === selSeason);
+    if (!s) return;
+    const saved = loadEpisodePage(media.tmdbId, selSeason);
+    if (saved != null && saved < pageCount(s.totalEpisodes)) { setEpPage(saved); return; }
+    const live = liveItemRef.current?.seasons?.find(x => x.number === selSeason);
+    setEpPage(defaultPage(s.totalEpisodes, live ? episodesWatched(live) : []));
+  }, [details, selSeason, media.tmdbId]);
+  const goPage = (p: number) => { setEpPage(p); saveEpisodePage(media.tmdbId, selSeason, p); };
+  // Aba ativa sempre visível na faixa de abas (rola SÓ a faixa, na horizontal — nunca
+  // a página, senão cada re-render puxaria a tela pra cá).
+  useEffect(() => {
+    const c = tabsRef.current;
+    const el = c?.querySelector<HTMLElement>('[data-page-active="1"]');
+    if (!c || !el) return;
+    if (el.offsetLeft < c.scrollLeft || el.offsetLeft + el.offsetWidth > c.scrollLeft + c.clientWidth) {
+      c.scrollTo({ left: Math.max(0, el.offsetLeft - 12) });
+    }
+  }, [epPage, selSeason, details]);
+
+  // Sinopse: só mostra "ver mais" se, fechada em 2 linhas, sobrou texto escondido.
+  useLayoutEffect(() => {
+    const el = synRef.current;
+    setSynOverflow(!!el && el.scrollHeight > el.clientHeight + 1);
+  }, [details?.synopsis, synOpen]);
+
+  // Fechar o player: se o episódio que ficou tocando (auto-avanço) mora em OUTRA aba da
+  // temporada aberta, a aba segue pra ele; senão fica a que estava ("mantém a aba 4").
+  const closePlayer = useCallback(() => {
+    if (player?.season === selSeason && player.episode) {
+      const p = pageOfEpisode(player.episode);
+      if (p !== epPage) { setEpPage(p); saveEpisodePage(media.tmdbId, selSeason, p); }
+    }
+    setPlayer(null);
+  }, [player, selSeason, epPage, media.tmdbId]);
+
   const handlePlayerBack = useCallback(async (): Promise<boolean> => {
-    if (player) { setPlayer(null); return true; }
+    if (player) { closePlayer(); return true; }
     return false;
-  }, [player]);
+  }, [player, closePlayer]);
   useAndroidBackButton(handlePlayerBack);
 
   const seasonsFromDetails = useCallback((): Season[] => {
@@ -227,17 +297,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [details, autoPlay, isSeries]);
-
-  const playStremio = async (url: string, label: string, season?: number, episode?: number) => {
-    await ensureLib();
-    setStremioOpen(false);
-    setPlayer({ season, episode, directUrl: url, directLabel: label });
-  };
-  const playStremioTorrent = async (magnet: string, fileIdx: number | undefined, label: string, season?: number, episode?: number) => {
-    await ensureLib();
-    setStremioOpen(false);
-    setPlayer({ season, episode, directLabel: label, torrent: { magnet, fileIdx } });
-  };
 
   // Próximo episódio não assistido (continuar de onde parou, séries).
   const nextSeriesEp = (): { season: number; episode: number } => {
@@ -459,13 +518,11 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           </div>
         )}
 
-        {/* Ações — principal = servidores embed (retoma de onde parou); Torrent = Stremio/debrid */}
+        {/* Ações — principal = servidores embed (retoma de onde parou). O botão Torrent
+            (Stremio/debrid/WebTorrent) saiu em 09/2026: função descontinuada. */}
         <div className="flex flex-wrap gap-2 pt-1">
           <Button className="flex-1" onClick={playMain}>
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
-          </Button>
-          <Button variant="outline" onClick={() => setStremioOpen(true)} title="Torrent / Stremio (dublado via debrid)">
-            <Download className="w-4 h-4 mr-1" /> Torrent
           </Button>
           <Button variant={inList ? 'default' : 'outline'} onClick={toggleList}>
             {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Lista
@@ -505,7 +562,16 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           )}
         </div>
 
-        {details?.synopsis && <p className="text-sm text-muted-foreground leading-relaxed">{details.synopsis}</p>}
+        {details?.synopsis && (
+          <div>
+            <p ref={synRef} className={`text-sm text-muted-foreground leading-relaxed ${synOpen ? '' : 'line-clamp-2'}`}>{details.synopsis}</p>
+            {(synOverflow || synOpen) && (
+              <button type="button" onClick={() => setSynOpen(o => !o)} className="mt-1 text-xs font-medium text-primary">
+                {synOpen ? 'ver menos' : 'ver mais'}
+              </button>
+            )}
+          </div>
+        )}
 
         {loading && <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Carregando detalhes…</div>}
 
@@ -527,12 +593,36 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
               const s = details.seasons.find(x => x.number === selSeason) || details.seasons[0];
               const liveSeason = liveItem?.seasons?.find(x => x.number === s.number);
               const watched = liveSeason ? episodesWatched(liveSeason) : [];
+              const pages = pageCount(s.totalEpisodes);
+              const page = Math.min(epPage, pages - 1);
               return (
                 <>
+                  {/* Abas de 12 episódios ("1-12", "13-24"…): ✓ na aba toda assistida,
+                      setas pra avançar/voltar, aba aberta lembrada (episodePages.ts). */}
+                  {pages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={page === 0}
+                        onClick={() => goPage(page - 1)} title="Aba anterior"><ChevronLeft className="w-4 h-4" /></Button>
+                      <div ref={tabsRef} className="relative flex-1 flex gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        {Array.from({ length: pages }, (_, p) => {
+                          const done = pageEpisodes(p, s.totalEpisodes).every(e => watched.includes(e));
+                          return (
+                            <button key={p} type="button" onClick={() => goPage(p)} data-page-active={p === page ? '1' : undefined}
+                              className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium ${p === page ? 'bg-primary/20 text-primary ring-1 ring-primary' : 'bg-muted text-muted-foreground'}`}>
+                              {pageLabel(p, s.totalEpisodes)}
+                              {done && <Check className="w-3 h-3 text-green-500" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={page >= pages - 1}
+                        onClick={() => goPage(page + 1)} title="Próxima aba"><ChevronRight className="w-4 h-4" /></Button>
+                    </div>
+                  )}
                   {/* Grid 16:9 com o frame do episódio (still da TMDB). Sem imagem,
                       cai no visual antigo: só o número no fundo neutro. */}
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                    {Array.from({ length: s.totalEpisodes }, (_, i) => i + 1).map(ep => {
+                    {pageEpisodes(page, s.totalEpisodes).map(ep => {
                       const seen = watched.includes(ep);
                       // Data de exibição do episódio: futura = "Em breve" (não dá pra
                       // assistir ainda), últimos 30 dias = "Novo". Sem data, nada.
@@ -562,8 +652,11 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                           {!selecting && espelhado && (
                             <span className="absolute top-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-t bg-primary text-primary-foreground">Espelhado</span>
                           )}
+                          {/* Ainda não saiu: mostra QUANDO sai (data da TMDB) em vez de "Em breve". */}
                           {!selecting && emBreve && (
-                            <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-black/70 text-white/90">Em breve</span>
+                            <span className="absolute bottom-0 inset-x-0 z-10 flex items-center justify-center gap-1 text-[9px] font-semibold py-0.5 rounded-b bg-black/75 text-white/90">
+                              <CalendarClock className="w-2.5 h-2.5 shrink-0" /> {formatAirDate(air) || 'Em breve'}
+                            </span>
                           )}
                           {!selecting && novo && (
                             <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-primary text-primary-foreground">Novo</span>
@@ -589,7 +682,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                           {/* Duração DESTE episódio (varia dentro da temporada) —
                               canto inferior esquerdo, acima da barra de progresso e
                               longe do ícone de download, que fica na direita. */}
-                          {!selecting && (info?.runtime || s.episodeDuration) > 0 && (
+                          {!selecting && !emBreve && (info?.runtime || s.episodeDuration) > 0 && (
                             <span className="absolute bottom-1.5 left-1 z-10 rounded bg-black/70 px-1 py-0.5 text-[9px] leading-none text-white/90">
                               {info?.runtime || s.episodeDuration}min
                             </span>
@@ -631,7 +724,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
       {player && (
         <VideoPlayer
           open={!!player}
-          onClose={() => setPlayer(null)}
+          onClose={closePlayer}
           tmdbId={media.tmdbId}
           imdbId={libItem?.imdbId || details?.imdbId}
           type={media.type}
@@ -640,8 +733,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           title={isSeries && player.season ? `${media.title} — T${player.season} E${player.episode}` : (details?.title || media.title)}
           posterUrl={media.posterUrl}
           resumeAt={resumeMins > 0 ? resumeMins * 60 : undefined}
-          directUrl={player.directUrl}
-          torrent={player.torrent}
           watched={isSeries ? (player.season ? isEpisodeWatched(liveItem, player.season, player.episode) : undefined) : movieWatched}
           onSetWatched={
             isSeries
@@ -657,17 +748,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />
       )}
-
-      <StremioStreamsDialog
-        open={stremioOpen}
-        onOpenChange={setStremioOpen}
-        imdbId={libItem?.imdbId || details?.imdbId}
-        type={media.type}
-        seasons={isSeries ? details?.seasons?.map(s => ({ number: s.number, totalEpisodes: s.totalEpisodes })) : undefined}
-        title={details?.title || media.title}
-        onPlayUrl={playStremio}
-        onPlayTorrent={playStremioTorrent}
-      />
     </div>
   );
 }
