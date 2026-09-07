@@ -25,7 +25,8 @@ export interface Provider {
 const s = (t: PlayerTarget) => t.season ?? 1;
 const e = (t: PlayerTarget) => t.episode ?? 1;
 
-// Ordem definida pelo Weslley 01/07: EmbedPlayApi é a PRINCIPAL (PROVIDERS[0] = default).
+// Ordem = numeração das fontes na tela (Fonte 1…6). O PADRÃO do "Assistir" é escolhido
+// no VideoPlayer (Fonte 6 EmbedMovies desde 07/09/2026; antes SuperFlix, antes EmbedPlayApi).
 // (BetterFlix/VidAPI/WarezCDN removidos — domínios mortos/propaganda.)
 export const PROVIDERS: Provider[] = [
   {
