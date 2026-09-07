@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating } from "./formatters";
+import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating, formatAirDate } from "./formatters";
+
+describe("formatAirDate", () => {
+  const hoje = new Date(2026, 8, 7); // 07/09/2026
+  it("mesmo ano: dd/mm", () => {
+    expect(formatAirDate("2026-09-12", hoje)).toBe("12/09");
+  });
+  it("outro ano: dd/mm/aa", () => {
+    expect(formatAirDate("2027-01-05", hoje)).toBe("05/01/27");
+  });
+  it("sem data ou data incompleta: vazio", () => {
+    expect(formatAirDate(undefined, hoje)).toBe("");
+    expect(formatAirDate("", hoje)).toBe("");
+    expect(formatAirDate("2026-09", hoje)).toBe("");
+  });
+});
 
 describe("formatTime", () => {
   it("returns 0min for zero or negative", () => {

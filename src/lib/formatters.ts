@@ -23,6 +23,14 @@ export function formatVotes(n: number): string {
   return String(n);
 }
 
+// Data em que um episódio FUTURO vai ao ar, curta pro card: "12/09" no ano corrente,
+// "05/01/27" em outro ano. Entrada YYYY-MM-DD (TMDB); inválida -> "".
+export function formatAirDate(date?: string, today: Date = new Date()): string {
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+  const [y, m, d] = date.split('-');
+  return Number(y) === today.getFullYear() ? `${d}/${m}` : `${d}/${m}/${y.slice(2)}`;
+}
+
 // Nota + avaliações: rating 8 / votes 4000 -> "8/10 - 4 mil"; sem votos -> "8/10"
 export function formatRating(rating?: number, votes?: number): string | null {
   if (rating === undefined || rating === null || rating <= 0) return null;
