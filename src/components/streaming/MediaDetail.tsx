@@ -7,7 +7,7 @@ import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpi
 import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Plus, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff, ChevronLeft, ChevronRight, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
 import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
@@ -478,7 +478,21 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
       </div>
 
       <div className="-mt-12 relative px-1 space-y-3">
-        <h1 className="text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
+        {/* Título + (à direita) marcador da Minha Lista e sino de avisos — pedido 07/09/2026:
+            substituem os botões "+ Lista" e "Avisando" da linha de ações. */}
+        <div className="flex items-start gap-2">
+          <h1 className="flex-1 min-w-0 text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
+          <Button variant="ghost" size="icon" onClick={toggleList} data-inlist={inList ? '1' : undefined}
+            className={`h-9 w-9 shrink-0 rounded-full bg-background/60 backdrop-blur ${inList ? 'text-primary' : 'text-foreground/80'}`}
+            title={inList ? 'Na Minha Lista — toque pra remover' : 'Salvar na Minha Lista'} aria-label={inList ? 'Remover da Minha Lista' : 'Salvar na Minha Lista'}>
+            <Bookmark className={`w-5 h-5 ${inList ? 'fill-current' : ''}`} />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={toggleNotify} data-notify={notifyOn ? '1' : undefined}
+            className={`h-9 w-9 shrink-0 rounded-full bg-background/60 backdrop-blur ${notifyOn ? 'text-primary' : 'text-foreground/80'}`}
+            title={notifyOn ? 'Avisos ligados — toque pra desligar' : 'Avisar sobre novidades'} aria-label={notifyOn ? 'Desligar avisos' : 'Ligar avisos'}>
+            {notifyOn ? <Bell className="w-5 h-5 fill-current" /> : <BellOff className="w-5 h-5" />}
+          </Button>
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
           {totalEps > 0 && <span>{totalEps} eps</span>}
           {/* Duração antes da data: filme = duração do filme; série/anime = por episódio. */}
@@ -533,9 +547,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           <Button className="flex-1" onClick={playMain}>
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
-          <Button variant={inList ? 'default' : 'outline'} onClick={toggleList}>
-            {inList ? <Check className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />} Lista
-          </Button>
           {!isSeries && (
             <Button variant={movieWatched ? 'default' : 'outline'}
               title={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'}
@@ -543,11 +554,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
               {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
             </Button>
           )}
-          {/* Sino: avisa quando sair episódio novo (série) ou quando estrear (filme). */}
-          <Button variant={notifyOn ? 'default' : 'outline'} onClick={toggleNotify}
-            title={notifyOn ? 'Avisos ligados — toque pra desligar' : 'Avisar sobre novidades'}>
-            {notifyOn ? <Bell className="w-4 h-4 mr-1" /> : <BellOff className="w-4 h-4 mr-1" />} {notifyOn ? 'Avisando' : 'Avisar'}
-          </Button>
           {isSeries ? (
             <Button variant={selecting ? 'default' : 'outline'} onClick={selecting ? cancelSelecting : startSelecting} title="Baixar episódios">
               <Download className="w-4 h-4 mr-1" /> {selecting ? 'Cancelar' : 'Baixar eps'}
@@ -589,7 +595,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           <div className="space-y-3 pt-2">
             <div className="flex flex-wrap gap-2">
               {details.seasons.map(s => {
-                // Temporada 100% assistida → botão verde com ✓ (igual à aba de eps toda vista).
+                // Temporada 100% assistida → botão verde (sem ✓ — pedido 07/09/2026; a aba de eps mantém o ✓).
                 const live = liveItem?.seasons?.find(x => x.number === s.number);
                 const done = seasonDone(s.totalEpisodes, live ? episodesWatched(live) : []);
                 const active = selSeason === s.number;
@@ -601,10 +607,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                     key={s.number}
                     onClick={() => pickSeason(s.number)}
                     data-season-done={done ? '1' : undefined}
-                    className={`px-3 py-1.5 rounded-lg text-sm inline-flex items-center gap-1 ${cls}`}
+                    className={`px-3 py-1.5 rounded-lg text-sm ${cls}`}
                   >
                     T{s.number}
-                    {done && <Check className="w-3.5 h-3.5" />}
                   </button>
                 );
               })}
