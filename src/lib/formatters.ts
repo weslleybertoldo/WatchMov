@@ -49,3 +49,10 @@ export function getSeasonProgress(season: { watchedEpisodes: number; totalEpisod
   if (season.totalEpisodes === 0) return 0;
   return (season.watchedEpisodes / season.totalEpisodes) * 100;
 }
+
+// Tag de título/episódio que ainda não saiu: "Em breve 12/09" (data da TMDB no formato
+// do formatAirDate; sem data válida fica só "Em breve"). Pedido do Weslley 07/09/2026.
+export function upcomingLabel(date?: string, today: Date = new Date()): string {
+  const d = formatAirDate(date, today);
+  return d ? `Em breve ${d}` : 'Em breve';
+}

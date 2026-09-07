@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating, formatAirDate } from "./formatters";
+import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating, formatAirDate, upcomingLabel } from "./formatters";
+
+describe("upcomingLabel", () => {
+  const hoje = new Date(2026, 8, 7); // 07/09/2026
+  it('"Em breve" + data no mesmo ano (dd/mm) e em outro ano (dd/mm/aa)', () => {
+    expect(upcomingLabel("2026-09-12", hoje)).toBe("Em breve 12/09");
+    expect(upcomingLabel("2027-06-12", hoje)).toBe("Em breve 12/06/27");
+  });
+  it("sem data válida fica só Em breve", () => {
+    expect(upcomingLabel(undefined, hoje)).toBe("Em breve");
+    expect(upcomingLabel("2026-09", hoje)).toBe("Em breve");
+  });
+});
 
 describe("formatAirDate", () => {
   const hoje = new Date(2026, 8, 7); // 07/09/2026

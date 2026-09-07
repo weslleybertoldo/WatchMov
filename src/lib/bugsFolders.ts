@@ -82,8 +82,10 @@ export interface Folder {
   kind: TitleKind | 'ep' | 'day';
   /** Registros dentro da pasta. */
   count: number;
-  /** Falhas de verdade dentro da pasta (isRealError). */
+  /** Falhas de verdade dentro da pasta (isRealError), no total. */
   errors: number;
+  /** Falhas na ÚLTIMA reprodução (lastSession) — é o que a tag "sem erro"/"N erros" mostra. */
+  lastErrors: number;
   /** created_at mais recente (ISO) — ordena "últimos primeiro". */
   last: string;
   /** Subpastas (episódios ou dias) — só no 1º nível. */
@@ -92,6 +94,29 @@ export interface Folder {
 
 const ts = (iso: string) => Date.parse(iso) || 0;
 const byLastDesc = (a: Folder, b: Folder) => ts(b.last) - ts(a.last);
+
+/** Início de uma reprodução: o player nativo grava PLAYER_START toda vez que abre ou
+ *  troca de mídia (inclusive no "Próximo" e ao reabrir espelhando). */
+export const SESSION_START = 'PLAYER_START';
+
+/** Registros da ÚLTIMA reprodução (a tag da pasta é dela, não da soma histórica — pedido
+ *  07/09/2026): do último PLAYER_START (inclusive; empate de horário entra) até o registro
+ *  mais recente. Sem PLAYER_START (registro antigo, ou o filtro por data cortou o início):
+ *  os do mesmo dia local do registro mais recente. Devolve do mais antigo pro mais novo. */
+export function lastSession<R extends BugRow>(rows: R[]): R[] {
+  if (!rows.length) return [];
+  const asc = [...rows].sort((a, b) => ts(a.created_at) - ts(b.created_at));
+  for (let i = asc.length - 1; i >= 0; i--) {
+    if (asc[i].error_name === SESSION_START) {
+      const t0 = ts(asc[i].created_at);
+      return asc.filter(r => ts(r.created_at) >= t0);
+    }
+  }
+  const day = dayKey(asc[asc.length - 1].created_at);
+  return asc.filter(r => dayKey(r.created_at) === day);
+}
+
+const countErrors = (rows: Pick<BugRow, 'error_code' | 'error_name'>[]) => rows.filter(isRealError).length;
 
 /** Tipo da pasta de um título: série se QUALQUER registro dele tiver episódio. */
 export function kindOf(entries: Entry[], show: string): TitleKind {
@@ -103,45 +128,46 @@ export function subKeyOf(e: Entry, kind: TitleKind): string {
   return kind === 'tv' ? (e.p.ep ?? 'Sem episódio') : dayKey(e.row.created_at);
 }
 
-function tally(f: Folder, e: Entry) {
-  f.count++;
-  if (isRealError(e.row)) f.errors++;
-  if (ts(e.row.created_at) > ts(f.last)) f.last = e.row.created_at;
+interface Bucket { f: Folder; rows: BugRow[]; subKeys: Set<string> }
+
+function bucket(key: string, label: string, kind: Folder['kind'], first: BugRow): Bucket {
+  return { f: { key, label, kind, count: 0, errors: 0, lastErrors: 0, last: first.created_at, subs: 0 }, rows: [], subKeys: new Set() };
+}
+
+/** Fecha as contas da pasta: total, erros no total, erros na última reprodução, mais recente. */
+function close({ f, rows, subKeys }: Bucket): Folder {
+  let last = f.last;
+  for (const r of rows) if (ts(r.created_at) > ts(last)) last = r.created_at;
+  return { ...f, count: rows.length, errors: countErrors(rows), lastErrors: countErrors(lastSession(rows)), last, subs: subKeys.size };
 }
 
 /** 1º nível: uma pasta por título, da mais recente pra mais antiga. */
 export function rootFolders(entries: Entry[]): Folder[] {
   const kinds = new Map<string, TitleKind>();
   for (const e of entries) if (e.p.kind === 'tv' || !kinds.has(e.p.show)) kinds.set(e.p.show, e.p.kind);
-  const map = new Map<string, { f: Folder; subKeys: Set<string> }>();
+  const map = new Map<string, Bucket>();
   for (const e of entries) {
     const kind = kinds.get(e.p.show) ?? 'movie';
-    let it = map.get(e.p.show);
-    if (!it) {
-      it = { f: { key: e.p.show, label: e.p.show, kind, count: 0, errors: 0, last: e.row.created_at, subs: 0 }, subKeys: new Set() };
-      map.set(e.p.show, it);
-    }
-    tally(it.f, e);
-    it.subKeys.add(subKeyOf(e, kind));
+    let b = map.get(e.p.show);
+    if (!b) { b = bucket(e.p.show, e.p.show, kind, e.row); map.set(e.p.show, b); }
+    b.rows.push(e.row);
+    b.subKeys.add(subKeyOf(e, kind));
   }
-  return [...map.values()].map(({ f, subKeys }) => ({ ...f, subs: subKeys.size })).sort(byLastDesc);
+  return [...map.values()].map(close).sort(byLastDesc);
 }
 
 /** 2º nível de um título: episódios (série) ou dias (filme), mais recente primeiro. */
 export function subFolders(entries: Entry[], show: string): Folder[] {
   const kind = kindOf(entries, show);
-  const map = new Map<string, Folder>();
+  const map = new Map<string, Bucket>();
   for (const e of entries) {
     if (e.p.show !== show) continue;
     const key = subKeyOf(e, kind);
-    let f = map.get(key);
-    if (!f) {
-      f = { key, label: kind === 'tv' ? key : fmtDay(key), kind: kind === 'tv' ? 'ep' : 'day', count: 0, errors: 0, last: e.row.created_at, subs: 0 };
-      map.set(key, f);
-    }
-    tally(f, e);
+    let b = map.get(key);
+    if (!b) { b = bucket(key, kind === 'tv' ? key : fmtDay(key), kind === 'tv' ? 'ep' : 'day', e.row); map.set(key, b); }
+    b.rows.push(e.row);
   }
-  return [...map.values()].sort(byLastDesc);
+  return [...map.values()].map(close).sort(byLastDesc);
 }
 
 /** 3º nível: os registros de uma subpasta, mais recente primeiro. */

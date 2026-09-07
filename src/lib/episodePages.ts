@@ -52,3 +52,30 @@ export function saveEpisodePage(tmdbId: number, season: number, page: number) {
     localStorage.setItem(KEY, JSON.stringify(all));
   } catch { /* cota cheia: só perde a aba lembrada */ }
 }
+
+// Temporada 100% assistida (todos os episódios 1..total marcados) → botão T# verde,
+// igual ao ✓ da aba de eps. Sem episódios = nunca "concluída".
+export function seasonDone(totalEpisodes: number, watched: number[]): boolean {
+  if (totalEpisodes <= 0) return false;
+  const seen = new Set(watched);
+  for (let ep = 1; ep <= totalEpisodes; ep++) if (!seen.has(ep)) return false;
+  return true;
+}
+
+// Temporada aberta por título, lembrada igual à aba ("cliquei na T2, saí e voltei →
+// abre a T2, não a T1"; pedido do Weslley 07/09/2026). Só o número; não expira.
+const SEASON_KEY = 'watchmov_season';
+function readSeasons(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(SEASON_KEY) || '{}'); } catch { return {}; }
+}
+export function loadSeason(tmdbId: number): number | null {
+  const v = readSeasons()[String(tmdbId)];
+  return typeof v === 'number' && v >= 1 ? v : null;
+}
+export function saveSeason(tmdbId: number, season: number) {
+  try {
+    const all = readSeasons();
+    all[String(tmdbId)] = season;
+    localStorage.setItem(SEASON_KEY, JSON.stringify(all));
+  } catch { /* cota cheia: só perde a temporada lembrada */ }
+}

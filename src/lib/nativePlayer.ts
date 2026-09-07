@@ -54,7 +54,9 @@ export function onPlayerError(cb: (d: PlayerErrorEvent) => void): Promise<Plugin
 // "Próximo episódio" tocado DENTRO do player nativo: ele não fecha mais: pede o
 // link do próximo ep e espera o loadNextNative. Se ninguém responder em ~9s, ele
 // cai sozinho no fluxo antigo (fecha devolvendo next).
-export function onPlayerNext(cb: () => void): Promise<PluginListenerHandle> | null {
+// `auto` = veio do minuto final (auto-avanço): o JS só deve avançar se o próximo ep já
+// tem link capturado/baixado; senão responde loadNextNative({}) e o player fica no ep.
+export function onPlayerNext(cb: (e?: { auto?: boolean }) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return NativePlayer.addListener('playerNext', cb);
 }

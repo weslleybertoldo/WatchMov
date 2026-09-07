@@ -96,6 +96,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private String mMime;                         // mime do ep ATUAL (muda no loadNext)
     private String mTitle;                        // título do ep ATUAL (muda no loadNext)
     private boolean awaitingNext = false;         // pediu o próximo ep ao JS, esperando resposta
+    private boolean autoNextDone = false;         // auto-avanço (faltando 1 min) já disparou neste ep
+    private boolean autoNextPending = false;      // auto-avanço em voo: sem link do próximo → fica no ep (não fecha)
+    private boolean localOnly = false;            // abriu OUTRO ep com a TV espelhando e escolheu "Não": toca só aqui
     private String[] urls;
     private boolean errorHandled = false; // evita tratar o MESMO link 2x (ExoPlayer às vezes emite erro repetido)
     private final java.util.HashSet<String> triedUrls = new java.util.HashSet<>(); // links que já falharam (não repetir)
@@ -128,6 +131,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (pos > 0) NativePlayerPlugin.reportProgress(currentUrl, pos, dur);
             // "Assistido" automático: quando falta ≤1 min pro fim (na TV também).
             if (!watched && !userUnwatched && dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
+            // Faltando 1 min também AVANÇA pro próximo episódio (player local E espelhamento;
+            // pedido 07/09/2026) — só se o JS achar link capturado/baixado do próximo; sem
+            // link o player fica no episódio (autoNextPending → stayOnEpisode). 1x por ep.
+            if (hasNext && !autoNextDone && !awaitingNext && dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) {
+                autoNextDone = true;
+                requestNext(castMode != CAST_NONE, true);
+            }
             refreshMediaNotification();   // posição fresca na barra de progresso da notificação
             progressHandler.postDelayed(this, 5000);
         }
@@ -281,7 +291,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         castOverlay.setVisibility(View.GONE);
         LinearLayout castCol = new LinearLayout(this);
         castCol.setOrientation(LinearLayout.VERTICAL);
-        castCol.setGravity(Gravity.CENTER);
+        castCol.setGravity(Gravity.CENTER_HORIZONTAL);   // vertical: distribuído por espaçadores (abaixo)
+        castCol.setPadding(0, 96, 0, 72);
         castStatusTv = new TextView(this);
         castStatusTv.setTextColor(Color.WHITE); castStatusTv.setTextSize(18); castStatusTv.setGravity(Gravity.CENTER);
         castStatusTv.setMaxWidth((int) (getResources().getDisplayMetrics().widthPixels * 0.92));   // "<título> — Reproduzindo…" quebra linha em vez de cortar
@@ -294,13 +305,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // ao botão (problema de UI); se aparecer e a TV não reagir, é o comando UPnP.
         Button rew60 = pill("−60s", v -> { castMsg("−60s…", 1500); remoteSeekBy(-60000); });
         Button rew10 = pill("−10s", v -> { castMsg("−10s…", 1500); remoteSeekBy(-10000); });
-        castPlayBtn = pill("⏸", v -> { castMsg(dlnaPaused ? "Continuar…" : "Pausar…", 1500); remotePlayPause(); });
+        castPlayBtn = pill(SYM_PAUSE, v -> { castMsg(dlnaPaused ? "Continuar…" : "Pausar…", 1500); remotePlayPause(); });
         Button ff10 = pill("+10s", v -> { castMsg("+10s…", 1500); remoteSeekBy(10000); });
         Button ff60 = pill("+60s", v -> { castMsg("+60s…", 1500); remoteSeekBy(60000); });
         for (Button b : new Button[]{ rew60, rew10, castPlayBtn, ff10, ff60 }) {
-            b.setTextSize(20); b.setPadding(28, 22, 28, 22);  // botões maiores
+            b.setTextSize(24); b.setPadding(40, 30, 40, 30);  // botões maiores (pedido 07/09)
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(8, 0, 8, 0); b.setLayoutParams(lp);
+            lp.setMargins(10, 0, 10, 0); b.setLayoutParams(lp);
         }
         castRow.addView(rew60); castRow.addView(rew10); castRow.addView(castPlayBtn); castRow.addView(ff10); castRow.addView(ff60);
         // Rolável na horizontal pra caber todos os botões (não cortar o +60s).
@@ -320,14 +331,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         LinearLayout castRow2 = new LinearLayout(this);
         castRow2.setOrientation(LinearLayout.HORIZONTAL); castRow2.setGravity(Gravity.CENTER);
         for (Button b : new Button[]{ castQualityBtn, volDownBtn, volBtn, volUpBtn }) {
-            b.setTextSize(16); b.setPadding(28, 18, 28, 18);
+            b.setTextSize(20); b.setPadding(36, 24, 36, 24);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(8, 18, 8, 0); b.setLayoutParams(lp);
+            lp.setMargins(10, 26, 10, 0); b.setLayoutParams(lp);
         }
         // −/+ colados no "Volume" (leem como um grupo) e mais largos pra acertar com o dedo.
         for (Button b : new Button[]{ volDownBtn, volUpBtn }) {
-            b.setPadding(40, 18, 40, 18);
-            ((LinearLayout.LayoutParams) b.getLayoutParams()).setMargins(4, 18, 4, 0);
+            b.setPadding(54, 24, 54, 24);
+            ((LinearLayout.LayoutParams) b.getLayoutParams()).setMargins(5, 26, 5, 0);
         }
         View volGap = new View(this);   // afasta o grupo Qualidade do grupo Volume
         castRow2.addView(castQualityBtn);
@@ -349,12 +360,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 volKnown = true; remoteVolTarget = sb.getProgress(); remoteVolAppliedAt = android.os.SystemClock.elapsedRealtime();
                 remoteVolumeSet(sb.getProgress());
             }
-            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) { if (fromUser) castMsg("Volume " + p, 900); }
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean fromUser) { if (fromUser) castMsg(volumeLabel(p), 900); }
         });
         // Próximo episódio SEM derrubar a TV: NÃO fecha mais a Activity. Pede o link do
         // próximo ep ao JS (evento playerNext) e troca a mídia AQUI (loadNextInPlace) —
         // a sessão DLNA/Chromecast continua viva, então não tem o que "reconectar".
-        nextCastBtn = pill("Próximo episódio ▶|", v -> requestNext(true));
+        nextCastBtn = pill("Próximo episódio " + SYM_NEXT, v -> requestNext(true));
         nextCastBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
 
         // Marcar concluído SEM sair do espelhamento (mesmo efeito do ✓ do reprodutor).
@@ -383,22 +394,34 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // esquerda) e "Parar espelhamento" mais abaixo, separado dos controles.
         castRowScroll.setFillViewport(true);
         LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        nextLp.gravity = Gravity.CENTER_HORIZONTAL; nextLp.topMargin = 24;
+        nextLp.gravity = Gravity.CENTER_HORIZONTAL; nextLp.topMargin = 32;
         nextCastBtn.setLayoutParams(nextLp);
         LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        stopLp.gravity = Gravity.CENTER_HORIZONTAL; stopLp.topMargin = 56;
+        stopLp.gravity = Gravity.CENTER_HORIZONTAL; stopLp.topMargin = 40;
         stopCast.setLayoutParams(stopLp);
         castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp);
         LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        doneLp.gravity = Gravity.CENTER_HORIZONTAL; doneLp.topMargin = 16;
+        doneLp.gravity = Gravity.CENTER_HORIZONTAL; doneLp.topMargin = 32;
         castWatchedBtn.setLayoutParams(doneLp);
+        // Contorno em todos os botões do overlay (pedido 07/09/2026).
+        for (Button b : new Button[]{ rew60, rew10, castPlayBtn, ff10, ff60, castQualityBtn, volDownBtn, volBtn, volUpBtn, nextCastBtn, castWatchedBtn, stopCast }) {
+            b.setBackground(pillBg(true));
+        }
         // Ordem pedida: avançar/pausar → qualidade + volume (barra abaixo) → próximo
-        // episódio (série) → concluído → parar espelhamento.
+        // episódio (série) → concluído → parar espelhamento. Layout 07/09/2026: título e
+        // barra no ALTO, controles no meio, concluído/parar EMBAIXO — os dois espaçadores
+        // com peso repartem a altura que sobra; em tela baixa vira rolagem (ScrollView).
         LinearLayout.LayoutParams volLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.6), ViewGroup.LayoutParams.WRAP_CONTENT);
         volLp.topMargin = 14;
+        castCol.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
         castCol.addView(castRowScroll); castCol.addView(castRow2Scroll); castCol.addView(volSeek, volLp);
+        castCol.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
         castCol.addView(nextCastBtn); castCol.addView(castWatchedBtn); castCol.addView(stopCast);
-        castOverlay.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        android.widget.ScrollView castScroll = new android.widget.ScrollView(this);
+        castScroll.setFillViewport(true);
+        castScroll.setVerticalScrollBarEnabled(false);
+        castScroll.addView(castCol, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        castOverlay.addView(castScroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(castOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // Avisos do espelhamento (procurando TVs, enviando, proxy, erros) numa faixa
@@ -594,29 +617,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // mentindo pro app inteiro (castStatus/getCastNow → tag "Espelhado" e o "Marcar
         // como concluído" do overlay falavam do ep errado). Agora reaponta a sessão.
         else if (activeCastMode != CAST_NONE && resumeKey != null) {
-            boolean assumiu = false;
-            if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
-                startCasting(CAST_DLNA, activeDlnaCtrl);   // regrava activeCastKey = resumeKey
-                recastCurrent(resolvedStart);              // …e manda a NOVA mídia pra TV
-                assumiu = true;
-            } else if (activeCastMode == CAST_CC) {
-                try {
-                    com.google.android.gms.cast.framework.CastSession cs = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession();
-                    if (cs != null && cs.isConnected()) {
-                        startCasting(CAST_CC, null);
-                        recastCurrent(resolvedStart);
-                        assumiu = true;
-                    }
-                } catch (Exception ignored) {}
-            }
-            if (!assumiu) {
-                // Sessão fantasma (Chromecast já desconectado): sem isto a tela ficaria
-                // muda e parada, porque o local foi silenciado lá em cima.
-                activeCastMode = CAST_NONE; activeCastKey = null; activeCastTitle = null;
-                CastSessionStore.clear(this);
-                castSilentStart = false;
-                if (player != null) { player.setVolume(1f); player.setPlayWhenReady(true); }
-            }
+            // Pedido 07/09/2026: espelhando o ep 2 e abriu o ep 3 pela lista → PERGUNTA antes
+            // de trocar a TV. "Sim" = troca (o que já fazia); "Não" = toca só no celular e a
+            // TV segue no que estava. (O "Próximo episódio" continua trocando direto.)
+            askSwitchCast(resolvedStart);
         }
 
         // Notificação de mídia (barra + tela bloqueada): ⏯ e, em série, ⏭ — controla o
@@ -624,6 +628,57 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         MediaNotificationService.setController(this);
         ensureNotifPermission();
         refreshMediaNotification();
+    }
+
+    // ── Abriu OUTRO episódio com a TV espelhando: pergunta antes de trocar ──────────
+    private void askSwitchCast(final long startMs) {
+        String alvo = "este vídeo";
+        try {
+            String[] p = resumeKey.split(":");   // tmdbId:type:season:ep
+            int ep = p.length >= 4 ? Integer.parseInt(p[3]) : 0;
+            if ("tv".equals(p[1]) && ep > 0) alvo = "o episódio " + ep;
+        } catch (Exception ignored) {}
+        new android.app.AlertDialog.Builder(this)
+            .setMessage("Deseja espelhar " + alvo + " agora?")
+            .setPositiveButton("Sim", (d, w) -> takeOverCast(startMs))
+            .setNegativeButton("Não", (d, w) -> playLocalOnly())
+            .setOnCancelListener(d -> playLocalOnly())
+            .show();
+    }
+
+    // "Sim": esta tela assume a sessão e manda a NOVA mídia pra TV (comportamento anterior).
+    private void takeOverCast(long startMs) {
+        boolean assumiu = false;
+        if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
+            startCasting(CAST_DLNA, activeDlnaCtrl);   // regrava activeCastKey = resumeKey
+            recastCurrent(startMs);                    // …e manda a NOVA mídia pra TV
+            assumiu = true;
+        } else if (activeCastMode == CAST_CC) {
+            try {
+                com.google.android.gms.cast.framework.CastSession cs = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession();
+                if (cs != null && cs.isConnected()) {
+                    startCasting(CAST_CC, null);
+                    recastCurrent(startMs);
+                    assumiu = true;
+                }
+            } catch (Exception ignored) {}
+        }
+        if (!assumiu) {
+            // Sessão fantasma (Chromecast já desconectado): sem isto a tela ficaria
+            // muda e parada, porque o local foi silenciado lá em cima.
+            activeCastMode = CAST_NONE; activeCastKey = null; activeCastTitle = null;
+            CastSessionStore.clear(this);
+            playLocalOnly();
+            localOnly = false;   // não há mais sessão pra preservar
+        }
+    }
+
+    // "Não": toca só no celular. A sessão da TV (activeCast*) fica intacta e esta tela não
+    // a toca — nem no "Próximo", nem no minuto final (ver localOnly).
+    private void playLocalOnly() {
+        localOnly = true;
+        castSilentStart = false;
+        if (player != null) { player.setVolume(1f); player.setPlayWhenReady(true); }
     }
 
     // Toggle do botão "assistido": marca (e pula p/ faltar 1 min, como pedido) ou
@@ -686,8 +741,24 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     }
 
     private long curDurMs() {
-        if (castMode != CAST_NONE && lastRemoteDurMs > 0) return lastRemoteDurMs;
+        if (castMode != CAST_NONE) return castDurMs();
         return player != null && player.getDuration() > 0 ? player.getDuration() : 0;
+    }
+
+    // Duração do que está espelhado. A TV (DLNA) às vezes devolve TrackDuration ERRADO —
+    // "Dia D" 05/09: overlay em "2:23:47 / 1:03:51", barra estourada e o "assistido"
+    // automático (falta 1 min pro fim) disparando com 1h de filme. O player local carregou
+    // o MESMO stream (pausado/mudo onde o cast começou) e a duração dele vem do manifesto →
+    // no DLNA ela manda; a da TV só entra quando o local não sabe (não abriu). Chromecast
+    // continua com o RemoteMediaClient (confiável). Se esta tela abriu OUTRO título com a
+    // sessão viva (activeCastKey ≠ resumeKey), o local não fala da mídia da TV → só TV.
+    // E nunca menor que a posição.
+    private long castDurMs() {
+        boolean mesmaMidia = activeCastKey == null || activeCastKey.equals(resumeKey);
+        long local = mesmaMidia && player != null && player.getDuration() > 0 ? player.getDuration() : 0;
+        long tv = Math.max(0, lastRemoteDurMs);
+        long dur = castMode == CAST_DLNA ? (local > 0 ? local : tv) : (tv > 0 ? tv : local);
+        return Math.max(dur, lastRemotePosMs);
     }
 
     // Posição (0-based) do link atual dentro de urls[] — pro contador "X/N".
@@ -1125,6 +1196,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // reabrir com o novo episódio, reenviamos a mídia pro mesmo dispositivo.
     private static boolean castFollowNext = false;
     private boolean castSilentStart = false;   // abriu já espelhando → não toca local
+    // Símbolos de TEXTO (não emoji): ⏸/▶ caíam na fonte de emoji colorida do Android.
+    private static final String SYM_PAUSE = "❚❚", SYM_PLAY = "►", SYM_NEXT = "►|";
     private long recastAtMs = 0;               // instante do recast (p/ diagnosticar queda)
     private boolean recastDropReported = false;
     private int recastRetries = 0;             // 1 reenvio automático por episódio (sem loop)
@@ -1431,7 +1504,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                         if (gen != castGen) return;
                         if (fe == null) {
                             lastRemotePosMs = target;   // otimista: a UI acompanha na hora
-                            if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                            if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(castDurMs()));
                             updateCastSeek();
                         } else castMsg("TV recusou avançar/voltar: " + fe, 6000);
                         NativePlayerPlugin.reportError(currentUrl, 0, 0, "SEEK_REMOTO",
@@ -1591,7 +1664,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             final int fv = v; final String fe = err;
             runOnUiThread(() -> {
                 if (gen != castGen || volSeek == null) return;
-                if (fv >= 0) { if (!volSeeking) volSeek.setProgress(fv); volKnown = true; castMsg("Volume da TV: " + fv, 1500); }
+                if (fv >= 0) { if (!volSeeking) volSeek.setProgress(fv); volKnown = true; castMsg(volumeLabel(fv), 1500); }
                 else if (fe != null) {
                     castMsg("Não consegui ler o volume: " + fe, 4000);
                     NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_FALHOU", "[volume] GetVolume erro=" + fe, mMime, mReferer, mTitle);
@@ -1605,7 +1678,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             try {
                 com.google.android.gms.cast.framework.CastSession s = castSessionManager != null ? castSessionManager.getCurrentCastSession() : null;
                 if (s != null) s.setVolume(vol / 100.0);
-                castMsg("Volume " + vol, 1200);
+                castMsg(volumeLabel(vol), 1200);
             } catch (Exception e) { castMsg("Chromecast recusou volume: " + e.getMessage(), 4000); }
             return;
         }
@@ -1616,7 +1689,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             try { DlnaCastPlugin.setVolumeSync(rc, vol); } catch (Exception e) { err = e.getMessage() != null ? e.getMessage() : e.toString(); }
             final String fe = err;
             runOnUiThread(() -> {
-                if (fe == null) castMsg("Volume " + vol, 1200);
+                if (fe == null) castMsg(volumeLabel(vol), 1200);
                 else {
                     castMsg("TV recusou volume: " + fe, 5000);
                     NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_VOLUME_FALHOU", "[volume] SetVolume " + vol + " erro=" + fe, mMime, mReferer, mTitle);
@@ -1669,7 +1742,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         remoteVolTarget = target; remoteVolAppliedAt = android.os.SystemClock.elapsedRealtime();
         volKnown = true;
         if (volSeek != null && !volSeeking) volSeek.setProgress(target);
-        castMsg("Volume " + target, 1200);   // remoteVolumeSet repete o mesmo texto ao confirmar (sem piscar) ou mostra "TV recusou volume"
+        castMsg(volumeLabel(target), 1200);   // remoteVolumeSet repete o mesmo texto ao confirmar (sem piscar) ou mostra "TV recusou volume"
         remoteVolumeSet(target);
     }
 
@@ -1775,15 +1848,24 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     }
 
     private void updatePlayIcon(boolean playing) {
-        if (castPlayBtn != null) castPlayBtn.setText(playing ? "⏸" : "▶");
+        if (castPlayBtn != null) castPlayBtn.setText(playing ? SYM_PAUSE : SYM_PLAY);
         refreshMediaNotification();   // ⏯ da notificação acompanha o estado real da TV
     }
 
     // Reflete a posição do remoto na barra (em segundos); não mexe enquanto o user arrasta.
     private void updateCastSeek() {
         if (castSeek == null || castSeeking) return;
-        int dur = (int) (lastRemoteDurMs / 1000);
+        int dur = (int) (castDurMs() / 1000);
         if (dur > 0) { castSeek.setMax(dur); castSeek.setProgress((int) (lastRemotePosMs / 1000)); }
+    }
+
+    // "Volume ▮▮▮▮▯▯▯▯▯▯ 40" — símbolos de texto (pedido 07/09/2026: sem emoji no overlay).
+    private static String volumeLabel(int vol) {
+        int v = Math.max(0, Math.min(100, vol));
+        int cheios = Math.round(v / 10f);
+        StringBuilder sb = new StringBuilder("Volume ");
+        for (int i = 0; i < 10; i++) sb.append(i < cheios ? '▮' : '▯');
+        return sb.append(' ').append(v).toString();
     }
 
     private String fmtClock(long ms) {
@@ -1797,7 +1879,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (castMode == CAST_CC) {
                 com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
                 if (r != null) { lastRemotePosMs = r.getApproximateStreamPosition(); lastRemoteDurMs = r.getStreamDuration(); updatePlayIcon(r.isPlaying()); }
-                if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(castDurMs()));
                 updateCastSeek();
                 refreshCastDeliveredHeight();
                 progressHandler.postDelayed(this, 1000);
@@ -1839,7 +1921,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                         // Vigia do envio (1º cast E troca de episódio): linha do tempo de
                         // estados, tráfego da TV no proxy, reenvio se parou/travou.
                         if (watchdogTick(fst, fstatus, f)) return;   // reenviou → startCasting já reagendou o poll
-                        if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(lastRemoteDurMs));
+                        if (castTimeTv != null) castTimeTv.setText(fmtClock(lastRemotePosMs) + " / " + fmtClock(castDurMs()));
                         updateCastSeek();
                         refreshCastDeliveredHeight();   // proxy já serviu o master → "Qualidade: 720p"
                         progressHandler.postDelayed(castPoll, 1500); // próximo ciclo só agora
@@ -2157,16 +2239,24 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // "Próximo episódio": pede o link do próximo ao JS SEM fechar o player. Se o JS
     // não responder (ex.: o ep ainda não tem link capturado → precisa do servidor),
     // cai no comportamento antigo (fecha devolvendo "next") depois do timeout.
-    private void requestNext(boolean fromCast) {
+    private void requestNext(boolean fromCast) { requestNext(fromCast, false); }
+
+    // `auto` = disparado pelo minuto final (progressTick). Sem link do próximo, o auto NÃO
+    // cai no fluxo antigo (fechar o player e abrir o servidor) — fica no episódio.
+    private void requestNext(boolean fromCast, boolean auto) {
         if (awaitingNext) return;
         if (fromCast) {
-            castMsg("Trocando de episódio na TV…", 4000);
+            castMsg(auto ? "Avançando pro próximo episódio na TV…" : "Trocando de episódio na TV…", 4000);
             NativePlayerPlugin.reportError(currentUrl, 0, 0, "NEXT_CAST_CLICADO",
-                "[recast] clique: castMode=" + castMode + " activeCastMode=" + activeCastMode
+                "[recast] " + (auto ? "auto (falta 1 min)" : "clique") + ": castMode=" + castMode + " activeCastMode=" + activeCastMode
                 + " ctrl=" + (activeDlnaCtrl != null), mMime, mReferer, mTitle);
         }
         saveResume();   // garante a posição do ep que está saindo na chave DELE
-        if (!NativePlayerPlugin.requestNext()) { finishWithResult(true, false); return; }
+        autoNextPending = auto;
+        if (!NativePlayerPlugin.requestNext(auto)) {
+            if (auto) { autoNextPending = false; return; }   // ninguém pra resolver o link → fica no ep
+            finishWithResult(true, false); return;
+        }
         awaitingNext = true;
         status.setText("Carregando próximo episódio…");
         status.setVisibility(View.VISIBLE);
@@ -2179,10 +2269,19 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         @Override public void run() {
             if (!awaitingNext) return;
             awaitingNext = false;
-            castFollowNext = activeCastMode != CAST_NONE;   // reabre já espelhando
+            if (autoNextPending) { stayOnEpisode(); return; }   // auto sem resposta: fica no ep
+            castFollowNext = activeCastMode != CAST_NONE && !localOnly;   // reabre já espelhando
             finishWithResult(true, false);
         }
     };
+
+    // Auto-avanço sem link do próximo: desfaz o "Carregando próximo episódio…" e segue no ep.
+    private void stayOnEpisode() {
+        autoNextPending = false;
+        progressHandler.removeCallbacks(nextTimeout);
+        if (status != null) status.setVisibility(View.GONE);
+        if (castStatusTv != null && castMode != CAST_NONE) setCastStatus(castMode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
+    }
 
     // Troca o episódio SEM recriar a Activity: o player toca o novo link e, se há
     // espelhamento ativo, a mesma sessão recebe a nova mídia. url == null significa
@@ -2196,11 +2295,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             progressHandler.removeCallbacks(nextTimeout);
             if (!awaitingNext) return;
             awaitingNext = false;
-            if (url == null || url.isEmpty()) {   // JS não resolveu → comportamento antigo
-                castFollowNext = activeCastMode != CAST_NONE;
+            if (url == null || url.isEmpty()) {   // JS não resolveu (sem link capturado/baixado)
+                if (autoNextPending) { stayOnEpisode(); return; }   // auto: fica no episódio
+                castFollowNext = activeCastMode != CAST_NONE && !localOnly;   // comportamento antigo
                 finishWithResult(true, false);
                 return;
             }
+            autoNextPending = false; autoNextDone = false;   // episódio novo: o minuto final dele vale de novo
             saveResume();                       // posição final do ep anterior
             resumeKey = key;                    // a partir daqui salva na chave do NOVO ep
             // AVANÇAR = COMEÇAR DO ZERO. Não herda posição salva do ep seguinte: a TV
@@ -2218,7 +2319,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             updateSourceUi(); updateWatchedUi();
             triedUrls.clear(); errorHandled = false;
             if (wmTitleTv != null) wmTitleTv.setText(title);
-            if (activeCastMode != CAST_NONE) { activeCastKey = key; activeCastTitle = title; }
+            if (activeCastMode != CAST_NONE && !localOnly) { activeCastKey = key; activeCastTitle = title; }
             if (watchedBtn != null) watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
             refreshShareBtn();                  // o novo ep pode não ter MP4 exportado
             if (nextBtn != null) nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
@@ -2232,9 +2333,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             updateCastSeek();
             // Espelhando: o local NÃO toca (os dois puxariam o mesmo HLS pelo mesmo
             // proxy). Parar o espelhamento devolve o áudio/play local.
-            castSilentStart = activeCastMode != CAST_NONE;
+            castSilentStart = activeCastMode != CAST_NONE && !localOnly;   // localOnly: esta tela não mexe na TV
             playUrl(url, mime, start);
-            if (activeCastMode != CAST_NONE) recastCurrent(start);
+            if (activeCastMode != CAST_NONE && !localOnly) recastCurrent(start);
             refreshMediaNotification();   // título/⏭ do novo episódio
         });
     }
@@ -2338,7 +2439,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (cast) {
             if (castMode == CAST_DLNA) playing = !dlnaPaused;
             else { com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc(); playing = r != null && r.isPlaying(); }
-            pos = lastRemotePosMs; dur = lastRemoteDurMs;
+            pos = lastRemotePosMs; dur = castDurMs();
             String onde = castMode == CAST_CC ? "no Chromecast" : "na TV (DLNA)";
             sub = (playing ? "Reproduzindo " : "Pausado ") + onde;
         } else {
@@ -2382,9 +2483,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // Fundo dos botões com estado PRESSIONADO visível: normal = preto translúcido (como
     // antes); pressionado/focado = roxo + borda branca. Antes era setBackgroundColor
     // fixo → "não dá sensação de clique" (pedido dele 03/09).
-    private android.graphics.drawable.Drawable pillBg() {
+    private android.graphics.drawable.Drawable pillBg() { return pillBg(false); }
+
+    // `outlined` = contorno branco translúcido (overlay do cast, pedido 07/09/2026).
+    private android.graphics.drawable.Drawable pillBg(boolean outlined) {
         android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
         normal.setColor(Color.parseColor("#99000000")); normal.setCornerRadius(12);
+        if (outlined) normal.setStroke(3, Color.parseColor("#80FFFFFF"));
         android.graphics.drawable.GradientDrawable pressed = new android.graphics.drawable.GradientDrawable();
         pressed.setColor(Color.parseColor("#CC7C3AED")); pressed.setCornerRadius(12); pressed.setStroke(3, Color.WHITE);
         android.graphics.drawable.StateListDrawable sl = new android.graphics.drawable.StateListDrawable();

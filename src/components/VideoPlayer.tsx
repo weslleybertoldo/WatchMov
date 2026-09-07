@@ -153,9 +153,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const saved = localStorage.getItem(srcKey);
       if (saved && available.some(p => p.id === saved)) return saved;
     } catch { /* ignore */ }
-    // Padrão = Fonte 2 (SuperFlix): mais estável que a 1 (os mirrors do EmbedPlayApi
-    // caem com frequência). Cai na 1ª disponível se a 2 não existir pro título.
-    return available.find(p => p.id === 'superflix')?.id ?? available[0]?.id ?? 'embedplayapi';
+    // Padrão = Fonte 6 (EmbedMovies) — pedido do Weslley 07/09/2026; antes era a 2
+    // (SuperFlix). Cai na 2 e depois na 1ª disponível se a 6 não existir pro título.
+    // A fonte ESCOLHIDA pelo usuário num título (srcKey, acima) continua valendo.
+    return available.find(p => p.id === 'embedmovies')?.id
+      ?? available.find(p => p.id === 'superflix')?.id
+      ?? available[0]?.id ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
   // O provedor é escolha do JS — o registro global (playbackLog) não tem como saber.
@@ -208,6 +211,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (awaitingNextRef.current && !toPlay) loadNextNative({});
   }, [open, tmdbId, type, season, episode]);
 
+  // O próximo episódio (mesma temporada) do ep que está TOCANDO já tem link capturado ou
+  // está baixado? Lê do curEpRef (o player troca de ep in-place sem re-registrar o listener).
+  const nextHasLink = () => {
+    const cur = curEpRef.current;
+    if (cur.type !== 'tv' || cur.tmdbId == null || cur.season == null || cur.episode == null) return false;
+    const n = cur.episode + 1;
+    return !!getEntry(cur.tmdbId, cur.type, cur.season, n)?.streams?.length || isDownloaded(epKey(cur.tmdbId, cur.season, n));
+  };
+
   // "Próximo episódio" tocado DENTRO do player nativo: o player NÃO fecha mais —
   // avança o episódio aqui e devolve o link pra ele (a TV segue espelhando).
   // Assina UMA vez por abertura (via ref): se reassinasse a cada render, o handle
@@ -216,8 +228,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
     let dead = false;
-    onPlayerNext?.(() => {
+    onPlayerNext?.((e) => {
       if (awaitingNextRef.current) return;   // clique repetido: já estamos avançando
+      // Auto-avanço do minuto final (07/09/2026): só segue se o PRÓXIMO ep já tem link
+      // capturado ou está baixado — senão responde "sem link" e o player fica no episódio
+      // (não fecha, não abre o servidor). O ⏭ manual continua caindo no fluxo antigo.
+      if (e?.auto && !nextHasLink()) { loadNextNative({}); return; }
       awaitingNextRef.current = true;
       onNextRef.current?.();
     })?.then(h => { handle = h; if (dead) h.remove(); });

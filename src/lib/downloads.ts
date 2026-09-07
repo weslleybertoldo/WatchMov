@@ -5,6 +5,7 @@ import { fmtClock } from './watchProgress';
 import { playNative, onPlayerProgress, onPlayerNext, onPlayerWatched, loadNextNative } from './nativePlayer';
 import { upsertNotice } from './appNotices';
 import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4, reconcileMp4 } from './mp4Download';
+import { getDetails } from './tmdb';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -74,6 +75,43 @@ function syntheticMeta(it: DownloadItem): DownloadMeta | null {
   };
 }
 
+// ── Capa (TMDB) pra download SEM registro local ──
+// Baixado pelo ⤓ do player nativo (ou por versão antiga) não passa pelo detalhe, então
+// a metadata é reconstruída (syntheticMeta/metaFromKey) SEM posterUrl — o filme aparecia
+// na aba Download só com o nome, enquanto a série baixada pelo detalhe vinha com capa
+// (bug 07/09/2026, Toy Story 5). Busca a capa na TMDB 1x e guarda num cache PRÓPRIO,
+// separado da metadata: assim nenhum registro "nasce" aqui nem vira fantasma quando o
+// arquivo some. Offline fica sem capa até a próxima abertura com rede.
+const ART_KEY = 'watchmov_dl_art';
+type DownloadArt = { posterUrl?: string; title?: string };
+function readArt(): Record<string, DownloadArt> {
+  try { return JSON.parse(localStorage.getItem(ART_KEY) || '{}'); } catch { return {}; }
+}
+const artTriedAt = new Map<string, number>();
+const ART_RETRY_MS = 60_000;
+function fetchArt(key: string, meta: DownloadMeta) {
+  if (Date.now() - (artTriedAt.get(key) ?? 0) < ART_RETRY_MS) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  artTriedAt.set(key, Date.now());
+  getDetails(meta.tmdbId, meta.type).then(d => {
+    if (!d?.posterUrl) return;
+    const all = readArt();
+    all[key] = { posterUrl: d.posterUrl, title: d.title };
+    try { localStorage.setItem(ART_KEY, JSON.stringify(all)); } catch { /* cota cheia: fica sem capa */ }
+    notify();
+  }).catch(() => {});
+}
+// Título reconstruído sem nome de verdade ("Filme 1234"/"Série 1234"/vazio).
+const PLACEHOLDER_TITLE = /^(Filme|Série) \d+$/;
+/** Completa capa (e título, se o reconstruído era placeholder) de uma metadata sem registro. */
+function withArt(key: string, meta: DownloadMeta): DownloadMeta {
+  if (meta.posterUrl) return meta;
+  const art = readArt()[key];
+  if (!art?.posterUrl) { fetchArt(key, meta); return meta; }
+  const title = !meta.title || PLACEHOLDER_TITLE.test(meta.title) ? (art.title || meta.title) : meta.title;
+  return { ...meta, posterUrl: art.posterUrl, title };
+}
+
 // Metadata efetiva: registro local (rico: poster) + reconstruída do nativo (legado).
 /** Registra a metadata sem enfileirar nada — usado pelo download direto em MP4,
  *  que não passa pelo DownloadManager mas precisa aparecer na aba e no detalhe. */
@@ -87,7 +125,7 @@ export function getDownloadMeta(): Record<string, DownloadMeta> {
   items.forEach((it, k) => {
     if (out[k] || it.state === 'removed') return;
     const s = syntheticMeta(it);
-    if (s) out[k] = s;
+    if (s) out[k] = withArt(k, s);
   });
   // Baixado só em MP4 (sem passar pelo DownloadManager): o título vem do nome do
   // arquivo. Sem isto, o episódio existe no aparelho mas some da aba Download.
@@ -97,7 +135,7 @@ export function getDownloadMeta(): Record<string, DownloadMeta> {
     if (!m) return;
     // O nome do arquivo termina em "— T1E8"; o título do GRUPO é a série.
     const limpo = (nome || '').replace(/\s*[—-]\s*T\d+E\d+$/i, '').trim();
-    out[k] = { ...m, title: limpo || m.title };
+    out[k] = withArt(k, { ...m, title: limpo || m.title });
   });
   return out;
 }
