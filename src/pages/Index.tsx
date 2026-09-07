@@ -30,6 +30,7 @@ import LiveTvView from '@/components/streaming/LiveTvView';
 import type { Channel } from '@/lib/liveTv';
 import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
+import { fillRow, isPrimaryGenre } from '@/lib/rowFill';
 import { Button } from '@/components/ui/button';
 import { Home, Film, Tv, Sparkles, RadioTower, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
 
@@ -59,19 +60,14 @@ const TV_ROW_IDS = TV_GENRES.map(g => g.id);
 // o gênero 16 (animação) e quase todo anime também é Ação e/ou Fantasia, "1 linha por
 // título" deixava Fantasia/Mistério VAZIAS e Família com 1 item. Cada título entra nas
 // 2 linhas mais específicas dos gêneros que tem.
-const animeRowLoader = (rowId: number | null) => async () => {
-  const items = await discoverAnime(1, rowId);
-  if (rowId == null) return items;            // "Populares" mostra tudo
-  return items.filter(m => belongsToAnimeRow(m.genreIds, rowId));
-};
+// Os dois passam pelo `fillRow` (rowFill.ts): busca mais páginas da TMDB enquanto a
+// linha não fecha 10 títulos "primários" e, se ainda faltar, completa com os do gênero
+// que também moram em outra linha — Fantasia (filmes) ficava com 2 cards (07/09/2026).
+const animeRowLoader = (rowId: number | null) => () =>
+  fillRow(p => discoverAnime(p, rowId), m => rowId == null || belongsToAnimeRow(m.genreIds, rowId));   // "Populares" mostra tudo
 
-const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => async () => {
-  const items = await discoverByGenre(type, genreId);
-  return items.filter(m => {
-    const primary = (m.genreIds || []).find(g => rowIds.includes(g));
-    return primary === undefined || primary === genreId;
-  });
-};
+const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => () =>
+  fillRow(p => discoverByGenre(type, genreId, p), m => isPrimaryGenre(m.genreIds, genreId, rowIds));
 
 const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'inicio', label: 'Início', icon: Home },
