@@ -52,7 +52,9 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
   if (!loading && data.length === 0) return null;
 
   return (
-    <div className="space-y-2">
+    // data-row-key: âncora do scroll da home — ao voltar do detalhe, a página é
+    // recolocada com ESTA linha no mesmo lugar da tela (ver Index.tsx).
+    <div className="space-y-2" data-row-key={scrollKey}>
       <div className="flex items-center justify-between px-1">
         <h2 className="text-base sm:text-lg font-bold text-foreground">{title}</h2>
         {onSeeAll && (
