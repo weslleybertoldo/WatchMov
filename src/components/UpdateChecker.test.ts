@@ -30,3 +30,22 @@ describe("isNewerVersion", () => {
     expect(isNewerVersion("", "2.5")).toBe(false);
   });
 });
+
+import { checkErrorMessage } from "./UpdateChecker";
+
+describe("checkErrorMessage — verificação falhou (nunca vira 'está atualizado')", () => {
+  it("403 e 429 = limite da API do GitHub, com dica de esperar", () => {
+    expect(checkErrorMessage(403)).toMatch(/minutos/i);
+    expect(checkErrorMessage(429)).toMatch(/minutos/i);
+  });
+  it("5xx = falha do servidor", () => {
+    expect(checkErrorMessage(500)).toMatch(/servidor/i);
+    expect(checkErrorMessage(503)).toMatch(/servidor/i);
+  });
+  it("outro status = não consegui verificar", () => {
+    expect(checkErrorMessage(404)).toMatch(/não consegui/i);
+  });
+  it("sem status (rede/DNS) = sem conexão", () => {
+    expect(checkErrorMessage()).toMatch(/conex/i);
+  });
+});

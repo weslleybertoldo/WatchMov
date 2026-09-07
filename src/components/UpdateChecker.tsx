@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Download, X, CheckCircle, RefreshCw } from "lucide-react";
+import { Download, X, CheckCircle, RefreshCw, AlertTriangle } from "lucide-react";
 import { downloadAndInstall } from "@/lib/apkUpdater";
 
 const CURRENT_VERSION = __APP_VERSION__;
@@ -49,11 +49,29 @@ export function isNewerVersion(
   return numericNewer(remote, local);
 }
 
+/**
+ * Mensagem quando a VERIFICAÇÃO falhou — o app NÃO sabe se há update, então nunca
+ * pode mostrar "Versão atual". `status` é o HTTP do GitHub (undefined = sem
+ * resposta/rede). O 403/429 é o mais comum: a API do GitHub sem token tem limite
+ * de 60 req/hora POR IP, e o celular divide o IP com o resto da casa — quando
+ * estoura, o checker antes engolia o 403 em silêncio e parecia "nada aconteceu".
+ */
+export function checkErrorMessage(status?: number): string {
+  if (status === 403 || status === 429)
+    return "Muitas verificações agora. Tente de novo em alguns minutos.";
+  if (status && status >= 500)
+    return "O servidor de atualização falhou. Tente de novo em instantes.";
+  if (status)
+    return "Não consegui verificar a atualização agora.";
+  return "Sem conexão para verificar a atualização.";
+}
+
 export default function UpdateChecker() {
   const [update, setUpdate] = useState<VersionInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [checking, setChecking] = useState(false);
   const [justChecked, setJustChecked] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null); // verificação falhou (≠ "está atualizado")
   const [progress, setProgress] = useState<number | null>(null);
   const [needsPerm, setNeedsPerm] = useState(false);
   const [forced, setForced] = useState(false); // release marcado [force] → atualização obrigatória
@@ -82,13 +100,23 @@ export default function UpdateChecker() {
   const checkUpdate = async () => {
     setChecking(true);
     setJustChecked(false);
+    setCheckError(null);
     try {
       const res = await fetch(RELEASES_URL, { cache: "no-store" });
-      if (!res.ok) return;
+      // Falha de verificação NÃO é "está atualizado": mostra o porquê (ex.: 403 =
+      // limite da API do GitHub) em vez de sumir e parecer que nada aconteceu.
+      if (!res.ok) {
+        if (mountedRef.current) setCheckError(checkErrorMessage(res.status));
+        return;
+      }
       const release = await res.json();
 
       const remoteVersion = (release.tag_name || "").replace(/^v/, "");
-      if (!remoteVersion || !mountedRef.current) return;
+      if (!mountedRef.current) return;
+      if (!remoteVersion) {
+        setCheckError(checkErrorMessage(res.status));
+        return;
+      }
 
       if (isNewerVersion(remoteVersion, CURRENT_VERSION, release.published_at, BUILD_DATE)) {
         const apkAsset = (release.assets || []).find(
@@ -108,7 +136,8 @@ export default function UpdateChecker() {
         }, 3000);
       }
     } catch {
-      // sem internet
+      // sem internet / DNS / CORS — também não é "está atualizado"
+      if (mountedRef.current) setCheckError(checkErrorMessage());
     } finally {
       if (mountedRef.current) setChecking(false);
     }
@@ -180,21 +209,30 @@ export default function UpdateChecker() {
   }
 
   return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <CheckCircle className="h-3.5 w-3.5 text-green-600" />
-        <span className="text-xs text-muted-foreground">
-          v{CURRENT_VERSION}
-          {justChecked && <span className="text-green-600 ml-1">— Versao atual!</span>}
-        </span>
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2 min-w-0">
+        {checkError ? (
+          <>
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+            <span className="text-xs text-amber-500">{checkError}</span>
+          </>
+        ) : (
+          <>
+            <CheckCircle className="h-3.5 w-3.5 shrink-0 text-green-600" />
+            <span className="text-xs text-muted-foreground">
+              v{CURRENT_VERSION}
+              {justChecked && <span className="text-green-600 ml-1">— Versao atual!</span>}
+            </span>
+          </>
+        )}
       </div>
       <button
         onClick={checkUpdate}
         disabled={checking}
-        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0"
       >
         <RefreshCw className={`h-3 w-3 ${checking ? "animate-spin" : ""}`} />
-        {checking ? "Verificando..." : "Verificar"}
+        {checking ? "Verificando..." : checkError ? "Tentar de novo" : "Verificar"}
       </button>
     </div>
   );
