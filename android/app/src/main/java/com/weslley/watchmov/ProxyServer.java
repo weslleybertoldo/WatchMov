@@ -57,6 +57,25 @@ public class ProxyServer extends NanoHTTPD {
         return host != null && host.contains("cloudflare-terms-of-service-abuse");
     }
 
+    // Erro HTTP do CDN (403/404/410/5xx) num segmento/manifesto → repassa o STATUS real
+    // pro cliente, em vez de servir o corpo do erro (HTML) com 200. Com 200 o ExoPlayer
+    // lia o HTML como vídeo e morria na hora ("Cannot find sync byte" — ParserException
+    // não tem retry); com o status real ele refaz o pedaço (3× com backoff), a aba Bugs
+    // registra ERROR_CODE_IO_BAD_HTTP_STATUS com o código de verdade e o trafficSummary
+    // conta em `erros` (antes ficava erros=0 com a TV parada — caso "Dia D" 05/09).
+    // Código sem constante no NanoHTTPD (ex. 451) vira um IStatus com o mesmo número.
+    private static Response upstreamError(final int code, Req rq) {
+        Response.IStatus st = Response.Status.lookup(code);
+        if (st == null) {
+            st = new Response.IStatus() {
+                @Override public int getRequestStatus() { return code; }
+                @Override public String getDescription() { return code + " Upstream Error"; }
+            };
+        }
+        rq.bytes = 0;
+        return newFixedLengthResponse(st, "text/plain", "upstream_" + code);
+    }
+
     public static void attach(Context ctx) {
         if (ctx != null && appCtx == null) appCtx = ctx.getApplicationContext();
     }
@@ -465,8 +484,12 @@ public class ProxyServer extends NanoHTTPD {
                     rq.kind = body.contains("#EXT-X-STREAM-INF") ? "master" : "variante";
                     return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewrite(body, u, r, cast, qH)));
                 }
-                if (up.code() >= 400) { rq.kind = "erro"; rq.note = rq.note + " head=[" + head + "]"; }
-                else rq.kind = "seg";
+                if (up.code() >= 400) {
+                    rq.kind = "erro"; rq.note = rq.note + " head=[" + head + "]";
+                    // Erro do CDN → status real pro player (não 200 + HTML); ver upstreamError.
+                    return cors(upstreamError(up.code(), rq));
+                }
+                rq.kind = "seg";
                 // NÃO era playlist (segmento binário) → serve os bytes CRUS (binário-safe).
                 String realCt = sniffBinaryType(raw, Math.min(raw.length, 256), ct);
                 Response.Status st2 = up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK;
@@ -476,9 +499,14 @@ public class ProxyServer extends NanoHTTPD {
                 return cors(bin);
             }
 
+            if (up.code() >= 400) {
+                rq.kind = "erro";
+                up.close();
+                return cors(upstreamError(up.code(), rq));
+            }
             long len = up.body() != null ? up.body().contentLength() : -1;
             rq.bytes = len;
-            rq.kind = up.code() >= 400 ? "erro" : "seg";
+            rq.kind = "seg";
             Response.Status st = up.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK;
             // Content-Type REAL: espia os primeiros bytes (mark/reset) sem consumir o
             // stream — segmento .js/.css do EmbedPlay vira video/mp2t pra TV.
