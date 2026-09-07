@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTitle, isRealError, dayKey, fmtDay, rangeBounds, toEntries, rootFolders, subFolders, folderRows } from './bugsFolders';
+import { parseTitle, isRealError, dayKey, fmtDay, rangeBounds, toEntries, rootFolders, subFolders, folderRows, lastSession } from './bugsFolders';
 
 const row = (id: string, created_at: string, title: string | null, error_code = 0, error_name = 'PLAYER_START') =>
   ({ id, created_at, title, error_code, error_name });
@@ -86,5 +86,73 @@ describe('pastas', () => {
     expect(folderRows(entries, 'Shangri-La Frontier', 'T1 E49').map(r => r.id)).toEqual(['1', '3']);
     const dia = subFolders(entries, 'Dia D')[0].key;
     expect(folderRows(entries, 'Dia D', dia).map(r => r.id)).toEqual(['4', '5']);
+  });
+});
+
+describe('última reprodução (tag da pasta)', () => {
+  const row = (id: string, created_at: string, title: string, error_code = 0, error_name = 'PLAYER_START') =>
+    ({ id, created_at, title, error_code, error_name });
+  const ERR = 'ERROR_CODE_PARSING_CONTAINER_MALFORMED';
+  // Dia D 05/09 (real): 3 aberturas com erro, depois abriu de novo e tocou limpo.
+  const diaD = [
+    row('1', '2026-09-05T19:37:16Z', 'Dia D', 3001, ERR),
+    row('2', '2026-09-05T19:37:52Z', 'Dia D'),
+    row('3', '2026-09-05T19:37:52Z', 'Dia D', 3001, ERR),        // mesmo segundo do PLAYER_START: conta
+    row('4', '2026-09-05T19:38:05Z', 'Dia D'),
+    row('5', '2026-09-05T19:38:06Z', 'Dia D', 3001, ERR),
+    row('6', '2026-09-05T19:39:45Z', 'Dia D'),
+    row('7', '2026-09-05T20:02:29Z', 'Dia D', 0, 'CAST_MASTER_INFO'),
+    row('8', '2026-09-05T20:02:31Z', 'Dia D', 0, 'SEEK_TV'),
+  ];
+
+  it('lastSession = do último PLAYER_START até o fim, em ordem crescente', () => {
+    expect(lastSession(diaD).map(r => r.id)).toEqual(['6', '7', '8']);
+    expect(lastSession([...diaD].reverse()).map(r => r.id)).toEqual(['6', '7', '8']);
+    expect(lastSession(diaD.slice(0, 3)).map(r => r.id)).toEqual(['2', '3']);   // erro no mesmo segundo entra
+    expect(lastSession([])).toEqual([]);
+  });
+
+  it('sem PLAYER_START (registro antigo / filtro cortou): fica o dia local do mais recente', () => {
+    const rows = [
+      row('a', new Date(2026, 8, 4, 22, 0).toISOString(), 'Filme', 3001, ERR),
+      row('b', new Date(2026, 8, 5, 21, 0).toISOString(), 'Filme', 0, 'SEEK_TV'),
+      row('c', new Date(2026, 8, 5, 21, 5).toISOString(), 'Filme', 3001, ERR),
+    ];
+    expect(lastSession(rows).map(r => r.id)).toEqual(['b', 'c']);
+  });
+
+  it('pasta: erros no total continuam contando, mas a tag (lastErrors) é da última reprodução', () => {
+    const roots = rootFolders(toEntries(diaD));
+    expect(roots[0].errors).toBe(3);
+    expect(roots[0].lastErrors).toBe(0);           // "sem erro"
+    const days = subFolders(toEntries(diaD), 'Dia D');
+    expect(days[0].errors).toBe(3);
+    expect(days[0].lastErrors).toBe(0);
+  });
+
+  it('última reprodução COM erro → tag mostra os erros dela (e só dela)', () => {
+    const rows = [
+      row('1', '2026-09-05T19:00:00Z', 'Filme', 3001, ERR),
+      row('2', '2026-09-05T19:00:01Z', 'Filme', 3001, ERR),
+      row('3', '2026-09-05T20:00:00Z', 'Filme'),
+      row('4', '2026-09-05T20:00:09Z', 'Filme', 3001, ERR),
+    ];
+    const [f] = rootFolders(toEntries(rows));
+    expect(f.errors).toBe(3);
+    expect(f.lastErrors).toBe(1);
+  });
+
+  it('série: a pasta da série segue o último episódio tocado; cada episódio tem a sua', () => {
+    const rows = [
+      row('1', '2026-09-06T22:00:00Z', 'Friends — T1 E3'),
+      row('2', '2026-09-06T22:01:00Z', 'Friends — T1 E3', 3001, ERR),
+      row('3', '2026-09-06T23:00:00Z', 'Friends — T1 E4'),
+      row('4', '2026-09-06T23:05:00Z', 'Friends — T1 E4', 0, 'SEEK_TV'),
+    ];
+    const [serie] = rootFolders(toEntries(rows));
+    expect(serie.errors).toBe(1);
+    expect(serie.lastErrors).toBe(0);
+    const eps = subFolders(toEntries(rows), 'Friends');
+    expect(eps.map(e => [e.key, e.lastErrors])).toEqual([['T1 E4', 0], ['T1 E3', 1]]);
   });
 });

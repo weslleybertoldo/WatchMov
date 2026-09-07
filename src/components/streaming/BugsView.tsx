@@ -131,7 +131,7 @@ export default function BugsView({ onBack }: { onBack: () => void }) {
         </nav>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Registro dos erros de reprodução (player nativo), em pastas por título: série → episódio → registros; filme → dia → registros.
+          Registro dos erros de reprodução (player nativo), em pastas por título: série → episódio → registros; filme → dia → registros. A tag de erro é da última reprodução.
         </p>
       )}
 
@@ -195,9 +195,11 @@ function FolderRow({ f, onOpen }: { f: BugFolder; onOpen: () => void }) {
         <div className="flex flex-wrap gap-1.5 mt-1 text-[11px]">
           {subs && <span className="px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{subs}</span>}
           <span className="px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{plural(f.count, 'registro', 'registros')}</span>
-          {f.errors > 0
-            ? <span className="px-1.5 py-0.5 rounded bg-destructive/15 text-destructive">{plural(f.errors, 'erro', 'erros')}</span>
-            : <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">sem erro</span>}
+          {/* Tag da ÚLTIMA reprodução, não da soma histórica: tocou de novo e foi limpo
+              → "sem erro", mesmo com erros antigos dentro da pasta (pedido 07/09/2026). */}
+          {f.lastErrors > 0
+            ? <span className="px-1.5 py-0.5 rounded bg-destructive/15 text-destructive" title="Erros na última reprodução">{plural(f.lastErrors, 'erro', 'erros')}</span>
+            : <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400" title="Última reprodução sem erro">sem erro</span>}
         </div>
       </div>
       <span className="text-[11px] text-muted-foreground shrink-0">{fmtWhen(f.last)}</span>
