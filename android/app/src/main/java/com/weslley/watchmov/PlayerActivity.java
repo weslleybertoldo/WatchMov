@@ -65,6 +65,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static final String EXTRA_OFFLINE = "offline";
     public static final String EXTRA_DOWNLOADED = "downloaded";   // ep tem download concluído
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
+    private static final long AUTO_NEXT_THRESHOLD_MS = 30000; // auto-avanço pro próximo ep quando faltam 30 s (pedido 07/09/2026; era 1 min)
     public static final String RESUME_PREFS = "watchmov_resume";
     public static final String RESULT_POSITION = "positionMs";
     public static final String RESULT_URL = "url";
@@ -96,7 +97,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private String mMime;                         // mime do ep ATUAL (muda no loadNext)
     private String mTitle;                        // título do ep ATUAL (muda no loadNext)
     private boolean awaitingNext = false;         // pediu o próximo ep ao JS, esperando resposta
-    private boolean autoNextDone = false;         // auto-avanço (faltando 1 min) já disparou neste ep
+    private boolean autoNextDone = false;         // auto-avanço (faltando 30 s) já disparou neste ep
     private boolean autoNextPending = false;      // auto-avanço em voo: sem link do próximo → fica no ep (não fecha)
     private boolean localOnly = false;            // abriu OUTRO ep com a TV espelhando e escolheu "Não": toca só aqui
     private String[] urls;
@@ -131,10 +132,11 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (pos > 0) NativePlayerPlugin.reportProgress(currentUrl, pos, dur);
             // "Assistido" automático: quando falta ≤1 min pro fim (na TV também).
             if (!watched && !userUnwatched && dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) setWatched(true);
-            // Faltando 1 min também AVANÇA pro próximo episódio (player local E espelhamento;
-            // pedido 07/09/2026) — só se o JS achar link capturado/baixado do próximo; sem
-            // link o player fica no episódio (autoNextPending → stayOnEpisode). 1x por ep.
-            if (hasNext && !autoNextDone && !awaitingNext && dur > WATCHED_THRESHOLD_MS && pos >= dur - WATCHED_THRESHOLD_MS) {
+            // Faltando 30 s AVANÇA pro próximo episódio (player local E espelhamento; pedido
+            // 07/09/2026 — antes era junto com o ✓, faltando 1 min) — só se o JS achar link
+            // capturado/baixado do próximo; sem link o player fica no episódio
+            // (autoNextPending → stayOnEpisode). 1x por ep.
+            if (hasNext && !autoNextDone && !awaitingNext && dur > AUTO_NEXT_THRESHOLD_MS && pos >= dur - AUTO_NEXT_THRESHOLD_MS) {
                 autoNextDone = true;
                 requestNext(castMode != CAST_NONE, true);
             }
@@ -330,15 +332,19 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         volUpBtn = pill("+", v -> remoteVolumeBy(10));
         LinearLayout castRow2 = new LinearLayout(this);
         castRow2.setOrientation(LinearLayout.HORIZONTAL); castRow2.setGravity(Gravity.CENTER);
+        // Margens SIMÉTRICAS (sem topMargin no botão): com gravity CENTER o LinearLayout
+        // posiciona pelo centro + topMargin, e o botão saía pelo fundo da linha — o
+        // HorizontalScrollView cortava "Qualidade / − Volume +" pela metade (print 07/09).
+        // O afastamento da linha 1 fica no container (row2Lp.topMargin, abaixo).
         for (Button b : new Button[]{ castQualityBtn, volDownBtn, volBtn, volUpBtn }) {
             b.setTextSize(20); b.setPadding(36, 24, 36, 24);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(10, 26, 10, 0); b.setLayoutParams(lp);
+            lp.setMargins(10, 0, 10, 0); b.setLayoutParams(lp);
         }
         // −/+ colados no "Volume" (leem como um grupo) e mais largos pra acertar com o dedo.
         for (Button b : new Button[]{ volDownBtn, volUpBtn }) {
             b.setPadding(54, 24, 54, 24);
-            ((LinearLayout.LayoutParams) b.getLayoutParams()).setMargins(5, 26, 5, 0);
+            ((LinearLayout.LayoutParams) b.getLayoutParams()).setMargins(5, 0, 5, 0);
         }
         View volGap = new View(this);   // afasta o grupo Qualidade do grupo Volume
         castRow2.addView(castQualityBtn);
@@ -349,6 +355,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         castRow2Scroll.setHorizontalScrollBarEnabled(false);
         castRow2Scroll.setFillViewport(true);
         castRow2Scroll.addView(castRow2);
+        LinearLayout.LayoutParams row2Lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        row2Lp.topMargin = 26;   // afastamento da linha 1 (antes era margem nos botões e cortava)
         volSeek = new android.widget.SeekBar(this);
         volSeek.setMax(100);
         volSeek.setVisibility(View.GONE);
@@ -393,30 +401,40 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // Botões centralizados (fillViewport evita o scroll "colar" o conteúdo à
         // esquerda) e "Parar espelhamento" mais abaixo, separado dos controles.
         castRowScroll.setFillViewport(true);
-        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        nextLp.gravity = Gravity.CENTER_HORIZONTAL; nextLp.topMargin = 32;
-        nextCastBtn.setLayoutParams(nextLp);
+        // Linha 3 (pedido 07/09/2026): "✓ Marcar como concluído" e "Próximo episódio ►|" LADO A
+        // LADO, centralizados; sem próximo (filme/último ep) o botão some e o concluído fica só.
+        // Rolável como as outras linhas pra não cortar em tela estreita.
+        LinearLayout castRow3 = new LinearLayout(this);
+        castRow3.setOrientation(LinearLayout.HORIZONTAL); castRow3.setGravity(Gravity.CENTER);
+        for (Button b : new Button[]{ castWatchedBtn, nextCastBtn }) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(10, 0, 10, 0); b.setLayoutParams(lp);
+        }
+        castRow3.addView(castWatchedBtn); castRow3.addView(nextCastBtn);
+        android.widget.HorizontalScrollView castRow3Scroll = new android.widget.HorizontalScrollView(this);
+        castRow3Scroll.setHorizontalScrollBarEnabled(false);
+        castRow3Scroll.setFillViewport(true);
+        castRow3Scroll.addView(castRow3);
+        LinearLayout.LayoutParams row3Lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        row3Lp.topMargin = 32;
         LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         stopLp.gravity = Gravity.CENTER_HORIZONTAL; stopLp.topMargin = 40;
         stopCast.setLayoutParams(stopLp);
         castCol.addView(castStatusTv); castCol.addView(castTimeTv); castCol.addView(castSeek, seekLp);
-        LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        doneLp.gravity = Gravity.CENTER_HORIZONTAL; doneLp.topMargin = 32;
-        castWatchedBtn.setLayoutParams(doneLp);
         // Contorno em todos os botões do overlay (pedido 07/09/2026).
         for (Button b : new Button[]{ rew60, rew10, castPlayBtn, ff10, ff60, castQualityBtn, volDownBtn, volBtn, volUpBtn, nextCastBtn, castWatchedBtn, stopCast }) {
             b.setBackground(pillBg(true));
         }
-        // Ordem pedida: avançar/pausar → qualidade + volume (barra abaixo) → próximo
-        // episódio (série) → concluído → parar espelhamento. Layout 07/09/2026: título e
+        // Ordem pedida: avançar/pausar → qualidade + volume (barra abaixo) → concluído +
+        // próximo episódio (mesma linha) → parar espelhamento. Layout 07/09/2026: título e
         // barra no ALTO, controles no meio, concluído/parar EMBAIXO — os dois espaçadores
         // com peso repartem a altura que sobra; em tela baixa vira rolagem (ScrollView).
         LinearLayout.LayoutParams volLp = new LinearLayout.LayoutParams((int) (getResources().getDisplayMetrics().widthPixels * 0.6), ViewGroup.LayoutParams.WRAP_CONTENT);
         volLp.topMargin = 14;
         castCol.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
-        castCol.addView(castRowScroll); castCol.addView(castRow2Scroll); castCol.addView(volSeek, volLp);
+        castCol.addView(castRowScroll); castCol.addView(castRow2Scroll, row2Lp); castCol.addView(volSeek, volLp);
         castCol.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
-        castCol.addView(nextCastBtn); castCol.addView(castWatchedBtn); castCol.addView(stopCast);
+        castCol.addView(castRow3Scroll, row3Lp); castCol.addView(stopCast);
         android.widget.ScrollView castScroll = new android.widget.ScrollView(this);
         castScroll.setFillViewport(true);
         castScroll.setVerticalScrollBarEnabled(false);
@@ -638,12 +656,40 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             int ep = p.length >= 4 ? Integer.parseInt(p[3]) : 0;
             if ("tv".equals(p[1]) && ep > 0) alvo = "o episódio " + ep;
         } catch (Exception ignored) {}
-        new android.app.AlertDialog.Builder(this)
+        android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(this)
             .setMessage("Deseja espelhar " + alvo + " agora?")
             .setPositiveButton("Sim", (d, w) -> takeOverCast(startMs))
             .setNegativeButton("Não", (d, w) -> playLocalOnly())
             .setOnCancelListener(d -> playLocalOnly())
-            .show();
+            .create();
+        dlg.setOnShowListener(d -> centerDialogButtons(dlg));   // Sim/Não no centro (pedido 07/09/2026)
+        dlg.show();
+    }
+
+    // Centraliza os botões de um AlertDialog. No tema desta Activity (Theme.Black, diálogo
+    // clássico) os botões ficam encostados à esquerda; a barra é um LinearLayout horizontal
+    // (button1/button3/button2 + espaçadores) — zera os pesos, esconde os espaçadores e
+    // centraliza. Funciona também com a barra Material (ButtonBarLayout é LinearLayout).
+    private static void centerDialogButtons(android.app.AlertDialog dlg) {
+        try {
+            Button pos = dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE);
+            if (pos == null || !(pos.getParent() instanceof LinearLayout)) return;
+            LinearLayout bar = (LinearLayout) pos.getParent();
+            for (int i = 0; i < bar.getChildCount(); i++) {
+                View c = bar.getChildAt(i);
+                if (c instanceof Button) {
+                    if (c.getVisibility() != View.VISIBLE) continue;
+                    LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) c.getLayoutParams();
+                    lp.width = ViewGroup.LayoutParams.WRAP_CONTENT; lp.weight = 0f; lp.gravity = Gravity.CENTER;
+                    lp.leftMargin = 12; lp.rightMargin = 12;
+                    ((Button) c).setMinWidth(220);
+                    c.setLayoutParams(lp);
+                } else {
+                    c.setVisibility(View.GONE);   // espaçadores (leftSpacer/rightSpacer/Space)
+                }
+            }
+            bar.setGravity(Gravity.CENTER);
+        } catch (Exception ignored) {}
     }
 
     // "Sim": esta tela assume a sessão e manda a NOVA mídia pra TV (comportamento anterior).
@@ -2301,7 +2347,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 finishWithResult(true, false);
                 return;
             }
-            autoNextPending = false; autoNextDone = false;   // episódio novo: o minuto final dele vale de novo
+            autoNextPending = false; autoNextDone = false;   // episódio novo: os 30 s finais dele valem de novo
             saveResume();                       // posição final do ep anterior
             resumeKey = key;                    // a partir daqui salva na chave do NOVO ep
             // AVANÇAR = COMEÇAR DO ZERO. Não herda posição salva do ep seguinte: a TV
