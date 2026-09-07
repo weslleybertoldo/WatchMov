@@ -25,6 +25,7 @@ import { useDownloadList, setWatchedBridge } from '@/lib/downloads';
 import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
 import DownloadView from '@/components/streaming/DownloadView';
+import ServersView from '@/components/streaming/ServersView';
 import BugsView from '@/components/streaming/BugsView';
 import LiveTvView from '@/components/streaming/LiveTvView';
 import type { Channel } from '@/lib/liveTv';
@@ -142,6 +143,7 @@ export default function Index() {
   const badgeNotices = unreadNotices + dlAtivos + mp4Ativos;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [serversOpen, setServersOpen] = useState(false);    // aba Servidores (favorito do Assistir)
   const [bugsOpen, setBugsOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);          // Minha Lista (agora dentro do Painel)
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null); // canal ao vivo tocando
@@ -210,12 +212,9 @@ export default function Index() {
       })
       .catch(() => {});
   }, [castNow]);
-  useEffect(() => {
-    // Abriu um título: o detalhe nasce no TOPO. Ele troca o conteúdo da home no mesmo
-    // documento e herdava o scroll dela — aparecia rolado até o fim ("clico na série e
-    // vai pro final da página" / "os eps abrem sozinhos", sem passar pelo cabeçalho).
-    if (selected) { window.scrollTo(0, 0); return; }
-    const saved = homeScrollRef.current;
+  // Recoloca a página onde estava (linha âncora no mesmo lugar da tela; senão scrollY).
+  // Devolve o cancelamento das 2 passadas (a 2ª pega imagem/linha que carregou depois).
+  const restoreScroll = (saved: { y: number; rowKey?: string; rowTop?: number }) => {
     let lastSet = -1;
     const restore = () => {
       // Depois da 1ª passada o usuário já rolou por conta própria? Não briga com ele.
@@ -231,18 +230,44 @@ export default function Index() {
       lastSet = window.scrollY;
     };
     const raf = requestAnimationFrame(restore);
-    // 2ª passada: pega o que ainda mudou de altura logo depois (imagem/linha que carregou).
     const t = window.setTimeout(restore, 150);
     return () => { cancelAnimationFrame(raf); window.clearTimeout(t); };
+  };
+  useEffect(() => {
+    // Abriu um título: o detalhe nasce no TOPO. Ele troca o conteúdo da home no mesmo
+    // documento e herdava o scroll dela — aparecia rolado até o fim ("clico na série e
+    // vai pro final da página" / "os eps abrem sozinhos", sem passar pelo cabeçalho).
+    if (selected) { window.scrollTo(0, 0); return; }
+    return restoreScroll(homeScrollRef.current);
   }, [selected]);
+  // "Ver tudo" (categoria / continuar assistindo): mesma coisa do detalhe — a lista nasce
+  // no TOPO e, ao voltar, a home volta pra LINHA de onde saiu. Antes a home herdava o
+  // scroll da lista rolada e "voltava pro final da página" (pedido 07/09/2026).
+  const homeReturnRef = useRef<{ y: number; rowKey?: string; rowTop?: number }>({ y: 0 });
+  const subviewWasOpen = useRef(false);
+  const openCategory = useCallback((c: NonNullable<typeof category>) => {
+    homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
+    setCategory(c);
+  }, []);
+  const openContinue = useCallback((f: 'movie' | 'series' | 'anime') => {
+    homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
+    setContinueFilter(f);
+  }, []);
+  useEffect(() => {
+    if (category || continueFilter) { subviewWasOpen.current = true; window.scrollTo(0, 0); return; }
+    if (!subviewWasOpen.current) return;   // 1ª montagem / nunca abriu: nada a restaurar
+    subviewWasOpen.current = false;
+    return restoreScroll(homeReturnRef.current);
+  }, [category, continueFilter]);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
-    setCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
+    openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (liveChannel) { setLiveChannel(null); return true; }
     if (selected) { closeDetail(); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
+    if (serversOpen) { setServersOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
     if (listFilter) { setListFilter(null); return true; }
     if (listOpen) { setListOpen(false); return true; }
@@ -253,7 +278,7 @@ export default function Index() {
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [liveChannel, selected, closeDetail, historyOpen, downloadOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
+  }, [liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -300,7 +325,7 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
+  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -328,7 +353,7 @@ export default function Index() {
               <Search className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => { homeScrollRef.current = { y: 0 }; setNoticesOpen(o => !o); setSettingsOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Notificações">
+              onClick={() => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setNoticesOpen(o => !o); setSettingsOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Notificações">
               <Bell className="w-4 h-4" />
               {badgeNotices > 0 && (
                 <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
@@ -336,7 +361,7 @@ export default function Index() {
                 </span>
               )}
             </Button>
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { homeScrollRef.current = { y: 0 }; setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Painel">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
           </div>
@@ -377,6 +402,8 @@ export default function Index() {
             <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
           ) : downloadOpen ? (
             <DownloadView onBack={() => setDownloadOpen(false)} />
+          ) : serversOpen ? (
+            <ServersView onBack={() => setServersOpen(false)} />
           ) : bugsOpen ? (
             <BugsView onBack={() => setBugsOpen(false)} />
           ) : listOpen ? (
@@ -390,7 +417,7 @@ export default function Index() {
                   {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
                 </div>
               ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque em "+ Lista" num título.</p>
+                <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque no marcador ao lado do título pra salvar.</p>
               ) : (
                 <>
                   {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
@@ -400,7 +427,7 @@ export default function Index() {
               )}
             </div>
           ) : (
-            <SettingsView stats={watchedStats} onList={() => setListOpen(true)} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+            <SettingsView stats={watchedStats} onList={() => setListOpen(true)} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
           )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
@@ -412,13 +439,13 @@ export default function Index() {
           <div className="space-y-6">
             <HeroCarousel onOpen={openMedia} />
             {continueMovies.length > 0 && (
-              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => setContinueFilter('movie')} />
+              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} />
             )}
             {continueSeries.length > 0 && (
-              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => setContinueFilter('series')} />
+              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} />
             )}
             {continueAnimes.length > 0 && (
-              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => setContinueFilter('anime')} />
+              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} />
             )}
             <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
               loader={() => trendingWeek('movie')} onOpen={openMedia} />
@@ -426,7 +453,7 @@ export default function Index() {
               loader={() => trendingWeek('tv')} onOpen={openMedia} />
             <MediaRow title="Lançamentos recentes" cacheKey="recent-movie"
               loader={() => recent('movie')} onOpen={openMedia}
-              onSeeAll={() => setCategory({ title: 'Lançamentos recentes', loadPage: () => recent('movie'), cacheKey: 'cat-recent-movie' })} />
+              onSeeAll={() => openCategory({ title: 'Lançamentos recentes', loadPage: (p) => recent('movie', p), cacheKey: 'cat-recent-movie' })} />
             {MOVIE_GENRES.slice(0, 6).map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
                 loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
@@ -457,7 +484,7 @@ export default function Index() {
             {ANIME_ROWS.map(r => (
               <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
                 loader={animeRowLoader(r.id)} onOpen={openMedia}
-                onSeeAll={() => setCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
+                onSeeAll={() => openCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
             ))}
           </div>
         ) : tab === 'procurar' ? (
