@@ -37,9 +37,18 @@ public class ProxyServer extends NanoHTTPD {
     // Context da aplicação: necessário SÓ pro ramo content:// (ContentResolver). Sem
     // ele, content:// responde 500 "no_context" (e o log de acesso registra isso).
     private static volatile Context appCtx;
+    // Timeouts do UPSTREAM (CDN da fonte). Leitura = tempo máximo SEM NENHUM byte chegar
+    // (era 60 s): 30 s parado é fonte morta pra qualquer cliente — player e TV já
+    // desistiram bem antes. Precisam ficar ABAIXO dos timeouts dos clientes do proxy
+    // (download 45 s, player 35 s): assim quem desiste é o proxy, com 504/502 dizendo a
+    // causa, e não o cliente com um SocketTimeoutException cru enquanto o proxy segue
+    // baixando à toa (caso 10/09/2026).
+    static final int UPSTREAM_CONNECT_TIMEOUT_S = 15;
+    static final int UPSTREAM_READ_TIMEOUT_S = 30;
     private final OkHttpClient http = new OkHttpClient.Builder()
         .followRedirects(true).followSslRedirects(true)
-        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build();
+        .connectTimeout(UPSTREAM_CONNECT_TIMEOUT_S, TimeUnit.SECONDS)
+        .readTimeout(UPSTREAM_READ_TIMEOUT_S, TimeUnit.SECONDS).build();
 
     private ProxyServer() { super(PORT); }
     // Porta alternativa SÓ pra teste fora do aparelho (smoke no JVM) — o app usa PORT.
@@ -65,15 +74,41 @@ public class ProxyServer extends NanoHTTPD {
     // conta em `erros` (antes ficava erros=0 com a TV parada — caso "Dia D" 05/09).
     // Código sem constante no NanoHTTPD (ex. 451) vira um IStatus com o mesmo número.
     private static Response upstreamError(final int code, Req rq) {
-        Response.IStatus st = Response.Status.lookup(code);
-        if (st == null) {
-            st = new Response.IStatus() {
-                @Override public int getRequestStatus() { return code; }
-                @Override public String getDescription() { return code + " Upstream Error"; }
-            };
-        }
         rq.bytes = 0;
-        return newFixedLengthResponse(st, "text/plain", "upstream_" + code);
+        return newFixedLengthResponse(statusOf(code), "text/plain", "upstream_" + code);
+    }
+
+    // IStatus pra qualquer código (o enum do NanoHTTPD não tem 451/502/504…).
+    static Response.IStatus statusOf(final int code) {
+        Response.IStatus st = Response.Status.lookup(code);
+        if (st != null) return st;
+        return new Response.IStatus() {
+            @Override public int getRequestStatus() { return code; }
+            @Override public String getDescription() { return code + " Upstream Error"; }
+        };
+    }
+
+    /**
+     * Falha ao FALAR com o CDN antes de qualquer byte chegar ao cliente → status que diz
+     * a causa, em vez de 500 "proxy_err" genérico: 504 = o CDN não respondeu a tempo
+     * (SocketTimeoutException), 502 = inalcançável (DNS, conexão recusada, TLS). O player
+     * e o download registram InvalidResponseCodeException com o código real (aba Bugs) e
+     * a mensagem amigável do download acerta o motivo. Qualquer outra coisa segue 500.
+     * Puro (sem Android) — coberto pelo smoke da JVM.
+     */
+    static int statusForUpstreamException(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.net.SocketTimeoutException) return 504;
+            if (t instanceof java.net.UnknownHostException) return 502;
+            if (t instanceof java.net.ConnectException) return 502;
+            if (t instanceof javax.net.ssl.SSLException) return 502;
+            if (t.getCause() == t) break;
+        }
+        return 500;
+    }
+
+    static String upstreamExceptionBody(int status) {
+        return status == 504 ? "upstream_timeout" : status == 502 ? "upstream_unreachable" : "proxy_err";
     }
 
     public static void attach(Context ctx) {
@@ -535,7 +570,12 @@ public class ProxyServer extends NanoHTTPD {
         } catch (Exception e) {
             lastDiag = "EXC: " + e;
             rq.kind = "erro"; rq.note = lastDiag;
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "proxy_err");
+            // 504/502 com a causa (ver statusForUpstreamException); só chega aqui se o
+            // cliente ainda está esperando — o download espera 45 s e o player 35 s,
+            // acima dos 30 s do upstream, justamente pra receber ESTE status.
+            int st = statusForUpstreamException(e);
+            rq.bytes = 0;
+            return cors(newFixedLengthResponse(statusOf(st), "text/plain", upstreamExceptionBody(st)));
         }
     }
 
