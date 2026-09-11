@@ -40,6 +40,31 @@ public final class DownloadUtil {
     private static DownloadNotificationHelper notificationHelper;
     private static Context appCtx;      // pro proxy alcançar o cache sem Activity
 
+    // Timeouts do download. O cliente fala com o PROXY LOCAL, mas o tempo até o 1º byte
+    // inclui o CDN da fonte — e o Media3 vinha com os 8 s padrão (conexão e leitura),
+    // MENORES que os do upstream do proxy (15 s / 30 s): quem desistia era sempre o
+    // download, com um "java.net.SocketTimeoutException" cru, enquanto o proxy seguia
+    // baixando à toa. Caso 10/09/2026 ("Cara de Um, Focinho de Outro"): fonte lenta mas
+    // viva → 6 estouros seguidos sem progresso → FAILED. Com o cliente esperando MAIS que
+    // o proxy, quem responde é o proxy (504/502 com a causa) e fonte lenta vira demora.
+    static final int DL_CONNECT_TIMEOUT_MS = 20_000;
+    static final int DL_READ_TIMEOUT_MS = 45_000;
+    // Retentativas SEM progresso antes de FAILED (padrão 5). Só conta quando o byte não
+    // andou entre uma tentativa e outra — fonte lenta que entrega algo zera a conta.
+    static final int DL_MIN_RETRY_COUNT = 10;
+    // Segmentos em paralelo (pool compartilhado) e downloads simultâneos. Eram 4 e 2:
+    // até 8 pedidos ao mesmo CDN, brigando com o player e a TV → tudo lento. Um título
+    // por vez termina antes (dá pra assistir enquanto o resto baixa).
+    static final int DL_SEGMENT_THREADS = 3;
+    static final int DL_MAX_PARALLEL = 1;
+
+    /** HTTP paciente pro download e pro cache-miss do playback offline. */
+    static DefaultHttpDataSource.Factory patientHttpFactory() {
+        return new DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(DL_CONNECT_TIMEOUT_MS)
+            .setReadTimeoutMs(DL_READ_TIMEOUT_MS);
+    }
+
     private DownloadUtil() {}
 
     /**
@@ -81,15 +106,16 @@ public final class DownloadUtil {
         if (downloadManager == null) {
             Context app = ctx.getApplicationContext();
             DefaultDownloadIndex index = new DefaultDownloadIndex(getDatabaseProvider(app));
-            DataSource.Factory httpFactory = new DefaultHttpDataSource.Factory();
+            DataSource.Factory httpFactory = patientHttpFactory();
             CacheDataSource.Factory cacheWriter = new CacheDataSource.Factory()
                 .setCache(getCache(app))
                 .setCacheKeyFactory(KEY_FACTORY)      // chave = URL real (não a do proxy)
                 .setUpstreamDataSourceFactory(httpFactory);
             downloadManager = new DownloadManager(
                 app, index,
-                new DefaultDownloaderFactory(cacheWriter, Executors.newFixedThreadPool(4)));
-            downloadManager.setMaxParallelDownloads(2);
+                new DefaultDownloaderFactory(cacheWriter, Executors.newFixedThreadPool(DL_SEGMENT_THREADS)));
+            downloadManager.setMaxParallelDownloads(DL_MAX_PARALLEL);
+            downloadManager.setMinRetryCount(DL_MIN_RETRY_COUNT);
             // Avisa quando TERMINA. Fica no DownloadManager (não no plugin) porque o
             // download roda no serviço mesmo com o app fechado — no plugin, quem
             // fechasse o app não receberia nada.
@@ -111,7 +137,7 @@ public final class DownloadUtil {
         return new CacheDataSource.Factory()
             .setCache(getCache(ctx.getApplicationContext()))
             .setCacheKeyFactory(KEY_FACTORY)
-            .setUpstreamDataSourceFactory(new DefaultHttpDataSource.Factory())
+            .setUpstreamDataSourceFactory(patientHttpFactory())
             .setCacheWriteDataSinkFactory(null)   // playback não regrava no cache
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
     }
@@ -137,6 +163,21 @@ public final class DownloadUtil {
         String[] p = d.request.id.split(":");
         if (p.length >= 4 && "e".equals(p[0])) title = (title.isEmpty() ? "Episódio" : title) + " — T" + p[2] + "E" + p[3];
         return title.isEmpty() ? "Seu vídeo" : title;
+    }
+
+    // Título no formato que a aba Bugs agrupa ("Nome — T1 E4": o parseTitle exige o
+    // espaço entre T e E). O título gravado no download pode já vir com " T1E4" no fim
+    // (MediaDetail) — tira antes, senão virava uma pasta própria "Nome T1E4".
+    static String bugsTitleOf(androidx.media3.exoplayer.offline.Download d) {
+        String title = "";
+        try { if (d.request.data != null && d.request.data.length > 0) title = new String(d.request.data); } catch (Exception ignored) {}
+        String[] p = d.request.id.split(":");
+        String tmdb = p.length > 1 ? p[1] : "?";
+        if (p.length >= 4 && "e".equals(p[0])) {
+            String base = title.replaceFirst("\\s*[—–-]?\\s*T\\d+\\s*E\\d+\\s*$", "").trim();
+            return (base.isEmpty() ? "Série #" + tmdb : base) + " — T" + p[2] + " E" + p[3];
+        }
+        return title.trim().isEmpty() ? "Filme #" + tmdb : title.trim();
     }
 
     /**

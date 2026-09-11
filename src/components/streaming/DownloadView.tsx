@@ -6,6 +6,7 @@ import {
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
+import { tileReason } from '@/lib/downloadReason';
 import { useMp4, useMp4All, mp4Native, convertToMp4, openMp4, cancelMp4 } from '@/lib/mp4Download';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -35,7 +36,14 @@ function group(meta: Record<string, DownloadMeta>): TitleGroup[] {
 function Progress({ item }: { item?: DownloadItem }) {
   if (!item || item.state === 'completed' || item.state === 'removed') return null;
   if (item.state === 'failed') {
-    return <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1 py-0.5 text-[9px] text-destructive truncate">Falhou: {item.reason || 'erro'}</div>;
+    // Motivo legível vindo do nativo ("Servidor da fonte parou de responder · parou em
+    // 37% · abra a aba Download pra retomar…"): o tile mostra motivo + %, a frase
+    // inteira fica no title. Antes aparecia a exceção crua ("java.net.SocketTime…").
+    return (
+      <div className="absolute bottom-0 inset-x-0 bg-black/70 px-1 py-0.5 text-[9px] text-destructive truncate" title={item.reason || 'erro'}>
+        Falhou: {tileReason(item.reason)}
+      </div>
+    );
   }
   const p = item.percent >= 0 ? item.percent : null;
   return (

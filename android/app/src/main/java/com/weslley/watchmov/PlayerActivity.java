@@ -478,8 +478,16 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // manifest → o parser recebe bytes gzip e falha "Input does not start with
         // #EXTM3U" (ERROR_CODE_PARSING_MANIFEST_MALFORMED). OkHttp resolve isso.
         final String defUa = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+        // Timeouts: via proxy o tempo até o 1º byte inclui o CDN da fonte; com os 10 s
+        // padrão do OkHttp uma fonte lenta virava ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
+        // (SocketTimeoutException, caso 10/09/2026) e recarga, em vez de buffering. A
+        // leitura fica ACIMA dos 30 s do upstream do proxy: quem desiste é o proxy, com
+        // 504 dizendo a causa, e o player refaz o pedaço (PatientLoadErrorPolicy).
         okhttp3.OkHttpClient okClient = new okhttp3.OkHttpClient.Builder()
-            .followRedirects(true).followSslRedirects(true).build();
+            .followRedirects(true).followSslRedirects(true)
+            .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(35, java.util.concurrent.TimeUnit.SECONDS)
+            .build();
         OkHttpDataSource.Factory http = new OkHttpDataSource.Factory(okClient)
             .setUserAgent(ua != null ? ua : defUa);
         httpFactory = http;
@@ -501,11 +509,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // o gzip do m3u8).
         boolean arquivoLocal = currentUrl != null
             && !(currentUrl.startsWith("http://") || currentUrl.startsWith("https://"));
-        androidx.media3.exoplayer.source.MediaSource.Factory msFactory = arquivoLocal
+        // Fonte lenta: 6 tentativas por pedaço em erro de rede (padrão 3); erro HTTP
+        // (link morto) mantém 3 — ver PatientLoadErrorPolicy.
+        PatientLoadErrorPolicy retries = new PatientLoadErrorPolicy();
+        androidx.media3.exoplayer.source.MediaSource.Factory msFactory = (arquivoLocal
             ? new DefaultMediaSourceFactory(new androidx.media3.datasource.DefaultDataSource.Factory(this))
             : offline
                 ? new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(this))
-                : new DefaultMediaSourceFactory(http);
+                : new DefaultMediaSourceFactory(http))
+            .setLoadErrorHandlingPolicy(retries);
         player = new ExoPlayer.Builder(this)
             .setMediaSourceFactory(msFactory)
             .setLoadControl(loadControl)

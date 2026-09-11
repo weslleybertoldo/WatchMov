@@ -18,6 +18,9 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Ponte JS ↔ Media3 offline. enqueue baixa a MASTER capturada ATRAVÉS do ProxyServer
  * local (reaproveita headers anti-bot/gzip/segmento-raw). O ID do download = a chave
@@ -29,6 +32,15 @@ public class DownloaderPlugin extends Plugin {
 
     private DownloadManager.Listener listener;
 
+    // Motivo LEGÍVEL da última falha, por download. O Download do Media3 só guarda um
+    // int (failureReason=1) e a exceção chega UMA vez, no listener; sem guardar aqui, o
+    // list() do polling do JS reescrevia o item com "falha (código 1)" por cima da
+    // mensagem. Some ao voltar a baixar/concluir/remover.
+    private static final Map<String, String> failReasons = new ConcurrentHashMap<>();
+    // Último estado visto por download: o listener repete o mesmo estado várias vezes,
+    // e a aba Bugs deve registrar falha/conclusão só na TRANSIÇÃO.
+    private static final Map<String, Integer> lastState = new ConcurrentHashMap<>();
+
     @Override
     public void load() {
         // Canal de notificação (foreground service exige) + listener de mudanças.
@@ -37,11 +49,21 @@ public class DownloaderPlugin extends Plugin {
         DownloadManager dm = DownloadUtil.getDownloadManager(getContext());
         listener = new DownloadManager.Listener() {
             @Override public void onDownloadChanged(DownloadManager m, Download d, Exception e) {
-                JSObject o = toJson(d);
-                if (e != null && e.getMessage() != null) o.put("reason", e.getMessage());
-                notifyListeners("downloadChanged", o);
+                String id = d.request.id;
+                Integer antes = lastState.put(id, d.state);
+                boolean transicao = antes == null || antes != d.state;
+                if (d.state == Download.STATE_FAILED) {
+                    failReasons.put(id, DownloadFailure.describe(e, d.getPercentDownloaded()));
+                    if (transicao) reportFailure(d, e);
+                } else if (d.state == Download.STATE_DOWNLOADING || d.state == Download.STATE_COMPLETED) {
+                    failReasons.remove(id);
+                    if (transicao && d.state == Download.STATE_COMPLETED) reportDone(d);
+                }
+                notifyListeners("downloadChanged", toJson(d));
             }
             @Override public void onDownloadRemoved(DownloadManager m, Download d) {
+                failReasons.remove(d.request.id);
+                lastState.remove(d.request.id);
                 JSObject o = new JSObject();
                 o.put("key", d.request.id);
                 o.put("state", "removed");
@@ -51,6 +73,41 @@ public class DownloaderPlugin extends Plugin {
         };
         dm.addListener(listener);
         resumePending();
+    }
+
+    /**
+     * Falha → aba Bugs (wm_playback_errors) como DOWNLOAD_FALHOU, com a causa real, onde
+     * parou e o diagnóstico do proxy. Antes a falha não ficava registrada em lugar nenhum
+     * (só o "reason" na tela) — caso 10/09/2026: "Falhou: java.net.SocketTime…" sem rastro
+     * pra investigar. O título vai no formato da aba ("Nome — T1 E4") pra cair na pasta
+     * certa; error_code = failureReason (≠ 0) conta como erro de verdade.
+     */
+    private static void reportFailure(Download d, Exception e) {
+        try {
+            String proxied = d.request.uri.toString();
+            String cause = "[download] " + (e == null ? "sem exceção (interrompido)" : String.valueOf(e))
+                + " | percent=" + Math.round(d.getPercentDownloaded()) + " bytes=" + d.getBytesDownloaded()
+                + " failureReason=" + d.failureReason
+                + " | proxy{" + ProxyServer.lastDiag + "}";
+            NativePlayerPlugin.reportError(DownloadUtil.cacheKey(proxied), d.failureReason,
+                DownloadFailure.httpStatusOf(e), "DOWNLOAD_FALHOU", cause,
+                d.request.mimeType, refererOf(proxied), DownloadUtil.bugsTitleOf(d));
+        } catch (Throwable ignored) { /* diagnóstico nunca derruba o download */ }
+    }
+
+    // Conclusão também vai pra aba (código 0 = diagnóstico, não erro): dá a linha do
+    // tempo "começou a falhar às X, terminou às Y" sem abrir o logcat.
+    private static void reportDone(Download d) {
+        try {
+            String proxied = d.request.uri.toString();
+            NativePlayerPlugin.reportError(DownloadUtil.cacheKey(proxied), 0, 0, "DOWNLOAD_CONCLUIDO",
+                "[download] bytes=" + d.getBytesDownloaded(),
+                d.request.mimeType, refererOf(proxied), DownloadUtil.bugsTitleOf(d));
+        } catch (Throwable ignored) { }
+    }
+
+    private static String refererOf(String proxied) {
+        try { return Uri.parse(proxied).getQueryParameter("r"); } catch (Exception e) { return null; }
     }
 
     /**
@@ -127,7 +184,12 @@ public class DownloaderPlugin extends Plugin {
         float p = d.getPercentDownloaded();
         o.put("percent", Float.isNaN(p) || p < 0 ? -1 : Math.round(p));
         o.put("bytes", d.getBytesDownloaded());
-        if (d.state == Download.STATE_FAILED) o.put("reason", "falha (código " + d.failureReason + ")");
+        if (d.state == Download.STATE_FAILED) {
+            // Motivo guardado no listener; sem ele (app reaberto com FAILED no índice) a
+            // frase genérica ainda diz onde parou e como retomar.
+            String motivo = failReasons.get(d.request.id);
+            o.put("reason", motivo != null ? motivo : DownloadFailure.describe(null, p));
+        }
         return o;
     }
 
