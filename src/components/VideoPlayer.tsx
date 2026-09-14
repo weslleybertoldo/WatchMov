@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
+import { mergeCaptured } from '@/lib/capturedList';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -252,15 +253,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       // é o que a tag do picker mostra (SuperFlix/EmbedPlay), mais confiável que
       // adivinhar pelo host (que rotaciona).
       const r = { ...rr, provider: rr.provider || providerId };
-      // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar.
-      setCapturedList(prev => {
-        const key = streamKey(r.url);
-        const idx = prev.findIndex(x => streamKey(x.url) === key);
-        if (idx < 0) return [...prev, r];
-        const copy = [...prev];
-        copy[idx] = { url: r.url, mime: r.mime || copy[idx].mime, referer: r.referer || copy[idx].referer, provider: r.provider || copy[idx].provider };
-        return copy;
-      });
+      // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar, SEM perder
+      // headers/quality (os headers levam o UA real do WebView pro replay do proxy; 14/09/2026).
+      setCapturedList(prev => mergeCaptured(prev, r));
       addStreams([r], tmdbId, type, season, episode);
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
