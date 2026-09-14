@@ -39,6 +39,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # O padrão do action instala o pacote legado 'tools', que saiu do repositório do SDK
+          # (run 274, 14/09/2026: "Failed to find package 'tools'" → sdkmanager exit 1). Só o
+          # platform-tools basta: o Gradle baixa platforms/build-tools que faltarem.
+          packages: platform-tools
 
       - name: Get current version
         id: version
