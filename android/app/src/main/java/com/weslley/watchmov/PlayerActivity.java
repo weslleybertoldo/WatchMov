@@ -477,13 +477,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // text/plain GZIP e o DefaultHttpDataSource do ExoPlayer NÃO descomprime o
         // manifest → o parser recebe bytes gzip e falha "Input does not start with
         // #EXTM3U" (ERROR_CODE_PARSING_MANIFEST_MALFORMED). OkHttp resolve isso.
-        final String defUa = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+        final String defUa = ProxyServer.userAgent();   // UA real do WebView (o proxy reenvia o mesmo)
         // Timeouts: via proxy o tempo até o 1º byte inclui o CDN da fonte; com os 10 s
         // padrão do OkHttp uma fonte lenta virava ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
         // (SocketTimeoutException, caso 10/09/2026) e recarga, em vez de buffering. A
         // leitura fica ACIMA dos 30 s do upstream do proxy: quem desiste é o proxy, com
         // 504 dizendo a causa, e o player refaz o pedaço (PatientLoadErrorPolicy).
         okhttp3.OkHttpClient okClient = new okhttp3.OkHttpClient.Builder()
+            .dns(AppDns.get())   // DoH → sistema (o player fala com o proxy local, mas vale pra qualquer URL direta)
             .followRedirects(true).followSslRedirects(true)
             .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(35, java.util.concurrent.TimeUnit.SECONDS)

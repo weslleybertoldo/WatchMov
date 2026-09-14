@@ -34,7 +34,7 @@ public class StreamSnifferPlugin extends Plugin {
     private static final Set<String> emitted = Collections.synchronizedSet(new HashSet<String>());
     private static final Set<String> probed = Collections.synchronizedSet(new HashSet<String>());
     private static final ExecutorService pool = Executors.newFixedThreadPool(3);
-    private static final OkHttpClient http = new OkHttpClient();
+    private static final OkHttpClient http = new OkHttpClient.Builder().dns(AppDns.get()).build();   // DoH → sistema (AppDns)
     private static int probeCount = 0;
 
     @Override
@@ -210,7 +210,7 @@ public class StreamSnifferPlugin extends Plugin {
         try {
             java.util.HashMap<String, String> h = new java.util.HashMap<>();
             if (referer != null) h.put("Referer", referer);
-            h.put("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+            h.put("User-Agent", ProxyServer.userAgent());   // mesmo UA do WebView (googlevideo prende a URL ao UA)
             mmr.setDataSource(url, h);
             String hh = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
             if (hh != null && !hh.trim().isEmpty()) return hh.trim() + "p";
@@ -226,7 +226,7 @@ public class StreamSnifferPlugin extends Plugin {
         try {
             Request.Builder rb = new Request.Builder().url(url);
             if (referer != null) rb.header("Referer", referer);
-            rb.header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+            rb.header("User-Agent", ProxyServer.userAgent());   // mesmo UA do WebView
             try (Response resp = http.newCall(rb.build()).execute()) {
                 if (resp.body() == null) return "";
                 String body = resp.body().string();

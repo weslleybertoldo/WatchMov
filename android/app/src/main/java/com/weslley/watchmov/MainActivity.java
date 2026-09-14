@@ -85,6 +85,10 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
 
         WebView webView = this.bridge.getWebView();
+        // UA REAL deste WebView → proxy/sniffer/player reenviam o mesmo (googlevideo/Blogger
+        // prende a URL ao UA que a gerou; com UA fixo diferente o replay dava 403).
+        ProxyServer.attach(getApplicationContext());
+        ProxyServer.setWebViewUserAgent(webView.getSettings().getUserAgentString());
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
         webView.getSettings().setSupportMultipleWindows(true);
 

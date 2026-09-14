@@ -32,7 +32,42 @@ public class ProxyServer extends NanoHTTPD {
     // Título do que está tocando (a Activity informa) — só pra rotular os eventos que
     // o proxy emite na aba Bugs (CAST_MASTER_INFO); o proxy em si não sabe o título.
     public static volatile String currentTitle = null;
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+    // UA de FALLBACK — só até o MainActivity informar o UA REAL do WebView (setWebViewUserAgent).
+    // Os links do Blogger/googlevideo (Fonte 6 "Blogger", Fembed, WarezCDN) são presos ao UA
+    // EXATO que gerou a URL (prova 14/09/2026: mesma URL → 206 com o UA do browser que abriu
+    // o embed, 403 com este Chrome/120 fixo, com Chrome/129, com UA vazio). Referer, cookie,
+    // IPv6 e Range não importam. Por isso o replay do proxy usa o MESMO UA do WebView.
+    private static final String UA_FALLBACK = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+    private static volatile String webViewUa = null;
+
+    /** UA real do WebView do app (MainActivity informa ao subir; também usado pelo sniffer e pelo player). */
+    public static void setWebViewUserAgent(String ua) {
+        if (ua != null && !ua.trim().isEmpty()) webViewUa = ua.trim();
+    }
+
+    /** UA que o proxy/sniffer/player mandam: o do WebView; sem ele, o padrão do WebView do sistema; por fim o fixo. */
+    public static String userAgent() {
+        String u = webViewUa;
+        if (u != null) return u;
+        try {
+            Context c = appCtx;
+            if (c != null) {
+                u = android.webkit.WebSettings.getDefaultUserAgent(c);
+                if (u != null && !u.isEmpty()) { webViewUa = u; return u; }
+            }
+        } catch (Throwable ignored) {}
+        return UA_FALLBACK;
+    }
+
+    /** sec-ch-ua coerente com a versão do Chromium do UA em uso (antes era "120" fixo). */
+    static String secChUa(String ua) {
+        String v = "120";
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("Chrome/(\\d+)").matcher(ua == null ? "" : ua);
+            if (m.find()) v = m.group(1);
+        } catch (Exception ignored) {}
+        return "\"Chromium\";v=\"" + v + "\", \"Not:A-Brand\";v=\"99\"";
+    }
     private static ProxyServer instance;
     // Context da aplicação: necessário SÓ pro ramo content:// (ContentResolver). Sem
     // ele, content:// responde 500 "no_context" (e o log de acesso registra isso).
@@ -45,7 +80,10 @@ public class ProxyServer extends NanoHTTPD {
     // baixando à toa (caso 10/09/2026).
     static final int UPSTREAM_CONNECT_TIMEOUT_S = 15;
     static final int UPSTREAM_READ_TIMEOUT_S = 30;
+    // DNS do app (DoH → sistema): ver AppDns. Sem isso o DNS da operadora recusava os hosts
+    // do CDN (sprintcdn) → UnknownHostException → 502 aqui, com o WebView tocando normal.
     private final OkHttpClient http = new OkHttpClient.Builder()
+        .dns(AppDns.get())
         .followRedirects(true).followSslRedirects(true)
         .connectTimeout(UPSTREAM_CONNECT_TIMEOUT_S, TimeUnit.SECONDS)
         .readTimeout(UPSTREAM_READ_TIMEOUT_S, TimeUnit.SECONDS).build();
@@ -434,11 +472,12 @@ public class ProxyServer extends NanoHTTPD {
             return cors(rc);
         }
         try {
-            Request.Builder rb = new Request.Builder().url(u).header("User-Agent", UA);
+            final String ua = userAgent();
+            Request.Builder rb = new Request.Builder().url(u).header("User-Agent", ua);
             // Header set do Chrome (alguns anti-bot conferem Accept/sec-fetch/sec-ch-ua).
             rb.header("Accept", "*/*");
             rb.header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
-            rb.header("sec-ch-ua", "\"Chromium\";v=\"120\", \"Not:A-Brand\";v=\"99\"");
+            rb.header("sec-ch-ua", secChUa(ua));
             rb.header("sec-ch-ua-mobile", "?1");
             rb.header("sec-ch-ua-platform", "\"Android\"");
             rb.header("Sec-Fetch-Dest", "empty");
@@ -465,7 +504,7 @@ public class ProxyServer extends NanoHTTPD {
                 String cookie = android.webkit.CookieManager.getInstance().getCookie(u);
                 if (cookie != null && !cookie.isEmpty()) { rb.header("Cookie", cookie); cookieLen = cookie.length(); }
             } catch (Exception ignored) {}
-            lastDiag = "cookieLen=" + cookieLen + " ";
+            lastDiag = "cookieLen=" + cookieLen + " dns=" + AppDns.lastPath + " ";
             // Playlist (manifesto): busca IDENTITY (sem gzip) e SEM Range — igual ao
             // fetch do navegador/curl que retorna #EXTM3U limpo. Evita o edge-case
             // gzip+Range em que o ExoPlayer recebe bytes gzip → "não começa com
