@@ -8,12 +8,15 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import { Switch } from '@/components/ui/switch';
+import { useResolverEnabled, setResolverEnabled } from '@/lib/resolver';
 
 // Aba "Servidores" do Painel (abaixo de Download — pedido 07/09/2026): lista as
 // fontes do Assistir e deixa marcar a FAVORITA, que passa a abrir por padrão
 // (antes o padrão era fixo na Fonte 6). Tocar num servidor → popup de confirmação.
 export default function ServersView({ onBack }: { onBack: () => void }) {
   const fav = useFavoriteServer();
+  const resolverOn = useResolverEnabled();
   const [pending, setPending] = useState<Provider | null>(null);
 
   const confirm = () => {
@@ -57,6 +60,15 @@ export default function ServersView({ onBack }: { onBack: () => void }) {
             </button>
           );
         })}
+      </div>
+
+      {/* Resolvedor oculto (14/09/2026): Assistir tenta achar o vídeo escondido e abrir direto no reprodutor. */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3" data-resolver={resolverOn ? '1' : '0'}>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">Resolver sozinho ao tocar em Assistir</p>
+          <p className="text-xs text-muted-foreground">Procura o vídeo escondido e abre direto no reprodutor. Se não achar em 15 s, mostra o servidor.</p>
+        </div>
+        <Switch checked={resolverOn} onCheckedChange={v => { setResolverEnabled(v); toast.info(v ? 'Resolvedor ligado' : 'Resolvedor desligado'); }} />
       </div>
 
       <AlertDialog open={!!pending} onOpenChange={o => { if (!o) setPending(null); }}>
