@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -113,5 +113,15 @@ describe('resolver oculto (regras puras)', () => {
 
   it('v4.57: RESOLVER_OPT_MS = 30 s por opcao', () => {
     expect(RESOLVER_OPT_MS).toBe(30000);
+  });
+
+  it('v4.58: buildBloggerScript le a config do player (itag 18) e loga WMBLOG, sem regex', () => {
+    const s = buildBloggerScript();
+    expect(() => new Function(s)).not.toThrow();
+    expect(s).toContain('WMBLOG|');
+    expect(s).toContain('VIDEO_CONFIG');
+    expect(s).toContain('ytInitialPlayerResponse');
+    expect(s).toContain('__wmBlog');
+    expect(s).toContain('googlevideo');
   });
 });
