@@ -10,6 +10,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 import android.widget.FrameLayout;
 
 import com.getcapacitor.JSArray;
@@ -54,6 +56,8 @@ public class ResolverPlugin extends Plugin {
     private int reports = 0;
     private int navReports = 0;                             // RESOLVER_NAV_BLOCKED: no máx. 3 (não come o teto do TIMEOUT)
     private int clicks = 0;
+    private boolean injected = false;
+    private String injectScript = "";
     private int session = 0;                                // invalida callbacks de um start() antigo
     private Runnable deadline;
     private final Runnable ticker = new Runnable() { @Override public void run() { tick(); } };
@@ -64,6 +68,7 @@ public class ResolverPlugin extends Plugin {
         final String referer = call.getString("referer", "");
         final int budgetMs = call.getInt("budgetMs", 15000);
         final String script = call.getString("clickScript", "");
+        final String inject = call.getString("injectScript", "");
         final List<String> hosts = new ArrayList<>();
         try {
             JSArray a = call.getArray("hopHosts");
@@ -75,7 +80,7 @@ public class ResolverPlugin extends Plugin {
             try {
                 stopInternal();
                 final int mySession = ++session;
-                hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; currentUrl = url;
+                hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
@@ -114,7 +119,7 @@ public class ResolverPlugin extends Plugin {
                         if (mySession != session) return;
                         if (u != null && !u.isEmpty()) currentUrl = u;
                         emit("loaded", u);
-                        runClicks();
+                        if (!injected) runClicks();
                     }
                 });
                 w.setAlpha(0f);
@@ -123,10 +128,19 @@ public class ResolverPlugin extends Plugin {
                 // Tamanho REAL (players medem o viewport antes de iniciar), ATRÁS do WebView do app.
                 root.addView(w, 0, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
                 web = w;
+                // Injeta em TODOS os frames (inclusive cross-origin) no document-start: cada frame clica sua
+                // opção/gate/play. O gate da Byse (.captcha-gate__play) só renderiza DENTRO do iframe f7hyg4q
+                // (em branco no topo), então evaluateJavascript/hop não alcançavam; addDocumentStartJavaScript sim.
+                if (injectScript != null && !injectScript.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    try { WebViewCompat.addDocumentStartJavaScript(w, injectScript, java.util.Collections.singleton("*")); injected = true; }
+                    catch (Throwable t) { injected = false; }
+                }
+                // Diagnóstico: a injeção em todos os frames ficou ativa? (aba Bugs)
+                report("RESOLVER_INJECT", injected ? "on" : (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ? "add-threw" : "unsupported"));
                 Map<String, String> h = new HashMap<>();
                 if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
                 w.loadUrl(url, h);
-                ui.postDelayed(ticker, 1500);
+                if (!injected) ui.postDelayed(ticker, 1500);   // injeção cobre todos os frames; ticker só no fallback
                 deadline = () -> {
                     if (mySession != session) return;
                     snapshotThen(mySession, snap -> {
@@ -148,6 +162,7 @@ public class ResolverPlugin extends Plugin {
 
     // Player em IFRAME cross-origin de host conhecido → vira frame principal (só assim dá pra clicar por JS).
     private void maybeHop(final int mySession, WebResourceRequest req) {
+        if (injected) return;   // injeção em todos os frames dispensa (e o hop deixa f7hyg4q em branco)
         try {
             if (req.isForMainFrame() || hops >= 3) return;
             Map<String, String> hdr = req.getRequestHeaders();
