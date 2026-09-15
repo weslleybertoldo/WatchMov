@@ -17,7 +17,9 @@ interface ResolverPlugin {
 }
 const Resolver = registerPlugin<ResolverPlugin>('Resolver');
 
-export const RESOLVER_BUDGET_MS = 15000;
+// 30 s (era 15 s na v4.52): na prova viva de 14/09 a Fonte 6 (playerflix → Blogger → YouTube →
+// googlevideo) levou ~27 s do hop até o link e a Fonte 1 (Byse) precisa de 2 hops + gate.
+export const RESOLVER_BUDGET_MS = 30000;
 // Iframes de player em que é preciso CLICAR (opção/gate) → o WebView oculto navega pra URL deles
 // como frame principal (só o frame principal aceita evaluateJavascript). SuperFlix não precisa:
 // o player em xn--…best toca sozinho dentro do iframe e a captura é por rede.
