@@ -508,8 +508,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // DefaultDataSource resolve content/file/asset além de http.
         // Offline (cache Media3): CacheDataSource, sem rede. Online: OkHttp (descomprime
         // o gzip do m3u8).
-        boolean arquivoLocal = currentUrl != null
-            && !(currentUrl.startsWith("http://") || currentUrl.startsWith("https://"));
+        boolean arquivoLocal = currentUrl != null && !isNetUrl(currentUrl);
         // Fonte lenta: 6 tentativas por pedaço em erro de rede (padrão 3); erro HTTP
         // (link morto) mantém 3 — ver PatientLoadErrorPolicy.
         PatientLoadErrorPolicy retries = new PatientLoadErrorPolicy();
@@ -889,7 +888,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // Arquivo local (content:// do MP4 exportado, file://) NÃO passa pelo proxy: o
         // proxy só sabe falar HTTP e devolvia ERROR_CODE_IO_BAD_HTTP_STATUS ao tentar
         // "baixar" um content://.
-        boolean rede = url.startsWith("http://") || url.startsWith("https://");
+        boolean rede = isNetUrl(url);
         String playUri = (rede && (offline || MimeTypes.APPLICATION_M3U8.equals(mimeType)))
             ? ProxyServer.local(url, mReferer) : url;
         MediaItem item = new MediaItem.Builder().setUri(playUri).setMimeType(mimeType).build();
@@ -1852,10 +1851,17 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         }).start();
     }
 
+    // URL de REDE (passa pelo proxy): http(s) ou o master sintetizado synth:// (ver
+    // SynthMaster/ProxyServer) — sem isso o synth caía em "arquivo local" (DefaultDataSource,
+    // sem proxy) e morria em ERROR_CODE_FAILED_RUNTIME_CHECK.
+    static boolean isNetUrl(String u) {
+        return u != null && (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("synth://"));
+    }
+
     // O link ATUAL é HLS (master com variantes) ou arquivo único (MP4/content://)?
     private boolean isHlsCurrent() {
         String url = currentUrl;
-        boolean rede = url != null && (url.startsWith("http://") || url.startsWith("https://"));
+        boolean rede = isNetUrl(url);
         String lu = url != null ? url.toLowerCase() : "";
         return rede && ((mMime != null && mMime.toLowerCase().contains("mpegurl"))
             || lu.contains(".m3u8") || lu.contains("master") || lu.contains("/m3/") || lu.contains(".txt") || lu.contains("playlist"));

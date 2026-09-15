@@ -1,6 +1,7 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 
-export interface SniffResult { url: string; mime?: string; referer?: string; quality?: string; headers?: Record<string, string>; provider?: string }
+// synthetic: COMPLETO montado pelo app a partir de um par vídeo/áudio (synth://…, ver capturedList.ts).
+export interface SniffResult { url: string; mime?: string; referer?: string; quality?: string; headers?: Record<string, string>; provider?: string; synthetic?: boolean }
 
 interface StreamSnifferPlugin {
   startWatching(): Promise<void>;

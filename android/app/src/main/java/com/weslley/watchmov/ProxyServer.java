@@ -319,6 +319,16 @@ public class ProxyServer extends NanoHTTPD {
 
     public static void putHeaders(String url, java.util.Map<String, String> headers) {
         if (url == null || headers == null || headers.isEmpty()) return;
+        // COMPLETO sintetizado: os headers valem pras duas playlists de dentro (mesmo host).
+        if (url.startsWith("synth://")) {
+            try {
+                Uri su = Uri.parse(url);
+                String v = su.getQueryParameter("v"), a = su.getQueryParameter("a");
+                if (v != null) putHeaders(v, headers);
+                if (a != null) putHeaders(a, headers);
+            } catch (Exception ignored) {}
+            return;
+        }
         try {
             String host = new URL(url).getHost();
             if (host != null) HDRS.put(host.toLowerCase(), new java.util.HashMap<>(headers));
@@ -331,6 +341,65 @@ public class ProxyServer extends NanoHTTPD {
             if (host != null) return HDRS.get(host.toLowerCase());
         } catch (Exception ignored) {}
         return null;
+    }
+
+    // ---------------------------------------------------------------------------
+    // COMPLETO SINTETIZADO (synth://): que tipo de mídia tem cada playlist do par? O JS
+    // não tem como saber (no SuperFlix as duas vêm em /m3/), então lemos a playlist e os
+    // primeiros 64 KB do 1º segmento (init do fMP4 se houver) e deixamos o SynthMaster
+    // classificar. Veredito por URL fica em cache; "unknown" (erro, segmento cifrado) não
+    // fica — e aí vale a ordem que o JS mandou (1ª capturada = vídeo).
+    // ---------------------------------------------------------------------------
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> KIND = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String classifyTrack(String u, String r) {
+        String hit = KIND.get(u);
+        if (hit != null) return hit;
+        String kind = "unknown";
+        try {
+            OkHttpClient c = http.newBuilder().callTimeout(6, TimeUnit.SECONDS).build();
+            String body;
+            try (okhttp3.Response up = c.newCall(probeRequest(u, r).header("Accept-Encoding", "identity").build()).execute()) {
+                if (!up.isSuccessful() || up.body() == null) return "unknown";
+                body = up.body().string();
+            }
+            String seg = SynthMaster.firstSegment(body, u);
+            if (seg != null) {
+                try (okhttp3.Response sp = c.newCall(probeRequest(seg, r).header("Range", "bytes=0-65535").build()).execute()) {
+                    if (sp.isSuccessful() && sp.body() != null) {
+                        java.io.InputStream in = sp.body().byteStream();
+                        byte[] buf = new byte[65536]; int n = 0, k;
+                        while (n < buf.length && (k = in.read(buf, n, buf.length - n)) > 0) n += k;
+                        kind = SynthMaster.detectKind(java.util.Arrays.copyOf(buf, n));
+                    }
+                }
+            }
+        } catch (Exception e) { kind = "unknown"; }
+        if (!"unknown".equals(kind)) KIND.put(u, kind);
+        return kind;
+    }
+
+    // Mesmo "disfarce" do replay (UA real do WebView, headers do Chrome, Referer/Origin,
+    // headers REAIS da captura por host e cookies do WebView) — sem isso o CDN nega o probe.
+    private Request.Builder probeRequest(String u, String r) {
+        final String ua = userAgent();
+        Request.Builder rb = new Request.Builder().url(u).header("User-Agent", ua).header("Accept", "*/*")
+            .header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7").header("sec-ch-ua", secChUa(ua))
+            .header("sec-ch-ua-mobile", "?1").header("sec-ch-ua-platform", "\"Android\"")
+            .header("Sec-Fetch-Dest", "empty").header("Sec-Fetch-Mode", "cors").header("Sec-Fetch-Site", "cross-site");
+        if (r != null && !r.isEmpty()) {
+            rb.header("Referer", r);
+            try { URL ru = new URL(r); rb.header("Origin", ru.getProtocol() + "://" + ru.getHost()); } catch (Exception ignored) {}
+        }
+        java.util.Map<String, String> real = headersFor(u);
+        if (real != null) for (java.util.Map.Entry<String, String> e : real.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null) rb.header(e.getKey(), e.getValue());
+        }
+        try {
+            String cookie = android.webkit.CookieManager.getInstance().getCookie(u);
+            if (cookie != null && !cookie.isEmpty()) rb.header("Cookie", cookie);
+        } catch (Exception ignored) {}
+        return rb;
     }
 
     // URL local (ExoPlayer no próprio aparelho).
@@ -435,6 +504,27 @@ public class ProxyServer extends NanoHTTPD {
         int qH = 0;
         try { String q = session.getParms().get("q"); if (q != null && !q.isEmpty()) qH = Integer.parseInt(q.trim()); } catch (Exception ignored) {}
 
+        // MASTER SINTETIZADO (synth://host/<chave>?v=<playlist 1>&a=<playlist 2>): players que
+        // entregam vídeo e áudio em playlists separadas (SuperFlix/Fembed) e cujo master real é
+        // de UM uso (2ª busca = 403) — ver SynthMaster. Confere pelo 1º segmento de cada uma
+        // qual é o áudio (o JS não sabe: as duas vêm em /m3/) e monta um master HLS com URIs
+        // relativas ao próprio proxy (player local ou TV na LAN resolvem sozinhos).
+        if (u.startsWith("synth://")) {
+            Uri su = Uri.parse(u);
+            String sv = su.getQueryParameter("v"), sa = su.getQueryParameter("a");
+            if (sv == null || sa == null || sv.isEmpty() || sa.isEmpty()) {
+                rq.kind = "erro"; rq.note = "synth sem v/a";
+                return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "synth: faltam v/a");
+            }
+            String ref = r == null ? "" : r;
+            String kv = classifyTrack(sv, ref), ka = classifyTrack(sa, ref);
+            boolean swap = SynthMaster.shouldSwap(kv, ka);
+            byte[] body = SynthMaster.body(swap ? sa : sv, swap ? sv : sa, ref).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            rq.kind = "master"; rq.note = "synth v=" + kv + " a=" + ka + (swap ? " swap" : ""); rq.bytes = body.length;
+            lastDiag = rq.note;
+            return cors(newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", new java.io.ByteArrayInputStream(body), body.length));
+        }
+
         // ARQUIVO LOCAL (content:// do MP4 exportado, file://): só o celular resolve
         // esse esquema. A TV recebe HTTP com Range/206 — sem isso o OkHttp lançava
         // "Expected URL scheme http" → 500 → "Playing failed"/"Loading media resource…".
@@ -510,7 +600,7 @@ public class ProxyServer extends NanoHTTPD {
             // gzip+Range em que o ExoPlayer recebe bytes gzip → "não começa com
             // #EXTM3U" (fembed/SuperFlix). Segmento (binário): mantém Range p/ seek.
             String luEarly = u.toLowerCase();
-            boolean urlPlaylist = luEarly.contains(".m3u8") || luEarly.contains("/m3/") || luEarly.endsWith(".txt")
+            boolean urlPlaylist = luEarly.contains(".m3u8") || luEarly.contains("/m3/") || luEarly.contains("/md/") || luEarly.endsWith(".txt")
                 || luEarly.contains("/master") || luEarly.contains("playlist") || luEarly.contains(".m3u");
             if (urlPlaylist) {
                 rb.header("Accept-Encoding", "identity");
