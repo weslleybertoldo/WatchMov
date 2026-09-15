@@ -7,7 +7,7 @@ import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor
 // com o mesmo UA/cookies do app, faz frame-hop pros players em iframe de host conhecido e roda
 // o clickScript abaixo a cada 1,5 s. O link capturado chega pelo MESMO streamFound do sniffer;
 // quem abre o reprodutor é o auto-abrir do VideoPlayer. Aqui: wrapper do plugin, receita de
-// cliques, toggle (padrão ligado) e cooldown por fonte (2 timeouts seguidos → 24 h sem tentar).
+// cliques, toggle (padrão ligado) e pausa por fonte (3 timeouts seguidos na MESMA versão → 2 h).
 
 export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout'; url: string; hops?: number }
 interface ResolverPlugin {
@@ -77,10 +77,14 @@ export function buildClickScript(steps: string[] = CLICK_STEPS): string {
 
 // ── toggle (aba Servidores) ────────────────────────────────────────────────────
 const KEY_ON = 'watchmov_resolver';            // '0' = desligado; ausente/'1' = ligado (padrão)
-const KEY_FAILS = 'watchmov_resolver_fails';   // { [providerId]: { n, ts } }
+const KEY_FAILS = 'watchmov_resolver_fails';   // { [providerId]: { n, ts, v } }
 const EVT = 'watchmov:resolver';
-export const COOLDOWN_FAILS = 2;
-export const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// 15/09/2026: 3 timeouts seguidos → 2 h de pausa NA FONTE (era 2 → 24 h). A v4.52 estourou 2× em
+// cada fonte na noite de 14/09 e a pausa de 24 h sobreviveu às atualizações 4.53/4.54 que corrigiram
+// a causa → o resolvedor sumiu sem aviso ("parece desativado"). Falha só conta na MESMA versão.
+export const COOLDOWN_FAILS = 3;
+export const COOLDOWN_MS = 2 * 60 * 60 * 1000;
+const APP_V = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
 
 export function resolverEnabled(): boolean {
   try { return localStorage.getItem(KEY_ON) !== '0'; } catch { return true; }
@@ -99,22 +103,46 @@ export function useResolverEnabled(): boolean {
   return on;
 }
 
-// ── cooldown por fonte ─────────────────────────────────────────────────────────
-type Fails = Record<string, { n: number; ts: number }>;
+// ── pausa (cooldown) por fonte ─────────────────────────────────────────────────
+type Fail = { n: number; ts: number; v?: string };
+type Fails = Record<string, Fail>;
 function readFails(): Fails { try { return JSON.parse(localStorage.getItem(KEY_FAILS) || '{}'); } catch { return {}; } }
 function writeFails(f: Fails) { try { localStorage.setItem(KEY_FAILS, JSON.stringify(f)); } catch { /* ignore */ } }
+// Falha de outra versão (ou sem versão = v4.52–4.54) NÃO vale: a atualização pode ter corrigido a causa.
+const sameVersion = (f: Fail | undefined): f is Fail => !!f && (f.v ?? '') === APP_V;
 
 export function resolverOnCooldown(providerId: string, now = Date.now()): boolean {
   const f = readFails()[providerId];
-  return !!f && f.n >= COOLDOWN_FAILS && now - f.ts < COOLDOWN_MS;
+  return sameVersion(f) && f.n >= COOLDOWN_FAILS && now - f.ts < COOLDOWN_MS;
+}
+/** Quando a pausa da fonte termina (ms epoch); 0 = não está em pausa. */
+export function resolverCooldownUntil(providerId: string, now = Date.now()): number {
+  const f = readFails()[providerId];
+  return resolverOnCooldown(providerId, now) && f ? f.ts + COOLDOWN_MS : 0;
 }
 export function noteResolverResult(providerId: string, ok: boolean, now = Date.now()): void {
   const all = readFails();
   if (ok) { delete all[providerId]; writeFails(all); return; }
   const cur = all[providerId];
-  const n = cur && now - cur.ts < COOLDOWN_MS ? cur.n + 1 : 1;   // falha velha (fora da janela) recomeça
-  all[providerId] = { n, ts: now };
+  const n = sameVersion(cur) && now - cur.ts < COOLDOWN_MS ? cur.n + 1 : 1;   // falha velha ou de outra versão recomeça
+  all[providerId] = { n, ts: now, v: APP_V };
   writeFails(all);
+}
+/** "Tentar agora": esquece as falhas da fonte (a pausa cai na hora). */
+export function clearResolverCooldown(providerId: string): void {
+  const all = readFails(); delete all[providerId]; writeFails(all);
+}
+
+// Por que o resolvedor NÃO vai rodar nesta abertura — pra mostrar na tela e gravar na aba Bugs.
+// Antes ele calava e o servidor abria como se o recurso não existisse.
+export type ResolverSkip = 'off' | 'cache' | 'server-mode' | 'cooldown' | 'tried' | null;
+export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; armed: boolean; cooldown: boolean; tried: boolean }): ResolverSkip {
+  if (!o.enabled) return 'off';
+  if (o.cacheOpen) return 'cache';
+  if (!o.armed) return 'server-mode';
+  if (o.cooldown) return 'cooldown';
+  if (o.tried) return 'tried';
+  return null;
 }
 
 // ── plugin ─────────────────────────────────────────────────────────────────────

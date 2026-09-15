@@ -7,13 +7,13 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
-import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, noteResolverResult, RESOLVER_BUDGET_MS } from '@/lib/resolver';
+import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, RESOLVER_BUDGET_MS, type ResolverSkip } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { downloadAsMp4, useMp4, removeMp4 } from '@/lib/mp4Download';
-import { setLogProvider } from '@/lib/playbackLog';
+import { setLogProvider, logPlaybackError } from '@/lib/playbackLog';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
 // no reprodutor se já tiver link capturado.
@@ -360,26 +360,48 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, embedUrl, ownStream, preferIframe, capturedList]);
 
-  // (R) Resolvedor oculto (14/09/2026): ao abrir no servidor SEM link do cache, 1× por fonte,
-  // só se armado (mesma regra do auto-abrir), ligado na aba Servidores e sem cooldown da fonte
-  // (2 timeouts seguidos → 24 h). Achou → o efeito (C) abre o reprodutor e o efeito seguinte
-  // desliga o resolvedor; não achou em RESOLVER_BUDGET_MS → servidor como sempre (o auto-abrir
-  // continua armado: timeout não é escolha dele).
+  // (R) Resolvedor oculto (14/09/2026): ao abrir no servidor SEM link do cache, 1× por fonte, só se
+  // armado (mesma regra do auto-abrir), ligado na aba Servidores e sem pausa da fonte (3 timeouts
+  // seguidos → 2 h). Achou → o efeito (C) abre o reprodutor; não achou → servidor como sempre.
+  // 15/09/2026: quando NÃO roda, diz POR QUÊ — chip na tela (resolverPaused) e RESOLVER_SKIP na aba
+  // Bugs. Antes calava: a pausa de 24 h herdada da v4.52 fez ele "parecer desativado".
+  const [resolverPaused, setResolverPaused] = useState<ResolverSkip>(null);
+  const [resolverRetry, setResolverRetry] = useState(0);   // "Tentar agora" re-dispara este efeito
   useEffect(() => {
-    const canRun = open && isNative() && !!embedUrl && !ownStream && !preferIframe
-      && autoArmedRef.current && !cacheOpenRef.current && resolverEnabled()
-      && resolveTriedRef.current !== embedUrl && !resolverOnCooldown(providerId);
-    if (!canRun) { if (resolvingRef.current && !ownStream) setResolving(false); return; }
+    const base = open && isNative() && !!embedUrl && !ownStream && !preferIframe;
+    if (!base) { setResolverPaused(null); if (resolvingRef.current && !ownStream) setResolving(false); return; }
+    const reason = resolverSkipReason({
+      enabled: resolverEnabled(), cacheOpen: cacheOpenRef.current, armed: autoArmedRef.current,
+      cooldown: resolverOnCooldown(providerId), tried: resolveTriedRef.current === embedUrl,
+    });
+    if (reason) {
+      if (resolvingRef.current) setResolving(false);
+      setResolverPaused(reason === 'cache' ? null : reason);   // do cache o reprodutor já abre: sem aviso
+      if (reason !== 'cache' && reason !== 'tried') {
+        const until = reason === 'cooldown' ? ' until=' + new Date(resolverCooldownUntil(providerId)).toISOString() : '';
+        logPlaybackError({ url: embedUrl!, code: 0, name: 'RESOLVER_SKIP', cause: `reason=${reason}${until} provider=${providerId}`, title });
+      }
+      return;
+    }
+    setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
     setResolving(true);
     startResolver({ url: embedUrl!, referer: window.location.origin + '/' }).catch(() => setResolving(false));
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
+      setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
     }, RESOLVER_BUDGET_MS + 500);
     return () => { window.clearTimeout(t); stopResolver(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, embedUrl, ownStream, preferIframe]);
+  }, [open, embedUrl, ownStream, preferIframe, resolverRetry]);
+
+  // "Tentar agora"/"Ligar" no chip: esquece a pausa da fonte, re-arma o auto-abrir e roda de novo.
+  const retryResolver = () => {
+    clearResolverCooldown(providerId);
+    autoArmedRef.current = true; resolveTriedRef.current = null;
+    setResolverRetry(n => n + 1);
+  };
 
   // Reprodutor abriu (auto-abrir ou escolha dele) enquanto resolvia → sucesso da fonte.
   useEffect(() => {
@@ -724,6 +746,25 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           />
         )}
       </div>
+
+      {/* Resolvedor NÃO rodou (pausa da fonte / "Servidor" neste título / desligado / não achou) → diz
+          por quê e deixa tentar (15/09/2026). Sumia calado e parecia "desativado". Fica logo abaixo da
+          barra do topo (top-14) pra não cobrir o título nem os botões. */}
+      {!nativeOwn && !preferIframe && !resolving && !!src && !!resolverPaused && isNative() && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-14 z-30 flex items-center gap-2 rounded-full bg-card/95 border border-border px-3 py-1.5 shadow-lg text-xs animate-fade-in" data-resolver-paused={resolverPaused}>
+          <span className="text-muted-foreground">
+            {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+              : resolverPaused === 'server-mode' ? 'Abrir sozinho desligado neste título'
+              : resolverPaused === 'off' ? 'Resolvedor desligado (Painel → Servidores)'
+              : 'Não achou o vídeo sozinho'}
+          </span>
+          {resolverPaused !== 'off' && (
+            <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={retryResolver}>
+              {resolverPaused === 'server-mode' ? 'Ligar' : resolverPaused === 'tried' ? 'Tentar de novo' : 'Tentar agora'}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Banner: vídeo(s) capturado(s) em background enquanto assiste no servidor. */}
       {!nativeOwn && !preferIframe && !resolving && capturedList.length > 0 && (

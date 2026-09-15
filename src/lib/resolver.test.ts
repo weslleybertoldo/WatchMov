@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildClickScript, buildInjectScript, CLICK_STEPS, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, noteResolverResult, COOLDOWN_MS } from './resolver';
+import { buildClickScript, buildInjectScript, CLICK_STEPS, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -40,14 +40,18 @@ describe('resolver oculto (regras puras)', () => {
     setResolverEnabled(true); expect(resolverEnabled()).toBe(true);
   });
 
-  it('cooldown: 2 timeouts seguidos → 24 h sem tentar (por fonte); sucesso zera; janela expira', () => {
+  it('pausa: 3 timeouts seguidos → 2 h sem tentar (por fonte); sucesso zera; janela expira', () => {
     const t0 = 1_000_000;
+    expect(COOLDOWN_FAILS).toBe(3); expect(COOLDOWN_MS).toBe(2 * 60 * 60 * 1000);
     expect(resolverOnCooldown('superflix', t0)).toBe(false);
     noteResolverResult('superflix', false, t0);
-    expect(resolverOnCooldown('superflix', t0 + 1000)).toBe(false);
+    noteResolverResult('superflix', false, t0 + 1000);
+    expect(resolverOnCooldown('superflix', t0 + 2000)).toBe(false);          // 2 ainda não pausa
     noteResolverResult('superflix', false, t0 + 2000);
     expect(resolverOnCooldown('superflix', t0 + 3000)).toBe(true);
+    expect(resolverCooldownUntil('superflix', t0 + 3000)).toBe(t0 + 2000 + COOLDOWN_MS);
     expect(resolverOnCooldown('embedmovies', t0 + 3000)).toBe(false);
+    expect(resolverCooldownUntil('embedmovies', t0 + 3000)).toBe(0);
     expect(resolverOnCooldown('superflix', t0 + 2000 + COOLDOWN_MS + 1)).toBe(false);
     noteResolverResult('superflix', true, t0 + 4000);
     expect(resolverOnCooldown('superflix', t0 + 5000)).toBe(false);
@@ -57,6 +61,28 @@ describe('resolver oculto (regras puras)', () => {
     const t0 = 5_000_000;
     noteResolverResult('fembed', false, t0);
     noteResolverResult('fembed', false, t0 + COOLDOWN_MS + 10);
-    expect(resolverOnCooldown('fembed', t0 + COOLDOWN_MS + 20)).toBe(false);
+    noteResolverResult('fembed', false, t0 + COOLDOWN_MS + 20);
+    expect(resolverOnCooldown('fembed', t0 + COOLDOWN_MS + 30)).toBe(false);
+  });
+
+  it('pausa de OUTRA versão (ou sem versão, v4.52–4.54) não vale; "Tentar agora" limpa', () => {
+    const now = Date.now();
+    localStorage.setItem('watchmov_resolver_fails', JSON.stringify({ embedplayapi: { n: 9, ts: now, v: '4.52' }, embedmovies: { n: 9, ts: now } }));
+    expect(resolverOnCooldown('embedplayapi', now)).toBe(false);
+    expect(resolverOnCooldown('embedmovies', now)).toBe(false);
+    for (let i = 0; i < 3; i++) noteResolverResult('embedplayapi', false, now + i);
+    expect(resolverOnCooldown('embedplayapi', now + 10)).toBe(true);
+    clearResolverCooldown('embedplayapi');
+    expect(resolverOnCooldown('embedplayapi', now + 10)).toBe(false);
+  });
+
+  it('motivo de não rodar: prioridade off > cache > servidor > pausa > já tentou', () => {
+    const base = { enabled: true, cacheOpen: false, armed: true, cooldown: false, tried: false };
+    expect(resolverSkipReason(base)).toBeNull();
+    expect(resolverSkipReason({ ...base, enabled: false, cooldown: true })).toBe('off');
+    expect(resolverSkipReason({ ...base, cacheOpen: true, armed: false })).toBe('cache');
+    expect(resolverSkipReason({ ...base, armed: false, cooldown: true })).toBe('server-mode');
+    expect(resolverSkipReason({ ...base, cooldown: true, tried: true })).toBe('cooldown');
+    expect(resolverSkipReason({ ...base, tried: true })).toBe('tried');
   });
 });
