@@ -425,7 +425,8 @@ public class ProxyServer extends NanoHTTPD {
     // manifesto E em todos os segmentos/keys, senão fica preso em "carregando".
     private static Response cors(Response resp) {
         resp.addHeader("Access-Control-Allow-Origin", "*");
-        resp.addHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+        resp.addHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
+        resp.addHeader("Access-Control-Allow-Private-Network", "true");   // Chromium: fetch de página https pra 127.0.0.1 exige isto no preflight (ABYS)
         resp.addHeader("Access-Control-Allow-Headers", "*");
         resp.addHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range");
         // Headers DLNA (como o WVC os3.java): muitas TVs sondam com HEAD +
@@ -497,6 +498,11 @@ public class ProxyServer extends NanoHTTPD {
             rq.kind = "ping";
             return cors(newFixedLengthResponse(Response.Status.OK, "text/plain", "ok"));
         }
+        // ABYS (15/09/2026): a página oculta do resolvedor é o MOTOR — o JS injetado no frame abysscdn
+        // busca o MP4 "virtual" (servido pelo Service Worker do player, que decripta os chunks /sora/)
+        // em pedaços e EMPURRA os bytes pra cá; o ExoPlayer lê /abyss/<sid>/<q>p.mp4 com Range como um
+        // arquivo normal. Nada em disco. Ver AbyssSession (fim do arquivo).
+        if (session.getUri() != null && session.getUri().startsWith("/abyss/")) return abyss(session, rq);
         String u = session.getParms().get("u");
         String r = session.getParms().get("r");
         if (u == null || u.isEmpty()) { rq.kind = "erro"; rq.note = "sem u"; return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "no url"); }
@@ -1038,5 +1044,189 @@ public class ProxyServer extends NanoHTTPD {
         } catch (Exception e) {
             return "prewarm=EXC " + e.getClass().getSimpleName() + ":" + e.getMessage() + " " + (System.currentTimeMillis() - t0) + "ms";
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // ABYS — "página oculta como motor" (15/09/2026). Rotas em 127.0.0.1:PORT:
+    //   GET  /abyss/ready?sid=S&list=[{"q":720,"total":N},…]  → JS leu as qualidades e o tamanho de cada MP4
+    //   GET  /abyss/next?sid=S                                → long-poll ≤ 8 s: próximo pedaço {q,off,len} ou {}
+    //   POST /abyss/push?sid=S&q=720&off=N  (corpo = bytes)   → JS entrega um pedaço
+    //   GET  /abyss/S/720p.mp4  (Range)                       → ExoPlayer lê como arquivo (206, corpo bloqueante)
+    // O leitor manda: o JS só busca o que o leitor atual precisa (janela ABYSS_AHEAD à frente).
+    // ---------------------------------------------------------------------------
+    public static final int ABYSS_PIECE = 2 * 1024 * 1024;     // pedaço por busca do JS (o SW já trabalha em 2 MiB)
+    public static final int ABYSS_AHEAD = 12 * 1024 * 1024;    // buffer à frente do leitor (RAM)
+    static final long ABYSS_WAIT_MS = 30000;                    // leitor espera um pedaço até 30 s (o player aguenta 35 s)
+
+    public static final class AbyssQuality { public final int q; public final long total; AbyssQuality(int q, long total) { this.q = q; this.total = total; } }
+    /** Avisado no "ready" (o ResolverPlugin registra pra emitir os links ao app). */
+    public static volatile java.util.function.BiConsumer<String, java.util.List<AbyssQuality>> onAbyssReady;
+
+    static final class AbyssSession {
+        final String sid;
+        final java.util.Map<Integer, Long> totals = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.Map<Integer, java.util.TreeMap<Long, byte[]>> pieces = new java.util.HashMap<>();   // só sob lock
+        final Object lock = new Object();
+        int wantQ = 0; long wantOff = -1;      // o que o leitor atual precisa (o JS segue isto)
+        int gen = 0;                            // leitor novo (seek/troca) → leitor velho morre
+        volatile boolean dead = false;
+        volatile boolean progress = false;      // o JS do frame abysscdn já leu as qualidades (segura o fallback pra Byse)
+        volatile long lastSeen = System.currentTimeMillis();
+        AbyssSession(String sid) { this.sid = sid; }
+        java.util.TreeMap<Long, byte[]> map(int q) { java.util.TreeMap<Long, byte[]> m = pieces.get(q); if (m == null) { m = new java.util.TreeMap<>(); pieces.put(q, m); } return m; }
+        boolean has(int q, long pos) { java.util.Map.Entry<Long, byte[]> e = map(q).floorEntry(pos); return e != null && pos < e.getKey() + e.getValue().length; }
+        int readAt(int q, long pos, byte[] out, int off, int len) {
+            java.util.Map.Entry<Long, byte[]> e = map(q).floorEntry(pos);
+            if (e == null || pos >= e.getKey() + e.getValue().length) return 0;
+            int i = (int) (pos - e.getKey()), n = Math.min(len, e.getValue().length - i);
+            System.arraycopy(e.getValue(), i, out, off, n);
+            return n;
+        }
+        long[] nextMissing() {   // sob lock
+            Long total = totals.get(wantQ);
+            if (wantQ == 0 || wantOff < 0 || total == null) return null;
+            long p = wantOff;
+            while (p < total && p < wantOff + ABYSS_AHEAD) {
+                java.util.Map.Entry<Long, byte[]> e = map(wantQ).floorEntry(p);
+                if (e != null && p < e.getKey() + e.getValue().length) { p = e.getKey() + e.getValue().length; continue; }
+                return new long[]{ wantQ, p, Math.min((long) ABYSS_PIECE, total - p) };
+            }
+            return null;
+        }
+        void put(int q, long off, byte[] data) {
+            synchronized (lock) {
+                map(q).put(off, data);
+                // Poda (RAM): outras qualidades inteiras e pedaços > 4 MiB atrás do leitor.
+                for (java.util.Map.Entry<Integer, java.util.TreeMap<Long, byte[]>> me : pieces.entrySet()) {
+                    if (me.getKey() != wantQ) { me.getValue().clear(); continue; }
+                    java.util.Iterator<java.util.Map.Entry<Long, byte[]>> it = me.getValue().entrySet().iterator();
+                    while (it.hasNext()) { java.util.Map.Entry<Long, byte[]> e = it.next(); if (e.getKey() + e.getValue().length < wantOff - 4L * 1024 * 1024) it.remove(); }
+                }
+                lock.notifyAll();
+            }
+            lastSeen = System.currentTimeMillis();
+        }
+        void want(int q, long off) { synchronized (lock) { wantQ = q; wantOff = off; gen++; lock.notifyAll(); } }
+    }
+    private static final java.util.Map<String, AbyssSession> ABYSS = new java.util.concurrent.ConcurrentHashMap<>();
+    public static String abyssUrl(String sid, int q) { return "http://127.0.0.1:" + PORT + "/abyss/" + sid + "/" + q + "p.mp4"; }
+    public static void abyssDrop(String sid) { AbyssSession s = (sid != null && !sid.isEmpty()) ? ABYSS.remove(sid) : null; if (s != null) { s.dead = true; synchronized (s.lock) { s.lock.notifyAll(); } } }
+
+    // Progresso: o pump leu as `sources` do JW (ainda medindo os tamanhos). O ResolverPlugin usa pra dar
+    // mais tempo antes do fallback Byse — no emulador lento as sources chegam aos ~30 s, no aparelho ~10 s.
+    public static boolean abyssProgress(String sid) {
+        if (sid == null || sid.isEmpty()) return false;
+        AbyssSession s = ABYSS.get(sid); if (s == null) { s = new AbyssSession(sid); ABYSS.put(sid, s); }
+        s.progress = true; s.lastSeen = System.currentTimeMillis();
+        return true;
+    }
+    public static boolean abyssHasProgress(String sid) {
+        AbyssSession s = (sid != null && !sid.isEmpty()) ? ABYSS.get(sid) : null;
+        return s != null && s.progress;
+    }
+
+    // Os 3 canais (usados pelas rotas HTTP e, no fallback, pela ponte WebMessageListener do ResolverPlugin):
+    public static boolean abyssReadyFromJson(String sid, String listJson) {
+        if (sid == null || sid.isEmpty() || listJson == null) return false;
+        AbyssSession s = ABYSS.get(sid); if (s == null) { s = new AbyssSession(sid); ABYSS.put(sid, s); }
+        java.util.List<AbyssQuality> qs = new java.util.ArrayList<>();
+        try {
+            org.json.JSONArray a = new org.json.JSONArray(listJson);
+            for (int i = 0; i < a.length(); i++) { org.json.JSONObject o = a.getJSONObject(i); int q = o.optInt("q", 0); long t = o.optLong("total", 0); if (q > 0 && t > 0) { s.totals.put(q, t); qs.add(new AbyssQuality(q, t)); } }
+        } catch (Exception e) { lastDiag = "abyss ready json: " + e; return false; }
+        java.util.function.BiConsumer<String, java.util.List<AbyssQuality>> cb = onAbyssReady;
+        if (cb != null && !qs.isEmpty()) cb.accept(sid, qs);
+        return !qs.isEmpty();
+    }
+    /** Próximo pedaço que o leitor precisa (espera até waitMs); null = nada a fazer; {-1} = sessão morta. */
+    public static long[] abyssNext(String sid, long waitMs) {
+        AbyssSession s = sid != null ? ABYSS.get(sid) : null;
+        if (s == null) return new long[]{ -1 };
+        s.lastSeen = System.currentTimeMillis();
+        long t0 = System.currentTimeMillis(); long[] nx;
+        synchronized (s.lock) {
+            while ((nx = s.nextMissing()) == null && !s.dead && System.currentTimeMillis() - t0 < waitMs) { try { s.lock.wait(500); } catch (InterruptedException ignored) {} }
+        }
+        return nx;
+    }
+    public static boolean abyssPush(String sid, int q, long off, byte[] data) {
+        AbyssSession s = sid != null ? ABYSS.get(sid) : null;
+        if (s == null || data == null || data.length == 0) return false;
+        s.put(q, off, data);
+        return true;
+    }
+
+    // Corpo da resposta pro ExoPlayer: entrega [pos, end] conforme os pedaços chegam, bloqueando até
+    // ABYSS_WAIT_MS por pedaço. Leitor novo (seek/troca de qualidade) muda `gen` → este morre.
+    private static final class AbyssStream extends java.io.InputStream {
+        final AbyssSession s; final int q, myGen; final long end; long pos;
+        AbyssStream(AbyssSession s, int q, long pos, long end, int gen) { this.s = s; this.q = q; this.pos = pos; this.end = end; this.myGen = gen; }
+        @Override public int read() throws IOException { byte[] b = new byte[1]; int n = read(b, 0, 1); return n <= 0 ? -1 : (b[0] & 0xff); }
+        @Override public int read(byte[] out, int off, int len) throws IOException {
+            if (pos > end) return -1;
+            if (len <= 0) return 0;
+            len = (int) Math.min(len, end - pos + 1);
+            long t0 = System.currentTimeMillis();
+            synchronized (s.lock) {
+                while (!s.has(q, pos)) {
+                    if (s.dead) throw new IOException("abyss: sessão encerrada");
+                    if (s.gen != myGen) throw new IOException("abyss: leitor substituído");
+                    long left = ABYSS_WAIT_MS - (System.currentTimeMillis() - t0);
+                    if (left <= 0) { lastDiag = "abyss: pedaço não chegou em " + ABYSS_WAIT_MS + " ms q=" + q + " off=" + pos; throw new IOException(lastDiag); }
+                    try { s.lock.wait(Math.min(left, 500)); } catch (InterruptedException e) { throw new IOException(e); }
+                }
+                int n = s.readAt(q, pos, out, off, len);
+                pos += n;
+                if (s.gen == myGen) s.wantOff = pos;   // o JS segue o leitor (janela à frente)
+                return n;
+            }
+        }
+    }
+
+    private Response abyss(IHTTPSession session, Req rq) throws Exception {
+        String uri = session.getUri();
+        java.util.Map<String, String> p = session.getParms();
+        rq.kind = "abyss";
+        if (uri.equals("/abyss/progress")) {
+            boolean ok = abyssProgress(p.get("sid"));
+            rq.note = "progress sid=" + p.get("sid") + " ok=" + ok;
+            return cors(newFixedLengthResponse(ok ? Response.Status.OK : Response.Status.BAD_REQUEST, "application/json", "{\"ok\":" + ok + "}"));
+        }
+        if (uri.equals("/abyss/ready")) {
+            boolean ok = abyssReadyFromJson(p.get("sid"), p.get("list"));
+            rq.note = "ready sid=" + p.get("sid") + " ok=" + ok;
+            return cors(newFixedLengthResponse(ok ? Response.Status.OK : Response.Status.BAD_REQUEST, "application/json", "{\"ok\":" + ok + "}"));
+        }
+        if (uri.equals("/abyss/next")) {
+            long[] nx = abyssNext(p.get("sid"), 8000);
+            if (nx != null && nx.length == 1) { rq.note = "next: sessão morta"; return cors(newFixedLengthResponse(statusOf(410), "application/json", "{\"gone\":true}")); }
+            rq.note = nx == null ? "next: nada" : "next q=" + nx[0] + " off=" + nx[1] + " len=" + nx[2];
+            return cors(newFixedLengthResponse(Response.Status.OK, "application/json", nx == null ? "{}" : "{\"q\":" + nx[0] + ",\"off\":" + nx[1] + ",\"len\":" + nx[2] + "}"));
+        }
+        if (uri.equals("/abyss/push")) {
+            String cl = session.getHeaders().get("content-length");
+            int len = cl != null ? Integer.parseInt(cl.trim()) : -1;
+            if (len <= 0 || len > ABYSS_PIECE + 65536) { rq.note = "push sem content-length"; return cors(newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "content-length")); }
+            byte[] data = new byte[len]; int n = 0, r; java.io.InputStream in = session.getInputStream();
+            while (n < len && (r = in.read(data, n, len - n)) > 0) n += r;
+            if (n < len) data = java.util.Arrays.copyOf(data, n);
+            boolean ok = abyssPush(p.get("sid"), Integer.parseInt(p.get("q")), Long.parseLong(p.get("off")), data);
+            rq.kind = "abyss-push"; rq.bytes = n; rq.note = "q=" + p.get("q") + " off=" + p.get("off") + (ok ? "" : " (sessão morta)");
+            return cors(newFixedLengthResponse(ok ? Response.Status.OK : statusOf(410), "text/plain", ok ? "ok" : "gone"));
+        }
+        // GET /abyss/<sid>/<q>p.mp4 — o ExoPlayer lê como arquivo (Range/206; corpo bloqueante)
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^/abyss/([A-Za-z0-9_-]+)/(\\d{3,4})p\\.mp4$").matcher(uri);
+        if (!m.matches()) { rq.note = "rota"; return cors(newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "abyss: rota")); }
+        AbyssSession s = ABYSS.get(m.group(1)); int q = Integer.parseInt(m.group(2));
+        Long total = s != null ? s.totals.get(q) : null;
+        if (s == null || total == null || s.dead) { rq.note = "sessão/qualidade desconhecida"; return cors(newFixedLengthResponse(statusOf(410), "text/plain", "abyss: sessão encerrada — abra o título de novo")); }
+        long[] rg = parseRange(session.getHeaders().get("range"), total);
+        long start = rg != null ? rg[0] : 0, end = rg != null ? rg[1] : total - 1;
+        int gen; synchronized (s.lock) { s.want(q, start); gen = s.gen; }
+        Response resp = newFixedLengthResponse(rg != null ? Response.Status.PARTIAL_CONTENT : Response.Status.OK, "video/mp4", new AbyssStream(s, q, start, end, gen), end - start + 1);
+        if (rg != null) resp.addHeader("Content-Range", "bytes " + start + "-" + end + "/" + total);
+        resp.addHeader("Accept-Ranges", "bytes");
+        rq.kind = "abyss-play"; rq.bytes = end - start + 1; rq.note = "q=" + q + " range=" + start + "-" + end + "/" + total;
+        return cors(resp);
     }
 }

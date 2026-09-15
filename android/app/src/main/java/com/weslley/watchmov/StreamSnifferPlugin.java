@@ -95,24 +95,8 @@ public class StreamSnifferPlugin extends Plugin {
         "google-analytics.com", "googletagmanager.com",
     };
 
-    // TRACE (investigação ABYS — Fonte 1 opção 1, 14/09/2026): os requests destes hosts vão
-    // pra aba Bugs como SNIFF_TRACE (URL + Content-Type do probe) pra ver como o player
-    // entrega o vídeo no WebView — no Chromium de PC ele serve MP4 direto do Google Storage;
-    // no WebView do celular nunca apareceu link em 30 dias de aba Bugs. Teto de 40 por captura
-    // pra não inundar. Remover quando a Fonte 1 opção 1 estiver resolvida.
-    private static final String[] TRACE_HOSTS = { "abysscdn.com", "sssrr.org", "iamcdn.net", "storage.googleapis.com", "embedplayabyss.top" };
-    private static int traceCount = 0;
-    private static boolean isTraceHost(String url) {
-        if (url == null) return false;
-        String u = url.toLowerCase();
-        for (String h : TRACE_HOSTS) if (u.contains(h)) return true;
-        return false;
-    }
-    private static void trace(String url, String ct, String note) {
-        if (traceCount >= 40) return;
-        traceCount++;
-        try { NativePlayerPlugin.reportError(url, 0, 0, "SNIFF_TRACE", note + " ct=" + ct, ct, null, null); } catch (Throwable ignored) {}
-    }
+    // (SNIFF_TRACE da v4.51 removido em 15/09/2026: cumpriu o papel — 193 registros provaram como o
+    // player Abyss entrega o vídeo — e inundava a aba Bugs. O ABYS agora toca via /abyss/ do ProxyServer.)
 
     public static boolean shouldBlockResource(String url) {
         if (url == null) return false;
@@ -162,7 +146,9 @@ public class StreamSnifferPlugin extends Plugin {
     // Chamado pelo MainActivity (WebView + Service Worker) pra cada request.
     public static void inspect(String url, Map<String, String> headers) {
         if (!watching || url == null || isBlockedHost(url) || isNotContent(url)) return;
-        if (isTraceHost(url)) trace(url, "-", "intercept");
+        // Chamadas do próprio app ao ProxyServer local (pump do ABYS: /abyss/progress|ready|next|push) nunca são
+        // conteúdo — e o probe delas repetia o `ready` (RESOLVER_ABYS_READY em dobro, 15/09/2026).
+        if (url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:")) return;
         String ref = headers != null ? headers.get("Referer") : null;
         if (looksLikeVideo(url)) { report(url, ref, mimeFor(url), headers); return; }
         if (skipProbe(url)) return;
@@ -176,7 +162,6 @@ public class StreamSnifferPlugin extends Plugin {
                 }
                 try (Response resp = http.newCall(rb.build()).execute()) {
                     String ct = resp.header("Content-Type");
-                    if (isTraceHost(url)) trace(url, ct, "probe up=" + resp.code() + " len=" + resp.header("Content-Length", "?"));
                     if (isVideoContentType(ct)) { report(url, ref, ct, headers); return; }
                     // Content-Type genérico (octet-stream/text/nulo): confere os 1os bytes.
                     if (ct == null || ct.toLowerCase().contains("octet-stream") || ct.toLowerCase().contains("text/")
@@ -235,6 +220,19 @@ public class StreamSnifferPlugin extends Plugin {
         });
     }
 
+    // Link que NÃO veio do tráfego (ex.: /abyss/ do ProxyServer): entra no app pelo MESMO streamFound,
+    // sem probe de qualidade (o rótulo já vem) e sem dedup por URL (cada sid é novo). `ephemeral` = só
+    // vale enquanto a página oculta (motor) estiver viva → o JS não guarda no cache de links.
+    public static void emitDirect(String url, String mime, String quality, String referer, boolean ephemeral) {
+        if (instance == null || url == null) return;
+        JSObject d = new JSObject();
+        d.put("url", url); d.put("mime", mime);
+        if (referer != null) d.put("referer", referer);
+        if (quality != null && !quality.isEmpty()) d.put("quality", quality);
+        d.put("ephemeral", ephemeral);
+        instance.notifyListeners("streamFound", d);
+    }
+
     // Resolução sem tocar: 1) master m3u8 (RESOLUTION); 2) metadados do vídeo.
     private static String probeQuality(String url, String referer, boolean isHls) {
         if (isHls) {
@@ -274,7 +272,7 @@ public class StreamSnifferPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void startWatching(PluginCall call) { watching = true; emitted.clear(); probed.clear(); probeCount = 0; traceCount = 0; call.resolve(); }
+    public void startWatching(PluginCall call) { watching = true; emitted.clear(); probed.clear(); probeCount = 0; call.resolve(); }
 
     @PluginMethod
     public void stopWatching(PluginCall call) { watching = false; call.resolve(); }

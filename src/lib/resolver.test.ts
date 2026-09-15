@@ -1,9 +1,21 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildClickScript, buildInjectScript, CLICK_STEPS, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
+
+  it('ABYS: pump só no frame abysscdn, fala com o proxy local, lê sources e faz fallback pra Byse', () => {
+    const s = buildAbyssScript('abc123');
+    expect(() => new Function(s)).not.toThrow();
+    for (const k of ['abysscdn', 'abyss/progress', 'abyss/ready', 'abyss/next', 'abyss/push', 'getPlaylistItem', 'content-range', '"abc123"', '127.0.0.1:8099', 'WMABYS']) expect(s).toContain(k);
+    const inj = buildInjectScript(CLICK_STEPS_ABYS, s);
+    expect(() => new Function(inj)).not.toThrow();
+    expect(inj).toContain('text:Opção 1'); expect(inj).not.toContain('text:Opção 2'); expect(inj.endsWith(s)).toBe(true);
+    expect(buildInjectScript(CLICK_STEPS_BYSE)).toContain('text:Opção 2');
+    expect(buildInjectScript(CLICK_STEPS_BYSE)).not.toContain('WMABYS');
+    expect(budgetFor('embedplayapi')).toBe(90000); expect(budgetFor('embedmovies')).toBe(45000);
+  });
 
   it('clickScript é JS válido, leva os passos na ordem e muta os vídeos', () => {
     const s = buildClickScript();

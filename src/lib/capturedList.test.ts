@@ -1,7 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import { mergeCaptured, synthesizeCompletos, withCompletos, synthParts, pickAutoOpen, isTrackOnly } from './capturedList';
-import { streamKey } from './streamCache';
+import { streamKey, addStreams, getEntry, isEphemeralUrl } from './streamCache';
 import type { SniffResult } from './streamSniffer';
+
+describe('link EFÊMERO (/abyss/ da página oculta, 15/09/2026)', () => {
+  const abys = 'http://127.0.0.1:8099/abyss/k3j9x2m1abcd/720p.mp4';
+  it('mergeCaptured preserva a flag ephemeral na recaptura', () => {
+    const out = mergeCaptured([{ url: abys, ephemeral: true, mime: 'video/mp4' }], { url: abys, quality: '720p' });
+    expect(out).toHaveLength(1);
+    expect(out[0].ephemeral).toBe(true);
+    expect(out[0].quality).toBe('720p');
+  });
+  it('isEphemeralUrl reconhece só o /abyss/ do proxy local', () => {
+    expect(isEphemeralUrl(abys)).toBe(true);
+    expect(isEphemeralUrl('http://127.0.0.1:8099/s?u=x')).toBe(false);
+    expect(isEphemeralUrl('https://edge1-madrid-sprintcdn.r66nv9ed.com/hls2/master.m3u8')).toBe(false);
+    expect(isEphemeralUrl(undefined)).toBe(false);
+  });
+  it('addStreams NUNCA persiste link efêmero (pela flag ou pela URL)', () => {
+    localStorage.clear();
+    addStreams([{ url: abys, ephemeral: true }], 999001, 'tv', 1, 1);
+    addStreams([{ url: abys, quality: '720p' }], 999001, 'tv', 1, 1);   // onPlayerQuality manda só {url, quality}
+    expect(getEntry(999001, 'tv', 1, 1)).toBeNull();
+    addStreams([{ url: 'https://cdn.exemplo/master.m3u8', mime: 'application/vnd.apple.mpegurl' }], 999001, 'tv', 1, 1);
+    expect(getEntry(999001, 'tv', 1, 1)?.streams.map(s => s.url)).toEqual(['https://cdn.exemplo/master.m3u8']);
+  });
+});
 
 const master = (token: string, extra: Partial<SniffResult> = {}): SniffResult => ({
   url: `https://edge1-madrid-sprintcdn.r66nv9ed.com/hls2/02/11600/nd0f1xnmh0px_x/master.m3u8?t=${token}&s=1789411`,

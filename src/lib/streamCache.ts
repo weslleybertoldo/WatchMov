@@ -50,7 +50,13 @@ export function qualityFromUrl(url: string): string {
 
 // Adiciona links (dedup por streamKey; se já existe, atualiza o token/URL fresca;
 // só entra novo se for um vídeo diferente).
+// Link EFÊMERO (/abyss/ servido pela página oculta do resolvedor, 15/09/2026): só existe enquanto o app
+// está aberto com o motor vivo → NUNCA persiste (reabrir o título roda o resolvedor de novo). Vale pela
+// flag `ephemeral` E pela URL (o onPlayerQuality/fechar do player mandam só {url, quality}).
+export const isEphemeralUrl = (u: string | undefined | null) => /^https?:\/\/127\.0\.0\.1:\d+\/abyss\//i.test(u || '');
+
 export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, season?: number, episode?: number) {
+  list = list.filter(s => !s.ephemeral && !isEphemeralUrl(s.url));
   if (!list.length) return;
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
   const prev = d[k];
@@ -88,6 +94,15 @@ export function setChosen(url: string, tmdbId?: number, type?: string, season?: 
   const d = read(); const k = keyFor(tmdbId, type, season, episode);
   const prev = d[k] || { streams: [], ts: Date.now() };
   d[k] = { ...prev, chosenUrl: url, lastMode: 'native', ts: Date.now() };
+  write(d);
+}
+
+// Assistiu por link EFÊMERO (/abyss/ da página oculta, 15/09/2026): reabre no reprodutor, mas SEM
+// chosenUrl — o link morre com o app; o resolvedor roda de novo e monta outro.
+export function markNativeMode(tmdbId?: number, type?: string, season?: number, episode?: number) {
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const prev = d[k] || { streams: [], ts: Date.now() };
+  d[k] = { ...prev, chosenUrl: undefined, lastMode: 'native', ts: Date.now() };
   write(d);
 }
 

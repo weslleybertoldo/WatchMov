@@ -28,6 +28,7 @@ export function mergeCaptured(prev: SniffResult[], r: SniffResult): SniffResult[
     headers: r.headers || cur.headers,
     quality: r.quality || cur.quality,
     synthetic: r.synthetic || cur.synthetic,
+    ephemeral: r.ephemeral || cur.ephemeral,
   };
   return copy;
 }

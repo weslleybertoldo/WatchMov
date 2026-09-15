@@ -5,9 +5,9 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
+import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
-import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, RESOLVER_BUDGET_MS, type ResolverSkip } from '@/lib/resolver';
+import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, type ResolverSkip } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -99,6 +99,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => { resolvingRef.current = resolving; });
   const resolveTriedRef = useRef<string | null>(null);   // embedUrl em que já tentou (1×/fonte por abertura)
   const cacheOpenRef = useRef(false);                     // abriu direto do cache (efeito A) → não resolve
+  const keepEngineRef = useRef(false);                    // link efêmero (/abyss/) tocando → o WebView oculto (motor) fica vivo
   // Espelho do stream atual: o listener de progresso precisa do valor NA HORA do
   // evento (a closure do state fica velha) pra descartar o progresso do ep anterior.
   const ownStreamRef = useRef<SniffResult | null>(null);
@@ -277,7 +278,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       // + COMPLETO sintetizado (par vídeo/áudio do mesmo player, ver capturedList.ts): entra
       // na própria lista; recaptura do par ATUALIZA a entrada (mesma chave) em vez de duplicar.
       setCapturedList(prev => withCompletos(mergeCaptured(prev, r)));
-      addStreams([r], tmdbId, type, season, episode);
+      if (!r.ephemeral) addStreams([r], tmdbId, type, season, episode);   // efêmero (/abyss/) nunca persiste
       freshKeysRef.current.add(streamKey(r.url));   // capturado AO VIVO (conta pro auto-abrir)
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
@@ -293,8 +294,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const chooseStream = (r: SniffResult) => {
     setPickerOpen(false); setPreferIframe(false);
     playedRef.current = false;
-    addStreams([r], tmdbId, type, season, episode);
-    setChosen(r.url, tmdbId, type, season, episode);
+    // Link EFÊMERO (/abyss/ servido pela página oculta, 15/09/2026): não vai pro cache (morre com o app)
+    // e o WebView oculto tem de continuar vivo (motor) — quem para ele é o fechar do título.
+    keepEngineRef.current = !!r.ephemeral;
+    if (r.ephemeral) { markNativeMode(tmdbId, type, season, episode); }
+    else { addStreams([r], tmdbId, type, season, episode); setChosen(r.url, tmdbId, type, season, episode); }
     setOwnStream(r);
   };
 
@@ -386,13 +390,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
     setResolving(true);
-    startResolver({ url: embedUrl!, referer: window.location.origin + '/' }).catch(() => setResolving(false));
+    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId }).catch(() => setResolving(false));
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
       setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
-    }, RESOLVER_BUDGET_MS + 500);
-    return () => { window.clearTimeout(t); stopResolver(); };
+    }, budgetFor(providerId) + 1500);   // +1,5 s: o deadline nativo (com retrato da página) reporta RESOLVER_TIMEOUT antes de o JS parar
+    // keep = o reprodutor abriu por link efêmero (/abyss/): a página oculta segue viva como motor.
+    return () => { window.clearTimeout(t); stopResolver(keepEngineRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, embedUrl, ownStream, preferIframe, resolverRetry]);
 
@@ -406,9 +411,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Reprodutor abriu (auto-abrir ou escolha dele) enquanto resolvia → sucesso da fonte.
   useEffect(() => {
     if (!ownStream || !resolvingRef.current) return;
-    setResolving(false); stopResolver(); noteResolverResult(providerId, true);
+    setResolving(false); stopResolver(!!ownStream.ephemeral); noteResolverResult(providerId, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownStream]);
+
+  // Fechou o título → o motor (WebView oculto do ABYS) morre com ele.
+  useEffect(() => { if (!open) { keepEngineRef.current = false; stopResolver(false); } }, [open]);
 
   // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
   useEffect(() => {
@@ -463,7 +471,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       // O player fechou pedindo o próximo ep. Se o JS JÁ tinha avançado (in-place que
       // não achou link), NÃO avança de novo — senão pularia um episódio.
       if (res.next) { if (!advanced) { pendingNextInPlayer = true; onNext?.(); } return; }
-      if (res.url) setChosen(res.url, ep.tmdbId, ep.type, ep.season, ep.episode);   // guarda o link atual
+      // Guarda o link atual — efêmero (/abyss/) guarda só o MODO (sem URL: o link morre com o app).
+      if (res.url) { if (isEphemeralUrl(res.url)) markNativeMode(ep.tmdbId, ep.type, ep.season, ep.episode); else setChosen(res.url, ep.tmdbId, ep.type, ep.season, ep.episode); }
       onClose();   // Voltar → fecha direto (volta pro detalhe), sem placeholder
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -841,7 +850,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-foreground">
                               Link {gi} <span className="text-[10px] text-muted-foreground">({kind})</span>
-                              <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{s.synthetic ? 'COMPLETO' : track ? 'FAIXA' : 'MASTER'}</span>
+                              <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{s.synthetic ? 'COMPLETO' : s.ephemeral ? 'DIRETO' : track ? 'FAIXA' : 'MASTER'}</span>
                               {/* De qual provedor veio o link (carimbado na captura). */}
                               {providerTag(s.provider) && (
                                 <span className="text-[10px] ml-1 font-semibold px-1 rounded" style={{ color: providerTag(s.provider)!.color }}>
@@ -850,11 +859,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                               )}
                               {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
                             </p>
-                            <p className="text-[11px] text-muted-foreground truncate">{s.synthetic ? 'vídeo + áudio do mesmo servidor, montados pelo app' : s.url}</p>
+                            <p className="text-[11px] text-muted-foreground truncate">{s.synthetic ? 'vídeo + áudio do mesmo servidor, montados pelo app' : s.ephemeral ? 'direto do player da fonte (só com o app aberto; sem download)' : s.url}</p>
                           </div>
                           {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </button>
-                        {!track && dlKey && isNative() && (() => {
+                        {!track && !s.ephemeral && dlKey && isNative() && (() => {
                           const mine = isDlLink(s.url);          // este link é o do download?
                           const busy = !!dlItem && dlItem.state !== 'removed';
                           if (busy && !mine) return null;         // outro link já está baixando
