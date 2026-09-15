@@ -12,6 +12,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
+import androidx.webkit.ScriptHandler;
 import android.widget.FrameLayout;
 
 import com.getcapacitor.JSArray;
@@ -61,6 +62,19 @@ public class ResolverPlugin extends Plugin {
     private int session = 0;                                // invalida callbacks de um start() antigo
     private Runnable deadline;
     private final Runnable ticker = new Runnable() { @Override public void run() { tick(); } };
+    // ABYS (15/09/2026): a página oculta vira MOTOR do vídeo. abyssSid = sessão no ProxyServer
+    // (/abyss/<sid>/…); `engine` = manter o WebView vivo depois do stop(keep) — o ExoPlayer lê os bytes
+    // que o JS do frame abysscdn empurra. injectHandler = trocar o script (fallback Opção 2/Byse) e recarregar.
+    private ScriptHandler injectHandler;
+    private String abyssSid = "", injectAlt = "", startUrl = "";
+    private boolean abyssReady = false, engine = false, abyssExtended = false;
+    private Runnable abyssFallback;
+
+    @Override
+    public void load() {
+        // O proxy avisa quando o JS do frame abysscdn leu as qualidades → emitimos os 3 links ao app.
+        ProxyServer.onAbyssReady = (sid, qs) -> ui.post(() -> onAbyssReady(sid, qs));
+    }
 
     @PluginMethod
     public void start(final PluginCall call) {
@@ -69,6 +83,9 @@ public class ResolverPlugin extends Plugin {
         final int budgetMs = call.getInt("budgetMs", 15000);
         final String script = call.getString("clickScript", "");
         final String inject = call.getString("injectScript", "");
+        final String injectAltScript = call.getString("injectScriptAlt", "");
+        final String sid = call.getString("abyssSid", "");
+        final int fallbackMs = call.getInt("fallbackMs", 0);
         final List<String> hosts = new ArrayList<>();
         try {
             JSArray a = call.getArray("hopHosts");
@@ -81,6 +98,7 @@ public class ResolverPlugin extends Plugin {
                 stopInternal();
                 final int mySession = ++session;
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
+                abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
@@ -132,7 +150,7 @@ public class ResolverPlugin extends Plugin {
                 // opção/gate/play. O gate da Byse (.captcha-gate__play) só renderiza DENTRO do iframe f7hyg4q
                 // (em branco no topo), então evaluateJavascript/hop não alcançavam; addDocumentStartJavaScript sim.
                 if (injectScript != null && !injectScript.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                    try { WebViewCompat.addDocumentStartJavaScript(w, injectScript, java.util.Collections.singleton("*")); injected = true; }
+                    try { injectHandler = WebViewCompat.addDocumentStartJavaScript(w, injectScript, java.util.Collections.singleton("*")); injected = true; }
                     catch (Throwable t) { injected = false; }
                 }
                 // Diagnóstico: a injeção em todos os frames ficou ativa? (aba Bugs)
@@ -150,6 +168,30 @@ public class ResolverPlugin extends Plugin {
                     });
                 };
                 ui.postDelayed(deadline, budgetMs);
+                // Fonte 1: o script principal clica "Opção 1" (ABYS). Sem `ready` do proxy em fallbackMs →
+                // troca o script injetado pelo alternativo ("Opção 2"/Byse, caminho da v4.54) e recarrega.
+                if (fallbackMs > 0 && injected && !injectAlt.isEmpty()) {
+                    final Map<String, String> hh = new HashMap<>(h);
+                    abyssFallback = () -> {
+                        if (mySession != session || abyssReady || web == null) return;
+                        // O frame abysscdn JÁ leu as qualidades (só falta medir/avisar): dá mais fallbackMs pro `ready`
+                        // antes de desistir — no emulador lento as sources chegam aos ~30 s; no aparelho, ~10 s.
+                        if (!abyssExtended && ProxyServer.abyssHasProgress(abyssSid)) {
+                            abyssExtended = true;
+                            report("RESOLVER_ABYS_WAIT", "sources lidas; +" + fallbackMs + " ms pro ready");
+                            ui.postDelayed(abyssFallback, fallbackMs);
+                            return;
+                        }
+                        report("RESOLVER_ABYS_FALLBACK", "sem ready em " + (abyssExtended ? 2 * fallbackMs : fallbackMs) + " ms → Opção 2 (Byse)");
+                        try {
+                            if (injectHandler != null) injectHandler.remove();
+                            injectHandler = WebViewCompat.addDocumentStartJavaScript(web, injectAlt, java.util.Collections.singleton("*"));
+                        } catch (Throwable t) { report("RESOLVER_ABYS_FALLBACK", "troca de script falhou: " + t); }
+                        ProxyServer.abyssDrop(abyssSid);
+                        try { web.stopLoading(); web.loadUrl(startUrl, hh); } catch (Throwable ignored) {}
+                    };
+                    ui.postDelayed(abyssFallback, fallbackMs);
+                }
                 call.resolve();
             } catch (Throwable t) { call.reject("start: " + t); }
         });
@@ -157,8 +199,37 @@ public class ResolverPlugin extends Plugin {
 
     @PluginMethod
     public void stop(final PluginCall call) {
-        ui.post(() -> { stopInternal(); call.resolve(); });
+        final boolean keep = Boolean.TRUE.equals(call.getBoolean("keep", false));
+        ui.post(() -> { if (keep && engine) pauseInternal(); else stopInternal(); call.resolve(); });
     }
+
+    // stop(keep): o vídeo já está no ExoPlayer via /abyss/ — para relógio, cliques e fallback, mas MANTÉM
+    // o WebView (motor) vivo até o app fechar o player (stop sem keep) ou um start() novo.
+    private void pauseInternal() {
+        ui.removeCallbacks(ticker);
+        if (deadline != null) { ui.removeCallbacks(deadline); deadline = null; }
+        if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
+    }
+
+    // O JS do frame abysscdn leu as qualidades e o tamanho de cada MP4 virtual → os links locais entram
+    // no app pelo MESMO streamFound. Ordem 720p, 480p, 1080p (720 = padrão pedido por ele; se falhar, o
+    // auto-avanço do player tenta o mais leve).
+    private void onAbyssReady(String sid, java.util.List<ProxyServer.AbyssQuality> qs) {
+        if (web == null || sid == null || !sid.equals(abyssSid)) return;
+        abyssReady = true; engine = true;
+        if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
+        java.util.List<ProxyServer.AbyssQuality> order = new ArrayList<>(qs);
+        java.util.Collections.sort(order, (a, b) -> rank(a.q) - rank(b.q));
+        StringBuilder sb = new StringBuilder();
+        for (ProxyServer.AbyssQuality q : order) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(q.q).append("p=").append(q.total / 1048576).append("MiB");
+            StreamSnifferPlugin.emitDirect(ProxyServer.abyssUrl(sid, q.q), "video/mp4", q.q + "p", currentUrl, true);
+        }
+        report("RESOLVER_ABYS_READY", sb.toString());
+        emit("abyss", currentUrl);
+    }
+    private static int rank(int q) { return q == 720 ? 0 : q == 480 ? 1 : q == 1080 ? 2 : 3 + q; }
 
     // Player em IFRAME cross-origin de host conhecido → vira frame principal (só assim dá pra clicar por JS).
     private void maybeHop(final int mySession, WebResourceRequest req) {
@@ -260,6 +331,9 @@ public class ResolverPlugin extends Plugin {
 
     private void stopInternal() {
         session++;
+        if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
+        engine = false; abyssReady = false; abyssExtended = false; injectHandler = null;
+        ProxyServer.abyssDrop(abyssSid);
         ui.removeCallbacks(ticker);
         if (deadline != null) { ui.removeCallbacks(deadline); deadline = null; }
         WebView w = web;

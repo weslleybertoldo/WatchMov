@@ -833,6 +833,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // Link novo = qualidade entregue desconhecida até o proxy/player dizerem.
         localVideoH = 0; castDeliveredH = 0; fileHeightPending = false;
         updateCastQualityLabel();
+        // /abyss/ (proxy local alimentado pela página oculta, 15/09/2026): é MP4 e o sniff de 512 B
+        // travaria esperando o 1º pedaço chegar do Service Worker → prepara direto.
+        if (url != null && url.contains("/abyss/")) { prepare(url, MimeTypes.VIDEO_MP4, startMs); return; }
         // O mime capturado nem sempre chega certo (SuperFlix/EmbedPlay servem HLS como
         // text/plain em master.txt/`/m3/` sem extensão). Se o mime já diz HLS/DASH,
         // usa direto; senão SNIFFA os bytes reais (OkHttp descomprime gzip) e decide
@@ -914,6 +917,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             }
         }
         Collections.sort(heights, Collections.reverseOrder());
+        // MP4 em várias qualidades (ABYS: /abyss/<sid>/480p|720p|1080p.mp4): o ExoPlayer não tem faixas
+        // adaptativas aqui — "qualidade" = trocar de LINK na mesma posição (rótulos em qualities[]).
+        if (heights.size() <= 1 && urls != null && urls.length > 1 && allLabeled(qualities, urls.length)) { showLinks(); return; }
         if (heights.isEmpty()) return;
         final String[] labels = new String[heights.size() + 1];
         labels[0] = "Auto";
@@ -944,6 +950,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         m = java.util.regex.Pattern.compile("[/_-](240|360|480|540|576|720|1080|1440|2160)[/_.-]").matcher(p);
         if (m.find()) return m.group(1) + "p";
         return "";
+    }
+
+    // Todos os n primeiros links têm rótulo de qualidade? (ABYS emite 720p/480p/1080p → o botão de
+    // qualidade vira a lista de links.)
+    private static boolean allLabeled(String[] q, int n) {
+        if (q == null || q.length < n) return false;
+        for (int i = 0; i < n; i++) if (q[i] == null || q[i].isEmpty()) return false;
+        return true;
     }
 
     // Espelhar na TV: Chromecast, DLNA, espelhamento + players externos instalados
@@ -2285,7 +2299,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         }
         final long pos = player != null ? player.getCurrentPosition() : 0;   // continua no mesmo tempo
         new AlertDialog.Builder(this)
-            .setTitle("Trocar link")
+            .setTitle(allLabeled(qualities, urls.length) ? "Qualidade" : "Trocar link")
             .setItems(labels, (d, i) -> playUrl(urls[i], mimes != null && i < mimes.length ? mimes[i] : null, pos))
             .show();
     }
