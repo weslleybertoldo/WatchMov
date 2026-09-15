@@ -11,7 +11,7 @@ import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor
 
 export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout'; url: string; hops?: number }
 interface ResolverPlugin {
-  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; budgetMs: number }): Promise<void>;
+  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; budgetMs: number }): Promise<void>;
   stop(): Promise<void>;
   addListener(event: 'resolverEvent', cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle>;
 }
@@ -19,7 +19,7 @@ const Resolver = registerPlugin<ResolverPlugin>('Resolver');
 
 // 30 s (era 15 s na v4.52): na prova viva de 14/09 a Fonte 6 (playerflix → Blogger → YouTube →
 // googlevideo) levou ~27 s do hop até o link e a Fonte 1 (Byse) precisa de 2 hops + gate.
-export const RESOLVER_BUDGET_MS = 30000;
+export const RESOLVER_BUDGET_MS = 45000;
 // Iframes de player em que é preciso CLICAR (opção/gate) → o WebView oculto navega pra URL deles
 // como frame principal (só o frame principal aceita evaluateJavascript). SuperFlix não precisa:
 // o player em xn--…best toca sozinho dentro do iframe e a captura é por rede.
@@ -33,6 +33,26 @@ export const CLICK_STEPS = [
   '.jw-icon-display', '.jw-display-icon-display', '.vjs-big-play-button', '.plyr__control--overlaid',
   "button[aria-label*='Play' i]", '.play-btn', '.btn-play', '#play', '.play',
 ];
+
+// Script injetado no document-start em TODOS os frames (androidx.webkit, origins '*'): cada frame
+// roda seu próprio loop clicando opção/gate/play e dando play mudo nos vídeos. Resolve o gate da
+// Byse (`.captcha-gate__play` em f7hyg4q.org), que só existe DENTRO do iframe — o evaluateJavascript
+// (frame principal) não alcançava e o frame-hop deixava a página em branco.
+export function buildInjectScript(steps: string[] = CLICK_STEPS): string {
+  const list = JSON.stringify(steps);
+  return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;try{console.log("WMINJ frame "+location.href.slice(0,70))}catch(_){}var STEPS=' + list + ';var done={};'
+    + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
+    + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
+    + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
+    + 'var tick=function(){try{'
+    + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+    + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];if(done[st])continue;var el=null;'
+    + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
+    + 'if(el){done[st]=1;fire(el);try{console.log("WMINJ click "+st+" @ "+location.href.slice(0,55))}catch(_){}return;}}}catch(_){}};'
+    + 'var n=0,iv=setInterval(function(){n++;tick();if(n>75)clearInterval(iv);},650);'
+    + "if(document.readyState!=='loading')tick();else document.addEventListener('DOMContentLoaded',tick);"
+    + '}catch(_){}})();';
+}
 
 export function isHopHost(host: string | null | undefined, hops: string[] = HOP_HOSTS): boolean {
   const h = (host || '').toLowerCase();
@@ -100,7 +120,7 @@ export function noteResolverResult(providerId: string, ok: boolean, now = Date.n
 // ── plugin ─────────────────────────────────────────────────────────────────────
 export async function startResolver(o: { url: string; referer?: string; budgetMs?: number }): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
-  await Resolver.start({ url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(), budgetMs: o.budgetMs ?? RESOLVER_BUDGET_MS });
+  await Resolver.start({ url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(), injectScript: buildInjectScript(), budgetMs: o.budgetMs ?? RESOLVER_BUDGET_MS });
 }
 export function stopResolver(): void {
   if (!Capacitor.isNativePlatform()) return;

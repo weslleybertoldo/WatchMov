@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildClickScript, CLICK_STEPS, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, noteResolverResult, COOLDOWN_MS } from './resolver';
+import { buildClickScript, buildInjectScript, CLICK_STEPS, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, noteResolverResult, COOLDOWN_MS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -11,6 +11,16 @@ describe('resolver oculto (regras puras)', () => {
     for (const st of CLICK_STEPS) expect(s).toContain(st);
     expect(s.indexOf('Mostrar Op')).toBeLessThan(s.indexOf('Opção 2'));
     expect(s.indexOf('.option')).toBeLessThan(s.indexOf('.captcha-gate__play'));
+    expect(s).toContain('v.muted=true');
+  });
+
+  it('injectScript é JS válido, roda em todo frame, clica o gate da Byse e muta vídeos', () => {
+    const s = buildInjectScript();
+    expect(() => new Function(s)).not.toThrow();
+    expect(s).toContain('.captcha-gate__play');
+    expect(s).toContain('text:Opção 2');
+    expect(s).toContain('__wmInj');
+    expect(s).toContain('setInterval');
     expect(s).toContain('v.muted=true');
   });
 
