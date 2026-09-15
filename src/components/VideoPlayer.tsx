@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2, MoreVertical } from 'lucide-react';
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
-import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, type ResolverSkip } from '@/lib/resolver';
+import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -95,6 +95,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // vídeo…". O link que o WebView oculto captura chega pelo mesmo streamFound e o auto-abrir
   // (efeito C) abre o reprodutor. Ver src/lib/resolver.ts e ResolverPlugin.java.
   const [resolving, setResolving] = useState(false);
+  const [optProgress, setOptProgress] = useState<{ k: number; n: number; name: string } | null>(null);
   const resolvingRef = useRef(false);
   useEffect(() => { resolvingRef.current = resolving; });
   const resolveTriedRef = useRef<string | null>(null);   // embedUrl em que já tentou (1×/fonte por abertura)
@@ -389,17 +390,35 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     }
     setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
-    setResolving(true);
+    setResolving(true); setOptProgress(null);
     startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId }).catch(() => setResolving(false));
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
       setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
-    }, budgetFor(providerId) + 1500);   // +1,5 s: o deadline nativo (com retrato da página) reporta RESOLVER_TIMEOUT antes de o JS parar
+    }, Math.max(budgetFor(providerId), 150000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo)
     // keep = o reprodutor abriu por link efêmero (/abyss/): a página oculta segue viva como motor.
     return () => { window.clearTimeout(t); stopResolver(keepEngineRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, embedUrl, ownStream, preferIframe, resolverRetry]);
+
+  // v4.57: aviso "Procurando…" mostra a opção atual (Fonte 6: Opção 1 Blogger → 2 VIP Player). O nativo manda
+  // resolverEvent{type:'option'} a cada troca e {type:'timeout'} quando TODAS as opções falham → aí cai no picker manual.
+  useEffect(() => {
+    if (!open || !isNative()) { setOptProgress(null); return; }
+    let handle: PluginListenerHandle | null = null;
+    let alive = true;
+    onResolverEvent((e: ResolverEvent) => {
+      if (e.type === 'option') setOptProgress({ k: e.k ?? 0, n: e.n ?? 0, name: e.name ?? '' });
+      else if (e.type === 'timeout') {
+        setOptProgress(null);
+        if (resolvingRef.current && !ownStreamRef.current) {
+          setResolving(false); stopResolver(); noteResolverResult(providerId, false); setResolverPaused('tried');
+        }
+      }
+    })?.then(h => { if (alive) handle = h; else h.remove(); });
+    return () => { alive = false; handle?.remove(); };
+  }, [open, providerId]);
 
   // "Tentar agora"/"Ligar" no chip: esquece a pausa da fonte, re-arma o auto-abrir e roda de novo.
   const retryResolver = () => {
@@ -736,6 +755,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
             <p className="text-white">Procurando o vídeo em {provider?.name ?? 'servidor'}…</p>
+            {optProgress && optProgress.n > 0 && (
+              <p className="text-white/70 text-xs">Opção {optProgress.k}/{optProgress.n}{optProgress.name ? ` · ${optProgress.name}` : ''}</p>
+            )}
             <p className="text-white/50 text-xs">Abre sozinho no reprodutor quando achar. Se demorar, você pode abrir o servidor.</p>
             <div className="flex flex-wrap gap-2 justify-center">
               {/* Escolheu o SERVIDOR → desarma o auto-abrir (regra dele: "não é pra ficar me jogando"). */}

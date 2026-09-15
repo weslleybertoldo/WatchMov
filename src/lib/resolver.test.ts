@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -96,5 +96,22 @@ describe('resolver oculto (regras puras)', () => {
     expect(resolverSkipReason({ ...base, armed: false, cooldown: true })).toBe('server-mode');
     expect(resolverSkipReason({ ...base, cooldown: true, tried: true })).toBe('cooldown');
     expect(resolverSkipReason({ ...base, tried: true })).toBe('tried');
+  });
+
+  it('v4.57: buildOptionCycleScript cicla #optionList por indice K, loga WMOPT e cai no generico sem opcoes', () => {
+    const s = buildOptionCycleScript();
+    expect(s).toContain('__OPT_K__');
+    expect(() => new Function(s)).not.toThrow();
+    expect(() => new Function(s.replace(/__OPT_K__/g, '2'))).not.toThrow();
+    expect(s).toContain('#optionList .option');
+    expect(s).toContain('WMOPT|n=');
+    expect(s).toContain('WMOPT|click');
+    expect(s).toContain('__wmInj');
+    expect(s).toContain('v.muted=true');
+    for (const st of CLICK_STEPS) expect(s).toContain(st);
+  });
+
+  it('v4.57: RESOLVER_OPT_MS = 30 s por opcao', () => {
+    expect(RESOLVER_OPT_MS).toBe(30000);
   });
 });

@@ -14,6 +14,8 @@ import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 import androidx.webkit.ScriptHandler;
 import android.widget.FrameLayout;
+import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -69,6 +71,13 @@ public class ResolverPlugin extends Plugin {
     private String abyssSid = "", injectAlt = "", startUrl = "";
     private boolean abyssReady = false, engine = false, abyssExtended = false;
     private Runnable abyssFallback;
+    // v4.57: ciclo de opcoes (playerflix / Fonte 6). O console WMOPT diz N/nomes; o nativo troca o K e recarrega.
+    private String referer = "";
+    private int optK = 1, optN = 0, optReports = 0;
+    private String[] optNames = new String[0];
+    private long optMs = 30000;
+    private Runnable optTimer;
+    private final StringBuilder abysLog = new StringBuilder();
 
     @Override
     public void load() {
@@ -86,6 +95,7 @@ public class ResolverPlugin extends Plugin {
         final String injectAltScript = call.getString("injectScriptAlt", "");
         final String sid = call.getString("abyssSid", "");
         final int fallbackMs = call.getInt("fallbackMs", 0);
+        final int optMsArg = call.getInt("optMs", 30000);
         final List<String> hosts = new ArrayList<>();
         try {
             JSArray a = call.getArray("hopHosts");
@@ -99,6 +109,7 @@ public class ResolverPlugin extends Plugin {
                 final int mySession = ++session;
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
+                this.referer = referer; optMs = optMsArg; optK = 1; optN = 0; optReports = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0);
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
@@ -109,6 +120,12 @@ public class ResolverPlugin extends Plugin {
                 s.setJavaScriptCanOpenWindowsAutomatically(false);
                 s.setUserAgentString(ProxyServer.userAgent());     // MESMO UA do app (googlevideo prende a URL ao UA)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(w, true);   // cf_clearance / Blogger
+                w.setWebChromeClient(new WebChromeClient() {
+                    @Override public boolean onConsoleMessage(ConsoleMessage cm) {
+                        try { handleConsole(mySession, cm.message()); } catch (Throwable ignored) {}
+                        return false;
+                    }
+                });
                 w.setWebViewClient(new WebViewClient() {
                     @Override
                     public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
@@ -150,7 +167,7 @@ public class ResolverPlugin extends Plugin {
                 // opção/gate/play. O gate da Byse (.captcha-gate__play) só renderiza DENTRO do iframe f7hyg4q
                 // (em branco no topo), então evaluateJavascript/hop não alcançavam; addDocumentStartJavaScript sim.
                 if (injectScript != null && !injectScript.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                    try { injectHandler = WebViewCompat.addDocumentStartJavaScript(w, injectScript, java.util.Collections.singleton("*")); injected = true; }
+                    try { injectHandler = WebViewCompat.addDocumentStartJavaScript(w, substK(injectScript, optK), java.util.Collections.singleton("*")); injected = true; }
                     catch (Throwable t) { injected = false; }
                 }
                 // Diagnóstico: a injeção em todos os frames ficou ativa? (aba Bugs)
@@ -182,7 +199,7 @@ public class ResolverPlugin extends Plugin {
                             ui.postDelayed(abyssFallback, fallbackMs);
                             return;
                         }
-                        report("RESOLVER_ABYS_FALLBACK", "sem ready em " + (abyssExtended ? 2 * fallbackMs : fallbackMs) + " ms → Opção 2 (Byse)");
+                        report("RESOLVER_ABYS_FALLBACK", "sem ready em " + (abyssExtended ? 2 * fallbackMs : fallbackMs) + " ms → Opção 2 (Byse) frame=" + ProxyServer.abyssHasProgress(abyssSid) + " log=" + tailLog());
                         try {
                             if (injectHandler != null) injectHandler.remove();
                             injectHandler = WebViewCompat.addDocumentStartJavaScript(web, injectAlt, java.util.Collections.singleton("*"));
@@ -209,17 +226,19 @@ public class ResolverPlugin extends Plugin {
         ui.removeCallbacks(ticker);
         if (deadline != null) { ui.removeCallbacks(deadline); deadline = null; }
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
+        if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
     }
 
     // O JS do frame abysscdn leu as qualidades e o tamanho de cada MP4 virtual → os links locais entram
-    // no app pelo MESMO streamFound. Ordem 720p, 480p, 1080p (720 = padrão pedido por ele; se falhar, o
+    // no app pelo MESMO streamFound. Ordem DECRESCENTE 1080p→720p→480p→360p (v4.57: padrão = MAIOR qualidade; o botão de qualidade troca), o
     // auto-avanço do player tenta o mais leve).
     private void onAbyssReady(String sid, java.util.List<ProxyServer.AbyssQuality> qs) {
         if (web == null || sid == null || !sid.equals(abyssSid)) return;
         abyssReady = true; engine = true;
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
+        if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
         java.util.List<ProxyServer.AbyssQuality> order = new ArrayList<>(qs);
-        java.util.Collections.sort(order, (a, b) -> rank(a.q) - rank(b.q));
+        java.util.Collections.sort(order, (a, b) -> b.q - a.q);   // v4.57: MAIOR qualidade primeiro (1080→720→480→360)
         StringBuilder sb = new StringBuilder();
         for (ProxyServer.AbyssQuality q : order) {
             if (sb.length() > 0) sb.append(',');
@@ -229,7 +248,6 @@ public class ResolverPlugin extends Plugin {
         report("RESOLVER_ABYS_READY", sb.toString());
         emit("abyss", currentUrl);
     }
-    private static int rank(int q) { return q == 720 ? 0 : q == 480 ? 1 : q == 1080 ? 2 : 3 + q; }
 
     // Player em IFRAME cross-origin de host conhecido → vira frame principal (só assim dá pra clicar por JS).
     private void maybeHop(final int mySession, WebResourceRequest req) {
@@ -316,7 +334,7 @@ public class ResolverPlugin extends Plugin {
     }
 
     private void report(String name, String note) {
-        if (reports >= 10) return;
+        if (reports >= 14) return;
         reports++;
         try { NativePlayerPlugin.reportError(currentUrl, 0, 0, name, note, null, null, null); } catch (Throwable ignored) {}
     }
@@ -329,9 +347,85 @@ public class ResolverPlugin extends Plugin {
         notifyListeners("resolverEvent", d);
     }
 
+    private String substK(String t, int k) { return t == null ? "" : t.replace("__OPT_K__", String.valueOf(k)); }
+
+    private String tailLog() { String x = abysLog.toString(); return x.length() > 180 ? x.substring(x.length() - 180) : x; }
+
+    // Console do WebView (todos os frames): WMABYS = diagnostico do pump ABYS; WMOPT = lista de opcoes do playerflix.
+    private void handleConsole(int mySession, String msg) {
+        if (mySession != session || msg == null) return;
+        if (msg.startsWith("WMABYS")) { if (abysLog.length() < 4000) abysLog.append(msg).append(" | "); return; }
+        if (!msg.startsWith("WMOPT|")) return;
+        final String body = msg.substring(6);
+        if (!body.startsWith("n=")) return;
+        int n; String[] names;
+        try {
+            String[] parts = body.split("\\|names=", 2);
+            n = Integer.parseInt(parts[0].substring(2).trim());
+            names = (parts.length > 1 && !parts[1].isEmpty()) ? parts[1].split("\u00bb") : new String[0];
+        } catch (Throwable t) { return; }
+        final int nn = n; final String[] nm = names;
+        ui.post(() -> onOptionsDiscovered(mySession, nn, nm));
+    }
+
+    // playerflix informou N opcoes -> cronometra cada uma (e cancela o deadline fixo: o ciclo controla o fim).
+    private void onOptionsDiscovered(int mySession, int n, String[] names) {
+        if (mySession != session || web == null || n <= 0) return;
+        optN = n; optNames = names;
+        emitOption();
+        if (optTimer == null) {
+            if (deadline != null) ui.removeCallbacks(deadline);
+            optTimer = () -> advanceOption(mySession);
+            ui.postDelayed(optTimer, optMs);
+        }
+    }
+
+    // Opcao k nao achou video em optMs -> registra e tenta a proxima; todas falharam -> timeout (picker manual).
+    private void advanceOption(int mySession) {
+        if (mySession != session || web == null || abyssReady || engine) return;
+        String cur = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
+        reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur);
+        if (optK < optN) {
+            optK++;
+            emitOption();
+            try {
+                if (injectHandler != null) injectHandler.remove();
+                injectHandler = WebViewCompat.addDocumentStartJavaScript(web, substK(injectScript, optK), java.util.Collections.singleton("*"));
+            } catch (Throwable t) { reportOption("RESOLVER_OPTION_FAIL", "reinjecao: " + t); }
+            Map<String, String> h = new HashMap<>();
+            if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
+            try { web.stopLoading(); web.loadUrl(startUrl, h); } catch (Throwable ignored) {}
+            ui.postDelayed(optTimer, optMs);
+        } else {
+            final int ms = mySession;
+            snapshotThen(ms, snap -> {
+                report("RESOLVER_TIMEOUT", "todas as " + optN + " opcoes falharam " + snap + " url=" + currentUrl);
+                emit("timeout", currentUrl);
+                stopInternal();
+            });
+        }
+    }
+
+    private void emitOption() {
+        JSObject d = new JSObject();
+        d.put("type", "option");
+        d.put("k", optK);
+        d.put("n", optN);
+        d.put("name", (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "");
+        d.put("url", currentUrl);
+        notifyListeners("resolverEvent", d);
+    }
+
+    private void reportOption(String name, String note) {
+        if (optReports >= 8) return;
+        optReports++;
+        try { NativePlayerPlugin.reportError(currentUrl, 0, 0, name, note, null, null, null); } catch (Throwable ignored) {}
+    }
+
     private void stopInternal() {
         session++;
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
+        if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
         engine = false; abyssReady = false; abyssExtended = false; injectHandler = null;
         ProxyServer.abyssDrop(abyssSid);
         ui.removeCallbacks(ticker);
