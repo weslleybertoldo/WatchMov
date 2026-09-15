@@ -66,7 +66,7 @@ export default function ServersView({ onBack }: { onBack: () => void }) {
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3" data-resolver={resolverOn ? '1' : '0'}>
         <div className="min-w-0">
           <p className="text-sm font-medium text-foreground">Resolver sozinho ao tocar em Assistir</p>
-          <p className="text-xs text-muted-foreground">Procura o vídeo escondido e abre direto no reprodutor. Se não achar em 45 s, mostra o servidor.</p>
+          <p className="text-xs text-muted-foreground">Procura o vídeo escondido e abre direto no reprodutor. Se não achar em 45 s, mostra o servidor; 3 falhas seguidas pausam a fonte por 2 h (o aviso aparece sobre o servidor, com "Tentar agora").</p>
         </div>
         <Switch checked={resolverOn} onCheckedChange={v => { setResolverEnabled(v); toast.info(v ? 'Resolvedor ligado' : 'Resolvedor desligado'); }} />
       </div>
