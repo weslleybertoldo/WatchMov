@@ -2,7 +2,7 @@ import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor
 
 // synthetic: COMPLETO montado pelo app a partir de um par vídeo/áudio (synth://…, ver capturedList.ts).
 // ephemeral: link /abyss/ servido pela página oculta (motor) — vale só enquanto o app estiver aberto; nunca vai pro cache.
-export interface SniffResult { url: string; mime?: string; referer?: string; quality?: string; headers?: Record<string, string>; provider?: string; synthetic?: boolean; ephemeral?: boolean }
+export interface SniffResult { url: string; mime?: string; referer?: string; quality?: string; headers?: Record<string, string>; provider?: string; option?: string; synthetic?: boolean; ephemeral?: boolean }
 
 interface StreamSnifferPlugin {
   startWatching(): Promise<void>;

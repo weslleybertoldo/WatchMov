@@ -46,6 +46,9 @@ public class StreamSnifferPlugin extends Plugin {
 
     // Domínios que NUNCA são o vídeo (aposta/ads/tracker/abuso) — nem salva nem proba.
     // Barra lixo tipo brwin.games/api/hall/manifest e o dummy do muro anti-hotlink.
+    // v4.61: opcao ativa do resolvedor (WatchPlay/Premium/ABYS/Blogger) pra carimbar cada captura.
+    public static volatile String currentOption = "";
+
     private static final String[] BLOCKED_HOSTS = {
         "cloudflare-terms-of-service-abuse", "brwin.games",
         "doubleclick.net", "googlesyndication.com", "adservice.", "popads.", "popcash.",
@@ -219,6 +222,7 @@ public class StreamSnifferPlugin extends Plugin {
             d.put("mime", fMime);
             if (hdrs.length() > 0) d.put("headers", hdrs);
             if (!quality.isEmpty()) d.put("quality", quality);
+            if (currentOption != null && !currentOption.isEmpty()) d.put("option", currentOption);
             instance.notifyListeners("streamFound", d);
         });
     }
@@ -233,6 +237,7 @@ public class StreamSnifferPlugin extends Plugin {
         if (referer != null) d.put("referer", referer);
         if (quality != null && !quality.isEmpty()) d.put("quality", quality);
         d.put("ephemeral", ephemeral);
+        if (currentOption != null && !currentOption.isEmpty()) d.put("option", currentOption);
         instance.notifyListeners("streamFound", d);
     }
 
