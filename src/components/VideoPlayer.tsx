@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
-import { mergeCaptured } from '@/lib/capturedList';
+import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -18,10 +18,8 @@ import { setLogProvider } from '@/lib/playbackLog';
 // no reprodutor se já tiver link capturado.
 let pendingNextInPlayer = false;
 
-// VARIANTE/FAIXA (playlist de 1 rendition ou faixa isolada: /m3/ vídeo, /md/ áudio,
-// index-fN-vN-aN) vs COMPLETO/MASTER (multivariante master.* ou arquivo full .mp4).
-// Usado p/ rotular, agrupar em abas e escopar o auto-avanço/handoff.
-const isTrackOnly = (u: string) => /\/m3\/|\/md\/|index-f\d|-v\d-a\d/i.test(u || '');
+// isTrackOnly (FAIXA vs COMPLETO/MASTER) mora em @/lib/capturedList, junto com o COMPLETO
+// sintetizado e o auto-abrir — regras puras, cobertas por teste.
 
 // Rótulo colorido do provedor que gerou o link (carimbado na captura, ver o
 // `provider: rr.provider || providerId` mais abaixo). Sai do próprio PROVIDERS: antes
@@ -84,6 +82,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [ownStream, setOwnStream] = useState<SniffResult | null>(null);  // escolhido
   const [preferIframe, setPreferIframe] = useState(false);               // ficar no servidor
   const playedRef = useRef(false);   // evita reabrir o ExoPlayer em loop
+  // Auto-abrir no reprodutor (14/09/2026): dispara UMA vez por fonte (embedUrl) no 1º link
+  // COMPLETO/MASTER capturado AO VIVO nesta abertura; nunca em faixa nem em link do cache.
+  // Fica DESARMADO assim que o usuário escolhe "Servidor" (banner, picker ou botão do player
+  // nativo) — regra dele: "se eu clicar em servidor, não é pra ficar me jogando".
+  const autoArmedRef = useRef(false);
+  const autoFiredRef = useRef<string | null>(null);        // embedUrl em que já disparou
+  const freshKeysRef = useRef<Set<string>>(new Set());     // chaves capturadas ao vivo agora
   // Espelho do stream atual: o listener de progresso precisa do valor NA HORA do
   // evento (a closure do state fica velha) pra descartar o progresso do ep anterior.
   const ownStreamRef = useRef<SniffResult | null>(null);
@@ -186,6 +191,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!open) return;
     setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
+    freshKeysRef.current = new Set(); autoFiredRef.current = null;
     if (!isNative()) return;
     // Veio do "Próximo episódio": este ep começa do ZERO. Limpa a posição salva nos
     // DOIS stores (streamCache + SharedPreferences do player) — as versões antigas
@@ -195,6 +201,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       clearResumeNative(`${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`);
     }
     const entry = getEntry(tmdbId, type, season, episode);
+    // Auto-abrir armado — salvo se da última vez ele preferiu o SERVIDOR neste título.
+    autoArmedRef.current = entry?.lastMode !== 'server';
     // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
     let toPlay: SniffResult | null = null;
     if (entry?.lastMode === 'native' && entry.chosenUrl) {
@@ -244,7 +252,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // acumulando links sem mexer no que já está tocando/escolhido.
   useEffect(() => {
     if (!open || !embedUrl || !isNative()) { setCapturedList([]); return; }
-    setCapturedList(getEntry(tmdbId, type, season, episode)?.streams ?? []);
+    setCapturedList(withCompletos(getEntry(tmdbId, type, season, episode)?.streams ?? []));
     let alive = true;
     let stop = () => {};
     watchStream(rr => {
@@ -255,8 +263,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       const r = { ...rr, provider: rr.provider || providerId };
       // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar, SEM perder
       // headers/quality (os headers levam o UA real do WebView pro replay do proxy; 14/09/2026).
-      setCapturedList(prev => mergeCaptured(prev, r));
+      // + COMPLETO sintetizado (par vídeo/áudio do mesmo player, ver capturedList.ts): entra
+      // na própria lista; recaptura do par ATUALIZA a entrada (mesma chave) em vez de duplicar.
+      setCapturedList(prev => withCompletos(mergeCaptured(prev, r)));
       addStreams([r], tmdbId, type, season, episode);
+      freshKeysRef.current.add(streamKey(r.url));   // capturado AO VIVO (conta pro auto-abrir)
     }).then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
   }, [open, embedUrl, tmdbId, type, season, episode]);
@@ -320,8 +331,23 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setOwnStream(null);
     setPreferIframe(true);
     playedRef.current = false;
+    autoArmedRef.current = false;   // escolheu o SERVIDOR: o auto-abrir não te joga mais pro reprodutor
     setServerMode(tmdbId, type, season, episode);
   };
+
+  // (C) Auto-abrir no reprodutor (pedido dele 14/09/2026): no modo servidor, o 1º link
+  // COMPLETO/MASTER capturado ao vivo abre sozinho no ExoPlayer — uma vez por fonte
+  // (autoFiredRef) e só enquanto armado (autoArmedRef): escolher "Servidor" em qualquer
+  // lugar desarma até reabrir o título ("se eu clicar em servidor, não é pra ficar me jogando").
+  useEffect(() => {
+    if (!open || !isNative() || !embedUrl || ownStream || preferIframe) return;
+    if (!autoArmedRef.current || autoFiredRef.current === embedUrl) return;
+    const pick = pickAutoOpen(capturedList, freshKeysRef.current);
+    if (!pick) return;
+    autoFiredRef.current = embedUrl;
+    chooseStream(pick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, embedUrl, ownStream, preferIframe, capturedList]);
 
   // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
   useEffect(() => {
@@ -507,6 +533,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     const s = ownStream || capturedList[0] || null;
     const url = s?.url || null;
     if (!url) { toast.error('Sem link direto ainda', { description: 'Dê play no servidor uma vez pra capturar o vídeo; depois abra no app externo.' }); return; }
+    // synth:// só o nosso proxy entende — pra app externo, o botão fica DENTRO do reprodutor
+    // (que entrega o link pelo proxy na LAN).
+    if (s?.synthetic) { toast.info('Link montado pelo app', { description: 'Pra abrir este COMPLETO num app externo, use o botão de app externo dentro do reprodutor.' }); return; }
     const mime = url.includes('.m3u8') || url.includes('/m3/') || url.includes('master') ? 'application/x-mpegURL' : url.includes('.mpd') ? 'application/dash+xml' : 'video/*';
     const ok = await castToExternal({ pkg: app.pkg, url, title, referer: s?.referer, ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', mime });
     if (ok) { setCastOpen(false); toast.success(`Enviado pro ${app.name}`); } else { toast.error(`Não consegui abrir no ${app.name}`); }
@@ -654,7 +683,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-sm font-medium text-foreground">{capturedList.length === 1 ? 'Vídeo pronto no seu player' : `${capturedList.length} vídeos detectados`}</p>
             <p className="text-xs text-muted-foreground">Controles, buffer, espelhar e baixar offline.</p>
           </div>
-          <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setPreferIframe(true)}>Servidor</Button>
+          <Button size="sm" variant="ghost" className="shrink-0" onClick={() => { autoArmedRef.current = false; setPreferIframe(true); }}>Servidor</Button>
           <Button size="sm" className="shrink-0" onClick={() => capturedList.length === 1 ? chooseStream(capturedList[0]) : setPickerOpen(true)}>
             {capturedList.length === 1 ? 'Reproduzir' : 'Escolher'}
           </Button>
@@ -721,7 +750,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-foreground">
                               Link {gi} <span className="text-[10px] text-muted-foreground">({kind})</span>
-                              <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{track ? 'FAIXA' : 'MASTER'}</span>
+                              <span className={`text-[10px] ml-1 font-semibold ${track ? 'text-amber-400' : 'text-green-400'}`}>{s.synthetic ? 'COMPLETO' : track ? 'FAIXA' : 'MASTER'}</span>
                               {/* De qual provedor veio o link (carimbado na captura). */}
                               {providerTag(s.provider) && (
                                 <span className="text-[10px] ml-1 font-semibold px-1 rounded" style={{ color: providerTag(s.provider)!.color }}>
@@ -730,7 +759,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                               )}
                               {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
                             </p>
-                            <p className="text-[11px] text-muted-foreground truncate">{s.url}</p>
+                            <p className="text-[11px] text-muted-foreground truncate">{s.synthetic ? 'vídeo + áudio do mesmo servidor, montados pelo app' : s.url}</p>
                           </div>
                           {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </button>

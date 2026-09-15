@@ -72,6 +72,20 @@ public class StreamSnifferPlugin extends Plugin {
         return false;
     }
 
+    // Hosts que servem VÍDEO mas nunca o conteúdo (anúncio em vídeo / trailer). Ficam fora da
+    // LISTA "Links do vídeo", mas continuam carregando no WebView — bloquear o pré-roll
+    // travava o JW Player (14/09/2026: anúncio Betano via bannerflow entrava como MASTER e
+    // morria em ERROR_CODE_PARSING_MANIFEST_MALFORMED).
+    private static final String[] NOT_CONTENT_HOSTS = { "bannerflow.net", "betano.", "gmlinteractive." };
+    static boolean isNotContent(String url) {
+        if (url == null) return false;
+        String u = url.toLowerCase();
+        for (String h : NOT_CONTENT_HOSTS) if (u.contains(h)) return true;
+        // Blogger entrega o episódio via googlevideo (source=blogger — MANTÉM); trailer/anúncio
+        // do YouTube vem do mesmo CDN com source=youtube → lixo.
+        return u.contains("googlevideo.com") && u.contains("source=youtube");
+    }
+
     // Recursos que QUEBRAM a página (anti-devtool blanka a tela ao detectar o
     // browser controlado) ou são analytics/tracker — bloqueados no WebView pra a
     // página renderizar e o sniffer captar (provado no resolvedor Playwright).
@@ -128,7 +142,7 @@ public class StreamSnifferPlugin extends Plugin {
 
     // Chamado pelo MainActivity (WebView + Service Worker) pra cada request.
     public static void inspect(String url, Map<String, String> headers) {
-        if (!watching || url == null || isBlockedHost(url)) return;
+        if (!watching || url == null || isBlockedHost(url) || isNotContent(url)) return;
         String ref = headers != null ? headers.get("Referer") : null;
         if (looksLikeVideo(url)) { report(url, ref, mimeFor(url), headers); return; }
         if (skipProbe(url)) return;

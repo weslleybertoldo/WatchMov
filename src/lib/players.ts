@@ -118,7 +118,7 @@ export const PROVIDERS: Provider[] = [
   },
 ];
 
-// Domínios usados (para CSP frame-src)
+// Domínios usados (para CSP frame-src — o valor que vale está em vercel.json; só a web usa CSP)
 export const PROVIDER_HOSTS = [
   'https://fembed.sx',
   'https://embedplayapi.top',
@@ -127,4 +127,8 @@ export const PROVIDER_HOSTS = [
   'https://warezcdn.lat',
   'https://fshd.link',
   'https://myembed.biz',
+  // redirects atuais (14/09/2026): .cyou/.pro → .monster; fembed.sx → fembed.lol; warezcdn.lat → warezcdn.sbs
+  'https://superflixapi.monster',
+  'https://fembed.lol',
+  'https://warezcdn.sbs',
 ];
