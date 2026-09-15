@@ -9,9 +9,9 @@ import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor
 // quem abre o reprodutor é o auto-abrir do VideoPlayer. Aqui: wrapper do plugin, receita de
 // cliques, toggle (padrão ligado) e pausa por fonte (3 timeouts seguidos na MESMA versão → 2 h).
 
-export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss'; url: string; hops?: number }
+export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option'; url: string; hops?: number; k?: number; n?: number; name?: string }
 interface ResolverPlugin {
-  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; fallbackMs?: number; budgetMs: number }): Promise<void>;
+  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; fallbackMs?: number; optMs?: number; budgetMs: number }): Promise<void>;
   stop(o?: { keep?: boolean }): Promise<void>;
   addListener(event: 'resolverEvent', cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle>;
 }
@@ -23,6 +23,7 @@ const Resolver = registerPlugin<ResolverPlugin>('Resolver');
 export const RESOLVER_BUDGET_MS = 45000;
 export const RESOLVER_BUDGET_ABYS_MS = 90000;
 export const ABYS_FALLBACK_MS = 30000;
+export const RESOLVER_OPT_MS = 30000;   // v4.57: tempo por opcao (Fonte 6 playerflix: Blogger->VIP Player->...) antes de tentar a proxima
 export const PROXY_PORT = 8099;   // ProxyServer.PORT
 export const ABYS_PROVIDER = 'embedplayapi';   // Fonte 1: "Mostrar Opções" → Opção 1 (ABYS) / Opção 2 (BYSE)
 export function budgetFor(providerId: string): number { return providerId === ABYS_PROVIDER ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
@@ -57,6 +58,32 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
     + 'var n=0,iv=setInterval(function(){n++;tick();if(n>75)clearInterval(iv);},650);'
     + "if(document.readyState!=='loading')tick();else document.addEventListener('DOMContentLoaded',tick);"
     + '}catch(_){}})();' + extra;
+}
+
+// v4.57: injeção com CICLO de opções pro playerflix (Fonte 6). Em todo frame: se houver
+// `#optionList .option` (a lista Blogger / VIP Player / …), reporta os nomes por console
+// (`WMOPT|n=…|names=a»b`) e clica a K-ésima opção (K = __OPT_K__, o nativo troca a cada tentativa).
+// Sem lista de opções, cai no clicador genérico (gate/play). O ResolverPlugin lê o console,
+// cronometra cada opção e recarrega com o próximo K se falhar; só cai no picker manual quando TODAS falham.
+export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
+  const list = JSON.stringify(steps);
+  return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
+    + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
+    + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('\u00bb').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
+    + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
+    + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
+    + 'var tick=function(){try{'
+    + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+    + "var ol=document.querySelectorAll('#optionList .option'),os=[];for(var oi=0;oi<ol.length;oi++){if(vis(ol[oi]))os.push(ol[oi]);}"
+    + "if(os.length){if(!reported){reported=true;var nm=[];for(var ni=0;ni<os.length;ni++)nm.push(norm(os[ni].textContent));try{console.log('WMOPT|n='+os.length+'|names='+nm.join('\u00bb'))}catch(_){}}"
+    + "var ki=K-1;if(ki<0)ki=0;if(ki>=os.length)ki=os.length-1;"
+    + "if(!done['__opt__']){done['__opt__']=1;try{console.log('WMOPT|click|k='+K+'|name='+norm(os[ki].textContent))}catch(_){}fire(os[ki]);}return;}"
+    + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];if(done[st])continue;var el=null;'
+    + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
+    + 'if(el){done[st]=1;fire(el);return;}}}catch(_){}};'
+    + 'var n=0,iv=setInterval(function(){n++;tick();if(n>75)clearInterval(iv);},650);'
+    + "if(document.readyState!=='loading')tick();else document.addEventListener('DOMContentLoaded',tick);"
+    + '}catch(_){}})();';
 }
 
 // Pump do ABYS (15/09/2026), roda SÓ no frame abysscdn.com (mesmo document-start dos cliques): lê as
@@ -197,9 +224,10 @@ export async function startResolver(o: { url: string; referer?: string; provider
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
   await Resolver.start({
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
-    injectScript: abys ? buildInjectScript(CLICK_STEPS_ABYS, buildAbyssScript(sid)) : buildInjectScript(),
+    injectScript: abys ? buildInjectScript(CLICK_STEPS_ABYS, buildAbyssScript(sid)) : buildOptionCycleScript(),
     injectScriptAlt: abys ? buildInjectScript(CLICK_STEPS_BYSE) : '',
     abyssSid: sid, fallbackMs: abys ? ABYS_FALLBACK_MS : 0,
+    optMs: RESOLVER_OPT_MS,
     budgetMs: o.budgetMs ?? budgetFor(o.providerId ?? ''),
   });
 }
