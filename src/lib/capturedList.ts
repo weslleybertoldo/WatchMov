@@ -25,6 +25,7 @@ export function mergeCaptured(prev: SniffResult[], r: SniffResult): SniffResult[
     mime: r.mime || cur.mime,
     referer: r.referer || cur.referer,
     provider: r.provider || cur.provider,
+    option: r.option || cur.option,
     headers: r.headers || cur.headers,
     quality: r.quality || cur.quality,
     synthetic: r.synthetic || cur.synthetic,

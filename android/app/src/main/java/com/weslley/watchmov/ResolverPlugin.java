@@ -77,6 +77,7 @@ public class ResolverPlugin extends Plugin {
     private String[] optNames = new String[0];
     private long optMs = 30000;
     private Runnable optTimer;
+    private int optTries = 0;
     private final StringBuilder abysLog = new StringBuilder();
 
     @Override
@@ -96,6 +97,7 @@ public class ResolverPlugin extends Plugin {
         final String sid = call.getString("abyssSid", "");
         final int fallbackMs = call.getInt("fallbackMs", 0);
         final int optMsArg = call.getInt("optMs", 30000);
+        final int startOptArg = call.getInt("startOpt", 1);
         final List<String> hosts = new ArrayList<>();
         try {
             JSArray a = call.getArray("hopHosts");
@@ -109,7 +111,7 @@ public class ResolverPlugin extends Plugin {
                 final int mySession = ++session;
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
-                this.referer = referer; optMs = optMsArg; optK = 1; optN = 0; optReports = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0);
+                this.referer = referer; optMs = optMsArg; optK = Math.max(1, startOptArg); optN = 0; optReports = 0; optTries = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0); StreamSnifferPlugin.currentOption = "";
                 if (abyssSid != null && !abyssSid.isEmpty()) { optN = 2; optNames = new String[]{ "ABYS", "Byse" }; }
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
@@ -221,6 +223,27 @@ public class ResolverPlugin extends Plugin {
     public void stop(final PluginCall call) {
         final boolean keep = Boolean.TRUE.equals(call.getBoolean("keep", false));
         ui.post(() -> { if (keep && engine) pauseInternal(); else stopInternal(); call.resolve(); });
+    }
+
+    // v4.61: escolha manual de opcao (tap na lista da tela "Procurando") — reinjeta/recarrega naquele k.
+    @PluginMethod
+    public void pickOption(final PluginCall call) {
+        final int k = call.getInt("k", 1);
+        ui.post(() -> {
+            if (web == null || optN <= 0) { call.resolve(); return; }
+            optK = Math.max(1, Math.min(k, optN));
+            optTries = 0;
+            emitOption();
+            try {
+                if (injectHandler != null) injectHandler.remove();
+                injectHandler = WebViewCompat.addDocumentStartJavaScript(web, substK(injectScript, optK), java.util.Collections.singleton("*"));
+            } catch (Throwable ignored) {}
+            Map<String, String> h = new HashMap<>();
+            if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
+            try { web.stopLoading(); web.loadUrl(startUrl, h); } catch (Throwable ignored) {}
+            if (optTimer != null) { ui.removeCallbacks(optTimer); ui.postDelayed(optTimer, optMs); }
+            call.resolve();
+        });
     }
 
     // stop(keep): o vídeo já está no ExoPlayer via /abyss/ — para relógio, cliques e fallback, mas MANTÉM
@@ -397,8 +420,9 @@ public class ResolverPlugin extends Plugin {
         if (mySession != session || web == null || abyssReady || engine) return;
         String cur = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
         reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur);
-        if (optK < optN) {
-            optK++;
+        optTries++;
+        if (optTries < optN) {
+            optK = (optK % optN) + 1;
             emitOption();
             try {
                 if (injectHandler != null) injectHandler.remove();
@@ -423,8 +447,12 @@ public class ResolverPlugin extends Plugin {
         d.put("type", "option");
         d.put("k", optK);
         d.put("n", optN);
-        d.put("name", (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "");
+        String curNm = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
+        d.put("name", curNm);
+        JSArray nmArr = new JSArray(); if (optNames != null) for (String s : optNames) nmArr.put(s);
+        d.put("names", nmArr);
         d.put("url", currentUrl);
+        StreamSnifferPlugin.currentOption = curNm;
         notifyListeners("resolverEvent", d);
     }
 
@@ -436,6 +464,7 @@ public class ResolverPlugin extends Plugin {
 
     private void stopInternal() {
         session++;
+        StreamSnifferPlugin.currentOption = "";
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
         if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
         engine = false; abyssReady = false; abyssExtended = false; injectHandler = null;

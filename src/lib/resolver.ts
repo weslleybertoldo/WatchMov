@@ -9,10 +9,11 @@ import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor
 // quem abre o reprodutor é o auto-abrir do VideoPlayer. Aqui: wrapper do plugin, receita de
 // cliques, toggle (padrão ligado) e pausa por fonte (3 timeouts seguidos na MESMA versão → 2 h).
 
-export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option'; url: string; hops?: number; k?: number; n?: number; name?: string }
+export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option'; url: string; hops?: number; k?: number; n?: number; name?: string; names?: string[] }
 interface ResolverPlugin {
-  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; fallbackMs?: number; optMs?: number; budgetMs: number }): Promise<void>;
+  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; fallbackMs?: number; optMs?: number; startOpt?: number; budgetMs: number }): Promise<void>;
   stop(o?: { keep?: boolean }): Promise<void>;
+  pickOption(o: { k: number }): Promise<void>;
   addListener(event: 'resolverEvent', cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle>;
 }
 const Resolver = registerPlugin<ResolverPlugin>('Resolver');
@@ -235,7 +236,7 @@ export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; ar
 }
 
 // ── plugin ─────────────────────────────────────────────────────────────────────
-export async function startResolver(o: { url: string; referer?: string; providerId?: string; budgetMs?: number }): Promise<void> {
+export async function startResolver(o: { url: string; referer?: string; providerId?: string; startOpt?: number; budgetMs?: number }): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   const abys = o.providerId === ABYS_PROVIDER;
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
@@ -245,6 +246,7 @@ export async function startResolver(o: { url: string; referer?: string; provider
     injectScriptAlt: abys ? buildInjectScript(CLICK_STEPS_BYSE) : '',
     abyssSid: sid, fallbackMs: abys ? ABYS_FALLBACK_MS : 0,
     optMs: RESOLVER_OPT_MS,
+    startOpt: o.startOpt ?? 1,
     budgetMs: o.budgetMs ?? budgetFor(o.providerId ?? ''),
   });
 }
@@ -256,4 +258,9 @@ export function stopResolver(keep = false): void {
 export function onResolverEvent(cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle> | null {
   if (!Capacitor.isNativePlatform()) return null;
   return Resolver.addListener('resolverEvent', cb);
+}
+// v4.61: força uma opção (tap na lista da tela "Procurando") — o nativo reinjeta/recarrega naquele k.
+export function pickResolverOption(k: number): void {
+  if (!Capacitor.isNativePlatform()) return;
+  Resolver.pickOption({ k }).catch(() => {});
 }

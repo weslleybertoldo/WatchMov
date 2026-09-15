@@ -7,7 +7,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
-import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
+import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -95,7 +95,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // vídeo…". O link que o WebView oculto captura chega pelo mesmo streamFound e o auto-abrir
   // (efeito C) abre o reprodutor. Ver src/lib/resolver.ts e ResolverPlugin.java.
   const [resolving, setResolving] = useState(false);
-  const [optProgress, setOptProgress] = useState<{ k: number; n: number; name: string } | null>(null);
+  const [optProgress, setOptProgress] = useState<{ k: number; n: number; name: string; names: string[] } | null>(null);
+  const lastOptRef = useRef<{ k: number; name: string } | null>(null);   // v4.61: opcao vencedora (persiste por titulo)
   const resolvingRef = useRef(false);
   useEffect(() => { resolvingRef.current = resolving; });
   const resolveTriedRef = useRef<string | null>(null);   // embedUrl em que já tentou (1×/fonte por abertura)
@@ -178,6 +179,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     return pickDefaultServer(available, loadFavoriteServer()) ?? 'embedplayapi';
   });
   const provider = available.find(p => p.id === providerId) || available[0];
+  const optKey = `watchmov_opt_${tmdbId ?? imdbId}_${type}_${providerId}`;
   // O provedor é escolha do JS — o registro global (playbackLog) não tem como saber.
   // Zera ao fechar pra não carimbar erro de episódio BAIXADO com a fonte antiga.
   useEffect(() => { setLogProvider(open ? (providerId ?? null) : null); }, [open, providerId]);
@@ -273,7 +275,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       // Carimba o PROVEDOR ativo na captura (o link nasceu do iframe deste provedor):
       // é o que a tag do picker mostra (SuperFlix/EmbedPlay), mais confiável que
       // adivinhar pelo host (que rotaciona).
-      const r = { ...rr, provider: rr.provider || providerId };
+      const r = { ...rr, provider: rr.provider || providerId, option: rr.option };
       // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar, SEM perder
       // headers/quality (os headers levam o UA real do WebView pro replay do proxy; 14/09/2026).
       // + COMPLETO sintetizado (par vídeo/áudio do mesmo player, ver capturedList.ts): entra
@@ -391,7 +393,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
     setResolving(true); setOptProgress(null);
-    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId }).catch(() => setResolving(false));
+    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, startOpt: (() => { try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; } })() }).catch(() => setResolving(false));
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
@@ -409,7 +411,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     let handle: PluginListenerHandle | null = null;
     let alive = true;
     onResolverEvent((e: ResolverEvent) => {
-      if (e.type === 'option') setOptProgress({ k: e.k ?? 0, n: e.n ?? 0, name: e.name ?? '' });
+      if (e.type === 'option') { setOptProgress({ k: e.k ?? 0, n: e.n ?? 0, name: e.name ?? '', names: e.names ?? [] }); if (e.k) lastOptRef.current = { k: e.k, name: e.name ?? '' }; }
       else if (e.type === 'timeout') {
         setOptProgress(null);
         if (resolvingRef.current && !ownStreamRef.current) {
@@ -431,6 +433,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!ownStream || !resolvingRef.current) return;
     setResolving(false); stopResolver(!!ownStream.ephemeral); noteResolverResult(providerId, true);
+    try { const wk = lastOptRef.current?.k; if (wk && wk > 0) localStorage.setItem(optKey, String(wk)); } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownStream]);
 
@@ -758,6 +761,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             {optProgress && optProgress.n > 0 && (
               <p className="text-white/70 text-xs">Opção {optProgress.k}/{optProgress.n}{optProgress.name ? ` · ${optProgress.name}` : ''}</p>
             )}
+            {optProgress && optProgress.names && optProgress.names.length > 0 && (
+              <div className="flex flex-wrap gap-2 justify-center max-w-xs">
+                {optProgress.names.map((nm, i) => (
+                  <Button key={i} size="sm" variant={optProgress.k === i + 1 ? 'default' : 'outline'} className="h-7 px-2 text-xs"
+                    onClick={() => { pickResolverOption(i + 1); try { localStorage.setItem(optKey, String(i + 1)); } catch { /* ignore */ } }}>
+                    {nm || `Opção ${i + 1}`}
+                  </Button>
+                ))}
+              </div>
+            )}
             <p className="text-white/50 text-xs">Abre sozinho no reprodutor quando achar. Se demorar, você pode abrir o servidor.</p>
             <div className="flex flex-wrap gap-2 justify-center">
               {/* Escolheu o SERVIDOR → desarma o auto-abrir (regra dele: "não é pra ficar me jogando"). */}
@@ -893,6 +906,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                                   {providerTag(s.provider)!.label}
                                 </span>
                               )}
+                              {s.option && <span className="text-[10px] ml-1 text-muted-foreground">· {s.option}</span>}
                               {(s.quality || qualityFromUrl(s.url)) && <span className="text-[10px] text-primary ml-1">{s.quality || qualityFromUrl(s.url)}</span>}
                             </p>
                             <p className="text-[11px] text-muted-foreground truncate">{s.synthetic ? 'vídeo + áudio do mesmo servidor, montados pelo app' : s.ephemeral ? 'direto do player da fonte (só com o app aberto; sem download)' : s.url}</p>
