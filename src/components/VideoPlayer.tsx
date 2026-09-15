@@ -765,6 +765,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
             </div>
           </div>
+        ) : resolverPaused === 'unavailable' ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
+            <p className="text-white">Não identificou vídeo, troque de fonte</p>
+            <p className="text-white/50 text-xs">Tente outra fonte. Se preferir, abra o servidor desta fonte.</p>
+            <div className="flex flex-wrap gap-2 justify-center">
+              <Button size="sm" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
+              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => { autoArmedRef.current = false; setResolverPaused(null); }}>Abrir servidor</Button>
+            </div>
+          </div>
         ) : (
           <iframe
             key={src}
@@ -781,7 +790,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       {/* Resolvedor NÃO rodou (pausa da fonte / "Servidor" neste título / desligado / não achou) → diz
           por quê e deixa tentar (15/09/2026). Sumia calado e parecia "desativado". Fica logo abaixo da
           barra do topo (top-14) pra não cobrir o título nem os botões. */}
-      {!nativeOwn && !preferIframe && !resolving && !!src && !!resolverPaused && isNative() && (
+      {!nativeOwn && !preferIframe && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && isNative() && (
         <div className="absolute left-1/2 -translate-x-1/2 top-14 z-30 flex items-center gap-2 rounded-full bg-card/95 border border-border px-3 py-1.5 shadow-lg text-xs animate-fade-in" data-resolver-paused={resolverPaused}>
           <span className="text-muted-foreground">
             {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
