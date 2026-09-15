@@ -7,6 +7,7 @@ import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
+import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, noteResolverResult, RESOLVER_BUDGET_MS } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -89,6 +90,15 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const autoArmedRef = useRef(false);
   const autoFiredRef = useRef<string | null>(null);        // embedUrl em que já disparou
   const freshKeysRef = useRef<Set<string>>(new Set());     // chaves capturadas ao vivo agora
+  // Resolvedor OCULTO (pedido dele 14/09/2026: "quando clicar em assistir abra direto no
+  // reprodutor"): enquanto resolve, o iframe do servidor NÃO monta — no lugar, "Procurando o
+  // vídeo…". O link que o WebView oculto captura chega pelo mesmo streamFound e o auto-abrir
+  // (efeito C) abre o reprodutor. Ver src/lib/resolver.ts e ResolverPlugin.java.
+  const [resolving, setResolving] = useState(false);
+  const resolvingRef = useRef(false);
+  useEffect(() => { resolvingRef.current = resolving; });
+  const resolveTriedRef = useRef<string | null>(null);   // embedUrl em que já tentou (1×/fonte por abertura)
+  const cacheOpenRef = useRef(false);                     // abriu direto do cache (efeito A) → não resolve
   // Espelho do stream atual: o listener de progresso precisa do valor NA HORA do
   // evento (a closure do state fica velha) pra descartar o progresso do ep anterior.
   const ownStreamRef = useRef<SniffResult | null>(null);
@@ -191,7 +201,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!open) return;
     setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
-    freshKeysRef.current = new Set(); autoFiredRef.current = null;
+    freshKeysRef.current = new Set(); autoFiredRef.current = null; resolveTriedRef.current = null; cacheOpenRef.current = false;
     if (!isNative()) return;
     // Veio do "Próximo episódio": este ep começa do ZERO. Limpa a posição salva nos
     // DOIS stores (streamCache + SharedPreferences do player) — as versões antigas
@@ -212,6 +222,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       toPlay = entry.streams[0];        // veio do "Próximo" e o ep já tem link → reprodutor
     }
     if (toPlay) setOwnStream(toPlay);
+    cacheOpenRef.current = !!toPlay;   // abriu direto do cache → o resolvedor não roda
     pendingNextInPlayer = false;
     // Player aberto esperando o próximo ep e este NÃO tem link capturado: avisa o
     // nativo na hora (sem url) pra ele cair no fluxo antigo em vez de esperar o
@@ -348,6 +359,34 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     chooseStream(pick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, embedUrl, ownStream, preferIframe, capturedList]);
+
+  // (R) Resolvedor oculto (14/09/2026): ao abrir no servidor SEM link do cache, 1× por fonte,
+  // só se armado (mesma regra do auto-abrir), ligado na aba Servidores e sem cooldown da fonte
+  // (2 timeouts seguidos → 24 h). Achou → o efeito (C) abre o reprodutor e o efeito seguinte
+  // desliga o resolvedor; não achou em RESOLVER_BUDGET_MS → servidor como sempre (o auto-abrir
+  // continua armado: timeout não é escolha dele).
+  useEffect(() => {
+    const canRun = open && isNative() && !!embedUrl && !ownStream && !preferIframe
+      && autoArmedRef.current && !cacheOpenRef.current && resolverEnabled()
+      && resolveTriedRef.current !== embedUrl && !resolverOnCooldown(providerId);
+    if (!canRun) { if (resolvingRef.current && !ownStream) setResolving(false); return; }
+    resolveTriedRef.current = embedUrl!;
+    setResolving(true);
+    startResolver({ url: embedUrl!, referer: window.location.origin + '/' }).catch(() => setResolving(false));
+    const t = window.setTimeout(() => {
+      if (!resolvingRef.current) return;
+      setResolving(false); stopResolver(); noteResolverResult(providerId, false);
+    }, RESOLVER_BUDGET_MS + 500);
+    return () => { window.clearTimeout(t); stopResolver(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, embedUrl, ownStream, preferIframe]);
+
+  // Reprodutor abriu (auto-abrir ou escolha dele) enquanto resolvia → sucesso da fonte.
+  useEffect(() => {
+    if (!ownStream || !resolvingRef.current) return;
+    setResolving(false); stopResolver(); noteResolverResult(providerId, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownStream]);
 
   // Abre o ExoPlayer nativo pro stream escolhido (uma vez; [Continuar] reabre).
   useEffect(() => {
@@ -662,6 +701,17 @@ export default function VideoPlayer(props: VideoPlayerProps) {
           </div>
         ) : !src ? (
           <div className="w-full h-full flex items-center justify-center text-white/70 text-sm">Sem fonte disponível para este título.</div>
+        ) : resolving ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
+            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            <p className="text-white">Procurando o vídeo em {provider?.name ?? 'servidor'}…</p>
+            <p className="text-white/50 text-xs">Abre sozinho no reprodutor quando achar. Se demorar, você pode abrir o servidor.</p>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {/* Escolheu o SERVIDOR → desarma o auto-abrir (regra dele: "não é pra ficar me jogando"). */}
+              <Button size="sm" variant="outline" onClick={() => { autoArmedRef.current = false; setResolving(false); stopResolver(); }}>Abrir servidor</Button>
+              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
+            </div>
+          </div>
         ) : (
           <iframe
             key={src}
@@ -676,7 +726,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       </div>
 
       {/* Banner: vídeo(s) capturado(s) em background enquanto assiste no servidor. */}
-      {!nativeOwn && !preferIframe && capturedList.length > 0 && (
+      {!nativeOwn && !preferIframe && !resolving && capturedList.length > 0 && (
         <div className="absolute left-1/2 -translate-x-1/2 bottom-6 z-30 w-[92%] max-w-md bg-card border border-primary/40 rounded-xl shadow-2xl p-3 flex items-center gap-3 animate-fade-in">
           <Sparkles className="w-5 h-5 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
