@@ -129,6 +129,9 @@ public class StreamSnifferPlugin extends Plugin {
     // Requests que NÃO vale a pena probar (recursos óbvios não-vídeo).
     private static boolean skipProbe(String url) {
         String p = noQuery(url.toLowerCase());
+        // v4.60: segmento/init de fMP4/HLS nunca é o link tocável sozinho (o master .m3u8/.mpd já os busca).
+        // Antes o probe capturava o init.mp4 do WatchPlay (hclod.qzz.io) e o ExoPlayer dava ERROR_CODE_PARSING_CONTAINER_MALFORMED.
+        if (p.contains("seg-") || p.contains("/seg") || p.contains("init-") || p.contains("/init.") || p.contains("chunk") || p.endsWith(".m4s")) return true;
         return p.endsWith(".js") || p.endsWith(".css") || p.endsWith(".png") || p.endsWith(".jpg")
             || p.endsWith(".jpeg") || p.endsWith(".gif") || p.endsWith(".webp") || p.endsWith(".svg")
             || p.endsWith(".ico") || p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf")
