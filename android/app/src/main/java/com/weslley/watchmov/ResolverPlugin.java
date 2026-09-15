@@ -53,6 +53,7 @@ public class ResolverPlugin extends Plugin {
     private int hops = 0;
     private int reports = 0;
     private int navReports = 0;                             // RESOLVER_NAV_BLOCKED: no máx. 3 (não come o teto do TIMEOUT)
+    private int clicks = 0;
     private int session = 0;                                // invalida callbacks de um start() antigo
     private Runnable deadline;
     private final Runnable ticker = new Runnable() { @Override public void run() { tick(); } };
@@ -74,7 +75,7 @@ public class ResolverPlugin extends Plugin {
             try {
                 stopInternal();
                 final int mySession = ++session;
-                hopped.clear(); hops = 0; reports = 0; hopHosts = hosts; clickScript = script; currentUrl = url;
+                hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; currentUrl = url;
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
@@ -128,9 +129,11 @@ public class ResolverPlugin extends Plugin {
                 ui.postDelayed(ticker, 1500);
                 deadline = () -> {
                     if (mySession != session) return;
-                    report("RESOLVER_TIMEOUT", "hops=" + hops + " url=" + currentUrl);
-                    emit("timeout", currentUrl);
-                    stopInternal();
+                    snapshotThen(mySession, snap -> {
+                        report("RESOLVER_TIMEOUT", "hops=" + hops + " clicks=" + clicks + " " + snap + " url=" + currentUrl);
+                        emit("timeout", currentUrl);
+                        stopInternal();
+                    });
                 };
                 ui.postDelayed(deadline, budgetMs);
                 call.resolve();
@@ -158,13 +161,15 @@ public class ResolverPlugin extends Plugin {
             if (!isHopHost(host) || !hopped.add(host)) return;
             final String target = req.getUrl().toString();
             final String from = currentUrl;
+            final String hdrRef = hdr != null ? hdr.get("Referer") : null;
+            final String ref = (hdrRef != null && !hdrRef.isEmpty()) ? hdrRef : from;   // Referer real do iframe (página-mãe)
             hops++;
             ui.post(() -> {
                 if (mySession != session || web == null) return;
                 Map<String, String> h = new HashMap<>();
-                h.put("Referer", from);
+                h.put("Referer", ref);
                 currentUrl = target;
-                report("RESOLVER_HOP", target);
+                report("RESOLVER_HOP", target + " ref=" + hostOf(ref));
                 emit("hop", target);
                 web.loadUrl(target, h);
             });
@@ -187,6 +192,25 @@ public class ResolverPlugin extends Plugin {
         return false;
     }
 
+    // Diagnóstico de campo no timeout: o que o frame principal do oculto tinha (vídeos, readyState,
+    // iframes e título) — sem aparelho aqui é o único jeito de ver até onde a página chegou.
+    private static final String SNAP_JS = "(function(){try{var v=document.querySelectorAll('video');var s='v='+v.length;"
+        + "if(v[0])s+='/rs'+v[0].readyState+(v[0].paused?'p':'P');var f=[];document.querySelectorAll('iframe').forEach(function(i){try{f.push(new URL(i.src,location.href).host)}catch(e){}});"
+        + "s+=' if='+f.slice(0,4).join(',');s+=' t='+(document.title||'').slice(0,30);return s}catch(e){return 'snap-err'}})()";
+
+    private void snapshotThen(final int mySession, final java.util.function.Consumer<String> cb) {
+        final WebView w = web;
+        if (w == null || mySession != session) { cb.accept(""); return; }
+        final boolean[] done = { false };
+        try {
+            w.evaluateJavascript(SNAP_JS, r -> {
+                if (done[0]) return; done[0] = true;
+                cb.accept(r == null ? "" : r.replace("\"", ""));
+            });
+        } catch (Throwable t) { if (!done[0]) { done[0] = true; cb.accept(""); } return; }
+        ui.postDelayed(() -> { if (!done[0]) { done[0] = true; cb.accept("snap-timeout"); } }, 1000);
+    }
+
     private void tick() {
         if (web == null) return;
         runClicks();
@@ -198,6 +222,7 @@ public class ResolverPlugin extends Plugin {
         try {
             web.evaluateJavascript(clickScript, r -> {
                 if (r == null || "null".equals(r) || r.contains("none")) return;
+                clicks++;
                 report("RESOLVER_CLICK", r + " @ " + currentUrl);
                 emit("click", r);
             });
