@@ -413,7 +413,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       else if (e.type === 'timeout') {
         setOptProgress(null);
         if (resolvingRef.current && !ownStreamRef.current) {
-          setResolving(false); stopResolver(); noteResolverResult(providerId, false); setResolverPaused('tried');
+          setResolving(false); stopResolver(); noteResolverResult(providerId, false); setResolverPaused('unavailable');
         }
       }
     })?.then(h => { if (alive) handle = h; else h.remove(); });
@@ -787,12 +787,17 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
               : resolverPaused === 'server-mode' ? 'Abrir sozinho desligado neste título'
               : resolverPaused === 'off' ? 'Resolvedor desligado (Painel → Servidores)'
+              : resolverPaused === 'unavailable' ? 'Não está disponível nesta fonte. Troque de fonte.'
               : 'Não achou o vídeo sozinho'}
           </span>
           {resolverPaused !== 'off' && (
+            resolverPaused === 'unavailable' ? (
+              <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
+            ) : (
             <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={retryResolver}>
               {resolverPaused === 'server-mode' ? 'Ligar' : resolverPaused === 'tried' ? 'Tentar de novo' : 'Tentar agora'}
             </Button>
+            )
           )}
         </div>
       )}

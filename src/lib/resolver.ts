@@ -126,6 +126,23 @@ return fetch(BASE+'abyss/ready?sid='+SID+'&list='+encodeURIComponent(JSON.string
 }catch(e){try{console.log('WMABYS err '+e)}catch(_){}}})();`;
 }
 
+// v4.58: leitor do Blogger/YouTube — captura o link direto (itag 18) da CONFIG do player,
+// sem depender do vídeo "tocar" no WebView oculto. Roda em todo frame (guardado por __wmBlog);
+// só acha algo em frames blogger.com/youtube. Loga WMBLOG|url=… → o ResolverPlugin entrega ao app.
+export function buildBloggerScript(): string {
+  return '(function(){try{if(window.__wmBlog)return;window.__wmBlog=1;'
+    + "var log=function(m){try{console.log('WMBLOG|'+m)}catch(_){}};var done=false;"
+    + 'var pick=function(){if(done)return;try{var url=null;'
+    + 'var vc=window.VIDEO_CONFIG;'
+    + 'if(vc&&vc.streams&&vc.streams.length){var best=vc.streams[0];for(var i=0;i<vc.streams.length;i++){if(vc.streams[i].format_id==18)best=vc.streams[i];}url=best&&best.play_url;}'
+    + 'if(!url){var pr=window.ytInitialPlayerResponse;var f=pr&&pr.streamingData&&pr.streamingData.formats;if(f&&f.length){for(var j=0;j<f.length;j++){if(f[j].url&&(f[j].itag==18||!url))url=f[j].url;}}}'
+    + "if(!url){var v=document.querySelector('video');var sc=v&&(v.currentSrc||v.src);if(sc&&sc.indexOf('googlevideo')>=0)url=sc;}"
+    + "if(url&&url.indexOf('http')===0){done=true;log('url='+url);}"
+    + '}catch(_){}};'
+    + 'var n=0,iv=setInterval(function(){n++;pick();if(done||n>60)clearInterval(iv);},700);pick();'
+    + '}catch(_){}})();';
+}
+
 export function isHopHost(host: string | null | undefined, hops: string[] = HOP_HOSTS): boolean {
   const h = (host || '').toLowerCase();
   return !!h && hops.some(x => h === x || h.endsWith('.' + x));
@@ -207,7 +224,7 @@ export function clearResolverCooldown(providerId: string): void {
 
 // Por que o resolvedor NÃO vai rodar nesta abertura — pra mostrar na tela e gravar na aba Bugs.
 // Antes ele calava e o servidor abria como se o recurso não existisse.
-export type ResolverSkip = 'off' | 'cache' | 'server-mode' | 'cooldown' | 'tried' | null;
+export type ResolverSkip = 'off' | 'cache' | 'server-mode' | 'cooldown' | 'tried' | 'unavailable' | null;
 export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; armed: boolean; cooldown: boolean; tried: boolean }): ResolverSkip {
   if (!o.enabled) return 'off';
   if (o.cacheOpen) return 'cache';
@@ -224,7 +241,7 @@ export async function startResolver(o: { url: string; referer?: string; provider
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
   await Resolver.start({
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
-    injectScript: abys ? buildInjectScript(CLICK_STEPS_ABYS, buildAbyssScript(sid)) : buildOptionCycleScript(),
+    injectScript: abys ? buildInjectScript(CLICK_STEPS_ABYS, buildAbyssScript(sid)) : buildOptionCycleScript() + buildBloggerScript(),
     injectScriptAlt: abys ? buildInjectScript(CLICK_STEPS_BYSE) : '',
     abyssSid: sid, fallbackMs: abys ? ABYS_FALLBACK_MS : 0,
     optMs: RESOLVER_OPT_MS,

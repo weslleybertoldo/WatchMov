@@ -110,6 +110,7 @@ public class ResolverPlugin extends Plugin {
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
                 this.referer = referer; optMs = optMsArg; optK = 1; optN = 0; optReports = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0);
+                if (abyssSid != null && !abyssSid.isEmpty()) { optN = 2; optNames = new String[]{ "ABYS", "Byse" }; }
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
@@ -185,6 +186,7 @@ public class ResolverPlugin extends Plugin {
                     });
                 };
                 ui.postDelayed(deadline, budgetMs);
+                if (optN > 0) emitOption();
                 // Fonte 1: o script principal clica "Opção 1" (ABYS). Sem `ready` do proxy em fallbackMs →
                 // troca o script injetado pelo alternativo ("Opção 2"/Byse, caminho da v4.54) e recarrega.
                 if (fallbackMs > 0 && injected && !injectAlt.isEmpty()) {
@@ -199,6 +201,7 @@ public class ResolverPlugin extends Plugin {
                             ui.postDelayed(abyssFallback, fallbackMs);
                             return;
                         }
+                        optK = 2; emitOption(); reportOption("RESOLVER_OPTION_FAIL", "k=1/" + optN + " name=" + (optNames != null && optNames.length > 0 ? optNames[0] : "ABYS"));
                         report("RESOLVER_ABYS_FALLBACK", "sem ready em " + (abyssExtended ? 2 * fallbackMs : fallbackMs) + " ms → Opção 2 (Byse) frame=" + ProxyServer.abyssHasProgress(abyssSid) + " log=" + tailLog());
                         try {
                             if (injectHandler != null) injectHandler.remove();
@@ -355,6 +358,15 @@ public class ResolverPlugin extends Plugin {
     private void handleConsole(int mySession, String msg) {
         if (mySession != session || msg == null) return;
         if (msg.startsWith("WMABYS")) { if (abysLog.length() < 4000) abysLog.append(msg).append(" | "); return; }
+        if (msg.startsWith("WMBLOG|url=")) {
+            final String u = msg.substring(11);
+            if (u.startsWith("http")) ui.post(() -> {
+                if (mySession != session) return;
+                report("RESOLVER_BLOGGER", "url capturada");
+                StreamSnifferPlugin.emitDirect(u, "video/mp4", "360p", currentUrl, true);
+            });
+            return;
+        }
         if (!msg.startsWith("WMOPT|")) return;
         final String body = msg.substring(6);
         if (!body.startsWith("n=")) return;
