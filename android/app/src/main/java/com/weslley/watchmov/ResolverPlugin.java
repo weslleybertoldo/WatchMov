@@ -381,17 +381,36 @@ public class ResolverPlugin extends Plugin {
     private void handleConsole(int mySession, String msg) {
         if (mySession != session || msg == null) return;
         if (msg.startsWith("WMABYS")) { if (abysLog.length() < 4000) abysLog.append(msg).append(" | "); return; }
-        if (msg.startsWith("WMBLOG|url=")) {
-            final String u = msg.substring(11);
+        if (msg.startsWith("WMBLOG|")) {
+            // v4.62: `WMBLOG|q=<qualidade>|url=<u>` (hook do batchexecute do Blogger: itag 18/22) ou o
+            // formato antigo `WMBLOG|url=<u>` (leitor de config no frame do YouTube) = 360p.
+            String body = msg.substring(7);
+            String q = "360p";
+            if (body.startsWith("q=")) {
+                int bar = body.indexOf('|');
+                if (bar < 0) return;
+                q = body.substring(2, bar);
+                body = body.substring(bar + 1);
+            }
+            if (!body.startsWith("url=")) return;
+            final String u = body.substring(4);
+            final String quality = q;
             if (u.startsWith("http")) ui.post(() -> {
                 if (mySession != session) return;
-                report("RESOLVER_BLOGGER", "url capturada");
-                StreamSnifferPlugin.emitDirect(u, "video/mp4", "360p", currentUrl, true);
+                report("RESOLVER_BLOGGER", "url capturada " + quality);
+                StreamSnifferPlugin.emitDirect(u, "video/mp4", quality, currentUrl, true);
             });
             return;
         }
         if (!msg.startsWith("WMOPT|")) return;
         final String body = msg.substring(6);
+        // v4.62: opção que o JS já sabe que não dá (Premium = superflixapi atrás do Turnstile,
+        // server-only) → avança na hora em vez de queimar os 30 s do cronômetro nela.
+        if (body.startsWith("skip|")) {
+            final String note = body.substring(5);
+            ui.post(() -> { if (mySession == session) skipOption(mySession, note); });
+            return;
+        }
         if (!body.startsWith("n=")) return;
         int n; String[] names;
         try {
@@ -415,11 +434,21 @@ public class ResolverPlugin extends Plugin {
         }
     }
 
+    // v4.62: opção descartada pelo JS (Turnstile) — mesma mecânica do advance, com registro próprio.
+    private void skipOption(int mySession, String note) {
+        if (mySession != session || web == null || optTimer == null) return;
+        reportOption("RESOLVER_OPTION_SKIP", note);
+        advanceOption(mySession, true);
+    }
+
     // Opcao k nao achou video em optMs -> registra e tenta a proxima; todas falharam -> timeout (picker manual).
-    private void advanceOption(int mySession) {
+    private void advanceOption(int mySession) { advanceOption(mySession, false); }
+
+    private void advanceOption(int mySession, boolean skipped) {
         if (mySession != session || web == null || abyssReady || engine) return;
+        if (optTimer != null) ui.removeCallbacks(optTimer);   // chamada fora do cronômetro não pode deixar 2 timers
         String cur = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
-        reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur);
+        if (!skipped) reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur);
         optTries++;
         if (optTries < optN) {
             optK = (optK % optN) + 1;

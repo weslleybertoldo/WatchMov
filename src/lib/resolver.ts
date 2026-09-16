@@ -62,10 +62,16 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 }
 
 // v4.57: injeção com CICLO de opções pro playerflix (Fonte 6). Em todo frame: se houver
-// `#optionList .option` (a lista Blogger / VIP Player / …), reporta os nomes por console
+// `#optionList .option` (a lista Blogger / VIP Player / Premium / …), reporta os nomes por console
 // (`WMOPT|n=…|names=a»b`) e clica a K-ésima opção (K = __OPT_K__, o nativo troca a cada tentativa).
 // Sem lista de opções, cai no clicador genérico (gate/play). O ResolverPlugin lê o console,
 // cronometra cada opção e recarrega com o próximo K se falhar; só cai no picker manual quando TODAS falham.
+// v4.62 (provado por CDP no emulador 15/09): o playerflix ESCONDE (`display:none`) as opções de outros
+// idiomas — filtrar por visibilidade fazia o ciclo enxergar 1 de 3 opções (Black Torch: só "Blogger pt-br",
+// nunca chegava no "Blogger en-us" nem no "Premium"). Agora enumera TODAS as `.option` (o `onclick=player(this)`
+// funciona mesmo escondida) e desempata nomes repetidos com o `data-audio`. Opção cujo `data-embed` é
+// `superflixapi.` = Cloudflare Turnstile (server-only, não extraível no WebView oculto) → avisa
+// `WMOPT|skip` e o nativo pula na hora em vez de queimar 30 s nela.
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
@@ -73,12 +79,17 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('\u00bb').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
     + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
+    + "var names=function(os){var nm=[];for(var i=0;i<os.length;i++)nm.push(norm(os[i].textContent));"
+    + "for(var i=0;i<os.length;i++){var c=0;for(var j=0;j<nm.length;j++){if(nm[j]===nm[i])c++;}"
+    + "if(c>1){var a=os[i].getAttribute('data-audio');if(a)nm[i]=(nm[i]+' '+a).slice(0,40);}}return nm;};"
     + 'var tick=function(){try{'
     + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
-    + "var ol=document.querySelectorAll('#optionList .option'),os=[];for(var oi=0;oi<ol.length;oi++){if(vis(ol[oi]))os.push(ol[oi]);}"
-    + "if(os.length){if(!reported){reported=true;var nm=[];for(var ni=0;ni<os.length;ni++)nm.push(norm(os[ni].textContent));try{console.log('WMOPT|n='+os.length+'|names='+nm.join('\u00bb'))}catch(_){}}"
+    + "var ol=document.querySelectorAll('#optionList .option'),os=[];for(var oi=0;oi<ol.length;oi++){os.push(ol[oi]);}"
+    + "if(os.length){var nm=names(os);if(!reported){reported=true;try{console.log('WMOPT|n='+os.length+'|names='+nm.join('\u00bb'))}catch(_){}}"
     + "var ki=K-1;if(ki<0)ki=0;if(ki>=os.length)ki=os.length-1;"
-    + "if(!done['__opt__']){done['__opt__']=1;try{console.log('WMOPT|click|k='+K+'|name='+norm(os[ki].textContent))}catch(_){}fire(os[ki]);}return;}"
+    + "if(!done['__opt__']){done['__opt__']=1;var emb=os[ki].getAttribute('data-embed')||'';"
+    + "if(emb.indexOf('superflixapi.')>=0){try{console.log('WMOPT|skip|k='+K+'|name='+nm[ki]+'|reason=turnstile')}catch(_){}return;}"
+    + "try{console.log('WMOPT|click|k='+K+'|name='+nm[ki])}catch(_){}fire(os[ki]);}return;}"
     + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];if(done[st])continue;var el=null;'
     + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
     + 'if(el){done[st]=1;fire(el);return;}}}catch(_){}};'
@@ -127,20 +138,54 @@ return fetch(BASE+'abyss/ready?sid='+SID+'&list='+encodeURIComponent(JSON.string
 }catch(e){try{console.log('WMABYS err '+e)}catch(_){}}})();`;
 }
 
-// v4.58: leitor do Blogger/YouTube — captura o link direto (itag 18) da CONFIG do player,
-// sem depender do vídeo "tocar" no WebView oculto. Roda em todo frame (guardado por __wmBlog);
-// só acha algo em frames blogger.com/youtube. Loga WMBLOG|url=… → o ResolverPlugin entrega ao app.
+// v4.58: leitor do Blogger/YouTube — captura o link direto da CONFIG do player, sem depender do
+// vídeo "tocar" no WebView oculto. Roda em todo frame (guardado por __wmBlog).
+// v4.62 (causa raiz achada por CDP no emulador 15/09): no frame `blogger.com` NÃO existem
+// `VIDEO_CONFIG`/`ytInitialPlayerResponse` (a página nova, boq-blogger.BloggerVideoPlayerUi, é um
+// `c-wiz` que só mostra a thumbnail); quem tem as URLs é o **XHR `/_/BloggerVideoPlayerUi/data/batchexecute`**
+// (resposta com googlevideo itag 18 E 22) e o player do YouTube só é montado DEPOIS de um clique no
+// `<main jsaction="click:…">`. Por isso o resolvedor oculto dava `v=0` sem nenhum `WMBLOG`. Agora:
+//  1. hook em XHR/fetch → varre a resposta atrás de `googlevideo.com/videoplayback` (não espera tocar);
+//  2. clica o player do Blogger → o iframe do YouTube carrega e o leitor de config também funciona;
+//  3. mantém o leitor `VIDEO_CONFIG`/`ytInitialPlayerResponse`/`currentSrc` (frame do YouTube).
+// Emite `WMBLOG|q=<qualidade>|url=<u>` (maior qualidade primeiro); `WMBLOG|url=` continua aceito = 360p.
 export function buildBloggerScript(): string {
   return '(function(){try{if(window.__wmBlog)return;window.__wmBlog=1;'
-    + "var log=function(m){try{console.log('WMBLOG|'+m)}catch(_){}};var done=false;"
-    + 'var pick=function(){if(done)return;try{var url=null;'
+    + "var log=function(m){try{console.log('WMBLOG|'+m)}catch(_){}};var done=false;var sent={};"
+    + "var B=String.fromCharCode(92);var STOP=String.fromCharCode(34,92,32,44,93,125,10,13,9);"
+    + "var QMAP={18:'360p',22:'720p',37:'1080p',59:'480p',43:'360p'};"
+    + "var emit=function(u,q){if(!u||u.indexOf('http')!==0)return false;var k=u.slice(0,150);if(sent[k])return false;sent[k]=1;log('q='+(q||'360p')+'|url='+u);return true;};"
+    // lista {u,q} -> emite da MAIOR qualidade pra menor (o auto-abrir do app pega o 1o link)
+    + "var flush=function(list){if(!list.length)return false;list.sort(function(a,b){return parseInt(b.q,10)-parseInt(a.q,10)});var any=false;"
+    + "for(var i=0;i<list.length;i++){if(emit(list[i].u,list[i].q))any=true;}if(any)done=true;return any;};"
+    + "var unesc=function(t){return t.split(B+'u0026').join('&').split(B+'u003d').join('=').split(B+'/').join('/');};"
+    + "var itagOf=function(u){var i=u.indexOf('itag=');if(i<0)return 0;var n=parseInt(u.slice(i+5),10);return isNaN(n)?0:n;};"
+    // (1) hook de XHR/fetch: a pagina nova do Blogger busca as URLs num POST /BloggerVideoPlayerUi/data/batchexecute
+    + "var scan=function(txt){try{if(!txt||typeof txt!=='string'||txt.indexOf('googlevideo')<0)return;var t=unesc(txt);var list=[],i=0;"
+    + "while((i=t.indexOf('https://',i))>=0){var j=i;while(j<t.length&&STOP.indexOf(t.charAt(j))<0)j++;var u=t.slice(i,j);i=j+1;"
+    + "if(u.indexOf('googlevideo.com/videoplayback')<0)continue;if(u.indexOf('source=youtube')>=0)continue;var it=itagOf(u);if(!QMAP[it])continue;"
+    + "list.push({u:u,q:QMAP[it]});}flush(list);}catch(_){}};"
+    + "var body=function(x){var t=null;try{t=x.responseText}catch(_){}if(!t){try{var r=x.response;if(typeof r==='string')t=r;}catch(_){}}return t;};"
+    + "try{var XO=XMLHttpRequest.prototype.open,XS=XMLHttpRequest.prototype.send;"
+    + "XMLHttpRequest.prototype.open=function(){try{this.__wmU=arguments[1]}catch(_){}return XO.apply(this,arguments)};"
+    + "XMLHttpRequest.prototype.send=function(){var x=this;try{var grab=function(){try{if(x.readyState===4)scan(body(x))}catch(_){}};"
+    + "x.addEventListener('load',grab);x.addEventListener('readystatechange',grab);}catch(_){}return XS.apply(this,arguments)};}catch(_){}"
+    + "try{var OF=window.fetch;if(OF)window.fetch=function(){var r=OF.apply(this,arguments);try{r.then(function(res){try{res.clone().text().then(scan).catch(function(){})}catch(_){}}).catch(function(){})}catch(_){}return r};}catch(_){}"
+    // (2) o player do Blogger so monta o iframe do YouTube DEPOIS de um clique no <main jsaction=...>
+    + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
+    + "var clicks=0;var wake=function(){try{if(location.hostname.indexOf('blogger.com')<0)return;"
+    + "if(document.querySelector('iframe[src*=\"youtube\"]'))return;if(clicks>=6)return;clicks++;"
+    + "var m=document.querySelector('main[jsaction],[jsname=kpuEBe],.iLXc1d')||document.body;if(m)fire(m);}catch(_){}};"
+    // (3) leitor da config do player (frame do YouTube / Blogger antigo): TODAS as qualidades com URL direta
+    + 'var pick=function(){if(done)return;try{var list=[];'
     + 'var vc=window.VIDEO_CONFIG;'
-    + 'if(vc&&vc.streams&&vc.streams.length){var best=vc.streams[0];for(var i=0;i<vc.streams.length;i++){if(vc.streams[i].format_id==18)best=vc.streams[i];}url=best&&best.play_url;}'
-    + 'if(!url){var pr=window.ytInitialPlayerResponse;var f=pr&&pr.streamingData&&pr.streamingData.formats;if(f&&f.length){for(var j=0;j<f.length;j++){if(f[j].url&&(f[j].itag==18||!url))url=f[j].url;}}}'
-    + "if(!url){var v=document.querySelector('video');var sc=v&&(v.currentSrc||v.src);if(sc&&sc.indexOf('googlevideo')>=0)url=sc;}"
-    + "if(url&&url.indexOf('http')===0){done=true;log('url='+url);}"
+    + "if(vc&&vc.streams){for(var i=0;i<vc.streams.length;i++){var st=vc.streams[i];if(st&&st.play_url)list.push({u:st.play_url,q:QMAP[st.format_id]||'360p'});}}"
+    + 'var pr=window.ytInitialPlayerResponse;var f=pr&&pr.streamingData&&pr.streamingData.formats;'
+    + "if(f){for(var j=0;j<f.length;j++){if(f[j]&&f[j].url)list.push({u:f[j].url,q:QMAP[f[j].itag]||(f[j].qualityLabel||'360p')});}}"
+    + "if(!list.length){var v=document.querySelector('video');var sc=v&&(v.currentSrc||v.src);if(sc&&sc.indexOf('googlevideo')>=0)list.push({u:sc,q:QMAP[itagOf(sc)]||'360p'});}"
+    + 'flush(list);'
     + '}catch(_){}};'
-    + 'var n=0,iv=setInterval(function(){n++;pick();if(done||n>60)clearInterval(iv);},700);pick();'
+    + 'var n=0,iv=setInterval(function(){n++;wake();pick();if(n>60)clearInterval(iv);},700);wake();pick();'
     + '}catch(_){}})();';
 }
 
