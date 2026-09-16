@@ -124,4 +124,76 @@ describe('resolver oculto (regras puras)', () => {
     expect(s).toContain('__wmBlog');
     expect(s).toContain('googlevideo');
   });
+
+  // ── v4.62 (Fonte 6: Blogger e Premium precisam entregar o link sozinhos) ──────────────
+  it('v4.62: o ciclo enumera TODAS as opcoes (o playerflix esconde as de outro idioma) e pula superflixapi/Turnstile', () => {
+    const s = buildOptionCycleScript();
+    expect(() => new Function(s.replace(/__OPT_K__/g, '1'))).not.toThrow();
+    expect(s).toContain('WMOPT|skip');
+    expect(s).toContain('superflixapi.');
+    expect(s).toContain('data-embed');
+    expect(s).toContain('data-audio');
+    // nao ha mais filtro de visibilidade na lista de opcoes (era ele que escondia 2 das 3)
+    expect(s).toContain('os.push(ol[oi])');
+    expect(s).not.toContain('if(vis(ol[oi]))');
+  });
+
+  it('v4.62: buildBloggerScript faz hook de XHR/fetch e clica o player do Blogger', () => {
+    const s = buildBloggerScript();
+    expect(() => new Function(s)).not.toThrow();
+    expect(s).toContain('XMLHttpRequest.prototype.send');
+    expect(s).toContain('window.fetch=');
+    expect(s).toContain('jsname=kpuEBe');
+    expect(s).toContain('WMBLOG|');
+  });
+
+  it('v4.62: rodando o script, a resposta do batchexecute vira WMBLOG com itag 22 (720p) antes do 18 (360p)', () => {
+    // Amostra REAL capturada por CDP no emulador (15/09/2026, Black Torch T1E1 pelo Blogger),
+    // com os escapes & / = exatamente como chegam no responseText.
+    const gv = (itag: string) =>
+      'https://rr1---sn-oxunxg8pjvn-hj1z.googlevideo.com/videoplayback?expire\\u003d1789551462\\u0026ei\\u003dABC' +
+      '\\u0026ip\\u003d187.65.18.77\\u0026id\\u003de57ac346a517d399\\u0026itag\\u003d' + itag +
+      '\\u0026source\\u003dblogger\\u0026requiressl\\u003dyes\\u0026mime\\u003dvideo/mp4\\u0026sig\\u003dAE0s2JY';
+    const body = ')]}\'\n\n10151\n[["wrb.fr","WcwnYd","[1,null,[[\\"' + gv('18') + '\\",[18]],[\\"' + gv('22') + '\\",[22]]]]"]]';
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    type FakeXhr = { addEventListener: (e: string, cb: () => void) => void; responseText: string; readyState: number };
+    const listeners: Array<() => void> = [];
+    const fake = function (this: FakeXhr) { /* ctor */ } as unknown as { prototype: Record<string, unknown> };
+    fake.prototype = {
+      open() { /* noop */ },
+      send() { /* noop */ },
+      addEventListener(_e: string, cb: () => void) { listeners.push(cb); },
+      responseText: body,
+      readyState: 4,
+    };
+    const w = window as unknown as Record<string, unknown>;
+    const prevXhr = w.XMLHttpRequest;
+    const prevBlog = w.__wmBlog;
+    w.XMLHttpRequest = fake;
+    w.__wmBlog = undefined;
+    try {
+      new Function(buildBloggerScript())();
+      const xhr = new (w.XMLHttpRequest as new () => FakeXhr)();
+      xhr.open('POST', 'https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute?rpcids=WcwnYd');
+      xhr.send();
+      listeners.forEach(cb => cb());
+    } finally {
+      console.log = origLog;
+      w.XMLHttpRequest = prevXhr;
+      w.__wmBlog = prevBlog;
+    }
+    const blog = logs.filter(l => l.startsWith('WMBLOG|'));
+    expect(blog.length).toBe(2);   // load + readystatechange disparam o mesmo leitor; o script deduplica por URL
+    // maior qualidade primeiro: o auto-abrir do app pega o 1o link emitido
+    expect(blog[0]).toContain('WMBLOG|q=720p|url=https://rr1---sn-oxunxg8pjvn-hj1z.googlevideo.com/videoplayback?');
+    expect(blog[0]).toContain('itag=22');
+    expect(blog[1]).toContain('WMBLOG|q=360p|url=');
+    expect(blog[1]).toContain('itag=18');
+    // os escapes do JSON tem de sumir (senao a URL nao toca)
+    expect(blog[0]).not.toContain('\\u0026');
+    expect(blog[0]).toContain('&source=blogger');
+  });
 });
