@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -202,6 +202,74 @@ describe('resolver oculto (regras puras)', () => {
     expect(logs).toContain('WMOPT|filtered|nao-dublado=1|restou=0');
     expect(logs.some(l => l.startsWith('WMOPT|n='))).toBe(false);
     expect(clicked).toEqual([]);
+  });
+
+  it('v4.64: Fonte 1 — le a lista REAL da embedplay.one (grupo Dublado), nomes curtos ABYS»BYSE»UPNS, legendado fora, clique no item K', () => {
+    // DOM real da embedplay.one capturado por CDP no WebView (16/09/2026, Black Torch T1E1)
+    document.body.innerHTML = `<div class="player_screen">
+      <div class="select_language active" data-target="1">Dublado</div><div class="select_language" data-target="2">Legendado</div>
+      <div class="players_select">
+        <div class="players_select_items visible" data-target="1">
+          <div class="player_select_item" data-id="274867"><div class="player_select_name">Opção 1 (ABYS)</div></div>
+          <div class="player_select_item" data-id="274868"><div class="player_select_name">Opção 2 (BYSE)</div></div>
+          <div class="player_select_item" data-id="274869"><div class="player_select_name">Opção 3 (UPNS)</div></div>
+        </div>
+        <div class="players_select_items" data-target="2">
+          <div class="player_select_item" data-vidsrc="1" data-url="https://vidsrcme.su/embed/tv?tmdb=285993"><div class="player_select_name">Legendado (EUA)</div></div>
+        </div>
+      </div>
+      <div class="changeOptions hidden">Mostrar Opções</div>
+    </div>`;
+    const clicked: string[] = [];
+    document.querySelectorAll('.player_select_item').forEach(o => o.addEventListener('click', () => clicked.push(o.getAttribute('data-id') || o.getAttribute('data-url') || '')));
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '2'))();
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(logs).toContain('WMOPT|n=3|names=ABYS»BYSE»UPNS');
+    expect(logs).toContain('WMOPT|filtered|nao-dublado=1|restou=3');
+    expect(logs).toContain('WMOPT|click|k=2|name=BYSE');
+    expect(clicked).toEqual(['274868']);   // K=2 = BYSE; o vidsrc legendado nunca e clicado
+  });
+
+  it('v4.64: Fonte 1 com UMA opcao dublada (Dois Homens e Meio T3E20) mostra n=1 — nao inventa Byse', () => {
+    document.body.innerHTML = `<div class="select_language active" data-target="1">Dublado</div><div class="select_language" data-target="2">Legendado</div>
+      <div class="players_select_items visible" data-target="1"><div class="player_select_item" data-id="145658"><div class="player_select_name">Opção 1 (ABYS)</div></div></div>
+      <div class="players_select_items" data-target="2"><div class="player_select_item" data-vidsrc="1" data-url="https://vidsrcme.su/x"><div class="player_select_name">Legendado (EUA)</div></div></div>`;
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '1'))();
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(logs).toContain('WMOPT|n=1|names=ABYS');
+    expect(logs).toContain('WMOPT|click|k=1|name=ABYS');
+  });
+
+  it('v4.64: CLICK_STEPS_F1 revela a lista mas NAO tem "text:Opção N" (a opcao vem da lista real)', () => {
+    expect(CLICK_STEPS_F1[0]).toBe('text:Mostrar Opções');
+    expect(CLICK_STEPS_F1.some(s => /Opção \d/.test(s))).toBe(false);
+    expect(CLICK_STEPS_F1).toContain('.captcha-gate__play');   // Byse (f7hyg4q.org) continua pelo clicador generico
   });
 
   it('v4.62: buildBloggerScript faz hook de XHR/fetch e clica o player do Blogger', () => {

@@ -40,6 +40,8 @@ const STEPS_TAIL = [
 export const CLICK_STEPS_ABYS = ['text:Mostrar Opções', 'text:Opção 1', ...STEPS_TAIL];   // embedplay.one → ABYS (3 qualidades)
 export const CLICK_STEPS_BYSE = ['text:Mostrar Opções', 'text:Opção 2', ...STEPS_TAIL];   // embedplay.one → Byse (caminho da v4.54)
 export const CLICK_STEPS = CLICK_STEPS_BYSE;   // padrão das demais fontes/fallback (compatível com os testes antigos)
+// v4.64: Fonte 1 no ciclo de opções — só revela a lista ('Mostrar Opções'); a opção K vem da lista REAL (.player_select_item)
+export const CLICK_STEPS_F1 = ['text:Mostrar Opções', ...STEPS_TAIL];
 
 // Script injetado no document-start em TODOS os frames (androidx.webkit, origins '*'): cada frame
 // roda seu próprio loop clicando opção/gate/play e dando play mudo nos vídeos. Resolve o gate da
@@ -76,21 +78,37 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 // LEGENDADA (`data-audio="en-us"`) e passou a abrir primeiro. Só entram no ciclo as opções DUBLADAS
 // (`data-audio` começando com `pt`) ou sem `data-audio`; as demais são contadas em `WMOPT|filtered`
 // (→ `RESOLVER_OPTION_FILTER` na aba Bugs). Título só legendado = sem opção = cai em "troque de fonte".
+// v4.64 (pedido dele 16/09 00:0x, "por que apareceram 2 opções se só tinha 1"): a Fonte 1 (embedplay.one) entra no MESMO
+// ciclo — a lista vem dos `.player_select_item` do grupo do áudio "Dublado" (`.players_select_items[data-target]`),
+// nome curto = o que está entre parênteses ("Opção 1 (ABYS)" → ABYS). Acaba a lista fixa ABYS/Byse do nativo:
+// título com só "Opção 1 (ABYS)" mostra 1 opção; UPNS/BYSE só aparecem quando existem. O pump do ABYS continua
+// concatenado (roda só no frame abysscdn) e o Byse continua pelo clicador genérico (`.captcha-gate__play`).
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
-    + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('\u00bb').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
+    + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
     + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
     + "var names=function(os){var nm=[];for(var i=0;i<os.length;i++)nm.push(norm(os[i].textContent));"
     + "for(var i=0;i<os.length;i++){var c=0;for(var j=0;j<nm.length;j++){if(nm[j]===nm[i])c++;}"
     + "if(c>1){var a=os[i].getAttribute('data-audio');if(a)nm[i]=(nm[i]+' '+a).slice(0,40);}}return nm;};"
+    // (A) playerflix (Fonte 6): #optionList .option, so as DUBLADAS (data-audio pt) — v4.63
+    + "var findPF=function(){var ol=document.querySelectorAll('#optionList .option');if(!ol.length)return null;var os=[],out=0;for(var oi=0;oi<ol.length;oi++){var au=(ol[oi].getAttribute('data-audio')||'').toLowerCase();if(!au||au.indexOf('pt')===0)os.push(ol[oi]);else out++;}return {os:os,out:out,kind:'pf'};};"
+    // (B) embedplay.one (Fonte 1, v4.64): grupo .players_select_items[data-target] do audio "Dublado" (.select_language); itens .player_select_item
+    + "var findEP=function(){var langs=document.querySelectorAll('.select_language'),all=document.querySelectorAll('.player_select_item');if(!langs.length&&!all.length)return null;"
+    + "var dub=null;for(var li=0;li<langs.length;li++){if((langs[li].textContent||'').toLowerCase().indexOf('dublado')>=0)dub=langs[li];}var tg=dub?dub.getAttribute('data-target'):null;"
+    + "var os=[],out=0;for(var ai=0;ai<all.length;ai++){var g=all[ai].closest?all[ai].closest('.players_select_items'):null;var gt=g?g.getAttribute('data-target'):null;if(tg===null||gt===null||gt===tg)os.push(all[ai]);else out++;}"
+    + "if(dub&&String(dub.className).indexOf('active')<0&&!done['__dub__']){done['__dub__']=1;fire(dub);}return {os:os,out:out,kind:'ep'};};"
+    // nome curto da opcao da embedplay.one: "Opção 1 (ABYS)" → "ABYS"
+    + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
     + 'var tick=function(){try{'
     + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
-    + "var ol=document.querySelectorAll('#optionList .option'),os=[],out=0;for(var oi=0;oi<ol.length;oi++){var au=(ol[oi].getAttribute('data-audio')||'').toLowerCase();if(!au||au.indexOf('pt')===0)os.push(ol[oi]);else out++;}"
-    + "if(!os.length&&out&&!reported){reported=true;try{console.log('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"
-    + "if(os.length){var nm=names(os);if(!reported){reported=true;try{console.log('WMOPT|n='+os.length+'|names='+nm.join('\u00bb'));if(out)console.log('WMOPT|filtered|nao-dublado='+out+'|restou='+os.length)}catch(_){}}"
+    + "var f=findPF()||findEP();var os=f?f.os:[],out=f?f.out:0;"
+    // embedplay.one esconde a lista atras de "Mostrar Opções" (.changeOptions) — revela uma vez
+    + "if(f&&f.kind==='ep'){var co=document.querySelector('.changeOptions');if(co&&!done['__show__']&&vis(co)&&String(co.className).indexOf('hidden')<0){done['__show__']=1;fire(co);}}"
+    + "if(f&&!os.length&&out&&!reported){reported=true;try{console.log('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"
+    + "if(os.length){var nm=f.kind==='ep'?os.map(epName):names(os);if(!reported){reported=true;try{console.log('WMOPT|n='+os.length+'|names='+nm.join('»'));if(out)console.log('WMOPT|filtered|nao-dublado='+out+'|restou='+os.length)}catch(_){}}"
     + "var ki=K-1;if(ki<0)ki=0;if(ki>=os.length)ki=os.length-1;"
     + "if(!done['__opt__']){done['__opt__']=1;var emb=os[ki].getAttribute('data-embed')||'';"
     + "if(emb.indexOf('superflixapi.')>=0){try{console.log('WMOPT|skip|k='+K+'|name='+nm[ki]+'|reason=turnstile')}catch(_){}return;}"
@@ -98,7 +116,7 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];if(done[st])continue;var el=null;'
     + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
     + 'if(el){done[st]=1;fire(el);return;}}}catch(_){}};'
-    + 'var n=0,iv=setInterval(function(){n++;tick();if(n>75)clearInterval(iv);},650);'
+    + 'var n=0,iv=setInterval(function(){n++;tick();if(n>140)clearInterval(iv);},650);'
     + "if(document.readyState!=='loading')tick();else document.addEventListener('DOMContentLoaded',tick);"
     + '}catch(_){}})();';
 }
@@ -292,9 +310,11 @@ export async function startResolver(o: { url: string; referer?: string; provider
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
   await Resolver.start({
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
-    injectScript: abys ? buildInjectScript(CLICK_STEPS_ABYS, buildAbyssScript(sid)) : buildOptionCycleScript() + buildBloggerScript(),
-    injectScriptAlt: abys ? buildInjectScript(CLICK_STEPS_BYSE) : '',
-    abyssSid: sid, fallbackMs: abys ? ABYS_FALLBACK_MS : 0,
+    // v4.64: Fonte 1 também roda o ciclo de opções (lista REAL da embedplay.one) + o pump do ABYS; o antigo par
+    // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
+    injectScript: abys ? buildOptionCycleScript(CLICK_STEPS_F1) + buildAbyssScript(sid) : buildOptionCycleScript() + buildBloggerScript(),
+    injectScriptAlt: '',
+    abyssSid: sid, fallbackMs: 0,
     optMs: RESOLVER_OPT_MS,
     startOpt: o.startOpt ?? 1,
     budgetMs: o.budgetMs ?? budgetFor(o.providerId ?? ''),
