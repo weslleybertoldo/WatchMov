@@ -406,6 +406,13 @@ public class ResolverPlugin extends Plugin {
         final String body = msg.substring(6);
         // v4.62: opção que o JS já sabe que não dá (Premium = superflixapi atrás do Turnstile,
         // server-only) → avança na hora em vez de queimar os 30 s do cronômetro nela.
+        // v4.63: opções NÃO dubladas ficam fora do ciclo (só pt-br) — registra quantas, pra ele ver na aba Bugs
+        // por que um título só legendado caiu em "troque de fonte".
+        if (body.startsWith("filtered|")) {
+            final String note = body.substring(9);
+            ui.post(() -> { if (mySession == session) report("RESOLVER_OPTION_FILTER", note); });
+            return;
+        }
         if (body.startsWith("skip|")) {
             final String note = body.substring(5);
             ui.post(() -> { if (mySession == session) skipOption(mySession, note); });

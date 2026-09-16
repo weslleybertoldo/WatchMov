@@ -72,6 +72,10 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 // funciona mesmo escondida) e desempata nomes repetidos com o `data-audio`. Opção cujo `data-embed` é
 // `superflixapi.` = Cloudflare Turnstile (server-only, não extraível no WebView oculto) → avisa
 // `WMOPT|skip` e o nativo pula na hora em vez de queimar 30 s nela.
+// v4.63 (pedido dele 15/09 23:40, "não é pra extrair a legendada, só a dublada"): a 1ª opção do DOM é a
+// LEGENDADA (`data-audio="en-us"`) e passou a abrir primeiro. Só entram no ciclo as opções DUBLADAS
+// (`data-audio` começando com `pt`) ou sem `data-audio`; as demais são contadas em `WMOPT|filtered`
+// (→ `RESOLVER_OPTION_FILTER` na aba Bugs). Título só legendado = sem opção = cai em "troque de fonte".
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
@@ -84,8 +88,9 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "if(c>1){var a=os[i].getAttribute('data-audio');if(a)nm[i]=(nm[i]+' '+a).slice(0,40);}}return nm;};"
     + 'var tick=function(){try{'
     + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
-    + "var ol=document.querySelectorAll('#optionList .option'),os=[];for(var oi=0;oi<ol.length;oi++){os.push(ol[oi]);}"
-    + "if(os.length){var nm=names(os);if(!reported){reported=true;try{console.log('WMOPT|n='+os.length+'|names='+nm.join('\u00bb'))}catch(_){}}"
+    + "var ol=document.querySelectorAll('#optionList .option'),os=[],out=0;for(var oi=0;oi<ol.length;oi++){var au=(ol[oi].getAttribute('data-audio')||'').toLowerCase();if(!au||au.indexOf('pt')===0)os.push(ol[oi]);else out++;}"
+    + "if(!os.length&&out&&!reported){reported=true;try{console.log('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"
+    + "if(os.length){var nm=names(os);if(!reported){reported=true;try{console.log('WMOPT|n='+os.length+'|names='+nm.join('\u00bb'));if(out)console.log('WMOPT|filtered|nao-dublado='+out+'|restou='+os.length)}catch(_){}}"
     + "var ki=K-1;if(ki<0)ki=0;if(ki>=os.length)ki=os.length-1;"
     + "if(!done['__opt__']){done['__opt__']=1;var emb=os[ki].getAttribute('data-embed')||'';"
     + "if(emb.indexOf('superflixapi.')>=0){try{console.log('WMOPT|skip|k='+K+'|name='+nm[ki]+'|reason=turnstile')}catch(_){}return;}"

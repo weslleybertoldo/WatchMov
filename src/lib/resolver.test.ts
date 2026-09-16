@@ -1,5 +1,5 @@
 // src/lib/resolver.test.ts
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
@@ -136,6 +136,72 @@ describe('resolver oculto (regras puras)', () => {
     // nao ha mais filtro de visibilidade na lista de opcoes (era ele que escondia 2 das 3)
     expect(s).toContain('os.push(ol[oi])');
     expect(s).not.toContain('if(vis(ol[oi]))');
+  });
+
+  it('v4.63: o ciclo ignora as opcoes NAO dubladas (data-audio en-us): so a dublada entra na lista e recebe o clique', () => {
+    document.body.innerHTML = `<div id="optionList">
+      <div class="option" data-audio="en-us" data-embed="https://www.blogger.com/video.g?token=EN" onclick="">
+        <div>Blogger</div>
+        <div><span>Sem anúncios</span></div>
+      </div>
+      <div class="option" data-audio="pt-br" data-embed="https://www.blogger.com/video.g?token=PT" style="display: none;">
+        <div>Blogger</div>
+        <div><span>Sem anúncios</span></div>
+      </div>
+      <div class="option" data-audio="en-us" data-embed="https://superflixapi.baby/serie/1/1/1">
+        <div>Premium</div>
+        <div><span>Com anúncios</span></div>
+      </div>
+    </div>`;
+    const clicked: string[] = [];
+    document.querySelectorAll('#optionList .option').forEach(o => o.addEventListener('click', () => clicked.push(o.getAttribute('data-audio') || '')));
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    // a lista reportada (e mostrada na tela) tem SO a dublada; as 2 en-us viram RESOLVER_OPTION_FILTER
+    expect(logs).toContain('WMOPT|n=1|names=Blogger');
+    expect(logs).toContain('WMOPT|filtered|nao-dublado=2|restou=1');
+    expect(logs).toContain('WMOPT|click|k=1|name=Blogger');
+    // o clique foi na opcao pt-br (mesmo escondida), nunca na legendada
+    expect(clicked).toEqual(['pt-br']);
+  });
+
+  it('v4.63: titulo SO legendado = nenhuma opcao no ciclo (cai no clicador generico → "troque de fonte"), com o motivo logado', () => {
+    document.body.innerHTML = `<div id="optionList">
+      <div class="option" data-audio="en-us" data-embed="https://www.blogger.com/video.g?token=EN"><div>Blogger</div></div>
+    </div>`;
+    const clicked: string[] = [];
+    document.querySelectorAll('#optionList .option').forEach(o => o.addEventListener('click', () => clicked.push('x')));
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(logs).toContain('WMOPT|filtered|nao-dublado=1|restou=0');
+    expect(logs.some(l => l.startsWith('WMOPT|n='))).toBe(false);
+    expect(clicked).toEqual([]);
   });
 
   it('v4.62: buildBloggerScript faz hook de XHR/fetch e clica o player do Blogger', () => {
