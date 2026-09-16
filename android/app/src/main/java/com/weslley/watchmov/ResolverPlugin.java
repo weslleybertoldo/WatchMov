@@ -112,7 +112,7 @@ public class ResolverPlugin extends Plugin {
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
                 this.referer = referer; optMs = optMsArg; optK = Math.max(1, startOptArg); optN = 0; optReports = 0; optTries = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0); StreamSnifferPlugin.currentOption = "";
-                if (abyssSid != null && !abyssSid.isEmpty()) { optN = 2; optNames = new String[]{ "ABYS", "Byse" }; }
+                // v4.64: a lista de opções da Fonte 1 vem do console (WMOPT), como na Fonte 6 — não é mais fixa (ABYS/Byse).
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
@@ -455,7 +455,16 @@ public class ResolverPlugin extends Plugin {
         if (mySession != session || web == null || abyssReady || engine) return;
         if (optTimer != null) ui.removeCallbacks(optTimer);   // chamada fora do cronômetro não pode deixar 2 timers
         String cur = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
-        if (!skipped) reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur);
+        // v4.64: opção ABYS (Fonte 1) já leu as qualidades no frame abysscdn mas ainda não avisou `ready` → mais um
+        // ciclo de optMs, UMA vez (era o RESOLVER_ABYS_WAIT do antigo abyssFallback; no emulador o ready vem aos ~35 s).
+        if (!skipped && abyssSid != null && !abyssSid.isEmpty() && !abyssExtended && cur.toUpperCase().contains("ABYS") && ProxyServer.abyssHasProgress(abyssSid)) {
+            abyssExtended = true;
+            report("RESOLVER_ABYS_WAIT", "sources lidas; +" + optMs + " ms pro ready (k=" + optK + "/" + optN + ")");
+            ui.postDelayed(optTimer, optMs);
+            return;
+        }
+        if (!skipped) reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur + (abyssSid != null && !abyssSid.isEmpty() && cur.toUpperCase().contains("ABYS") ? " frame=" + ProxyServer.abyssHasProgress(abyssSid) + " log=" + tailLog() : ""));
+        abyssExtended = false;
         optTries++;
         if (optTries < optN) {
             optK = (optK % optN) + 1;
