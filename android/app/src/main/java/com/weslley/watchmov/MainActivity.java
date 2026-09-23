@@ -51,6 +51,8 @@ public class MainActivity extends BridgeActivity {
                 java.io.StringWriter sw = new java.io.StringWriter();
                 ex.printStackTrace(new java.io.PrintWriter(sw));
                 String txt = "thread=" + thread.getName() + "\n" + sw + "\n";
+                // Pilha pra linha APP_FECHOU da aba Bugs no próximo boot (ver AppExitLog).
+                AppExitLog.guardarPilha(this, txt);
                 android.content.ContentValues v = new android.content.ContentValues();
                 v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "watchmov-crash.txt");
                 v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain");

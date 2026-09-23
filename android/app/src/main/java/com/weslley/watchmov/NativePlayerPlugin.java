@@ -112,6 +112,20 @@ public class NativePlayerPlugin extends Plugin {
         call.resolve();
     }
 
+    // Fechamentos do app (erro, travamento, sistema) que ainda não foram pra aba Bugs.
+    // O JS grava e só depois confirma com ackExits — ver AppExitLog.
+    @PluginMethod
+    public void pendingExits(PluginCall call) {
+        call.resolve(new JSObject().put("exits", AppExitLog.pendentes(getContext())));
+    }
+
+    @PluginMethod
+    public void ackExits(PluginCall call) {
+        Long ts = call.getLong("ts");
+        if (ts != null) AppExitLog.confirmar(getContext(), ts);
+        call.resolve();
+    }
+
     // O que está espelhando AGORA (sobrevive ao fechar o player). O app mostra isso
     // no topo e usa a key (tmdbId:type:season:ep) pra reabrir o mesmo episódio.
     @PluginMethod

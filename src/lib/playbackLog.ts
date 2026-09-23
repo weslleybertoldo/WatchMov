@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { onPlayerError, type PlayerErrorEvent } from '@/lib/nativePlayer';
+import { onPlayerError, pendingAppExits, ackAppExits, type PlayerErrorEvent } from '@/lib/nativePlayer';
 
 // Registro dos erros/diagnósticos do player nativo na aba Bugs (wm_playback_errors).
 //
@@ -35,9 +35,40 @@ export function logPlaybackError(e: PlayerErrorEvent) {
   }).then(({ error }) => { if (error) console.warn('[bugs] log falhou', error.message); });
 }
 
+/** Fechamentos do app desde o último boot (erro, travamento, sistema — ver AppExitLog no
+ *  nativo) viram linhas APP_FECHOU com a hora REAL do fechamento, então cada uma cai na
+ *  reprodução em que aconteceu. Só confirma pro nativo o que gravou: sem sessão (a RLS
+ *  exige usuário) ou com erro no meio, o resto fica pro próximo boot. app_version vai
+ *  vazio porque o Android não diz qual versão estava rodando quando fechou. */
+export async function logAppExits(): Promise<number> {
+  const exits = await pendingAppExits();
+  if (!exits.length) return 0;
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return 0;
+  let ultimo = 0;
+  let gravados = 0;
+  for (const e of exits) {
+    const { error } = await supabase.from('wm_playback_errors').insert({
+      created_at: new Date(e.ts).toISOString(),
+      title: 'App fechou',
+      error_code: e.reason,
+      error_name: 'APP_FECHOU',
+      error_cause: e.cause,
+      app_version: null,
+      platform: 'android',
+    });
+    if (error) { console.warn('[bugs] log de fechamento falhou', error.message); break; }
+    ultimo = e.ts;
+    gravados++;
+  }
+  if (ultimo) ackAppExits(ultimo);
+  return gravados;
+}
+
 /** Liga o registro no boot — idempotente, igual ao startMp4Listener. */
 export function startPlaybackErrorLog() {
   if (ligado) return;
   ligado = true;
   onPlayerError?.(logPlaybackError)?.catch(() => { ligado = false; });
+  logAppExits().catch(() => {});
 }
