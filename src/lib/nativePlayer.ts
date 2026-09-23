@@ -11,6 +11,8 @@ interface NativePlayerPlugin {
   loadNext(opts: Partial<PlayOpts>): Promise<{ ok: boolean }>;
   clearResume(opts: { key: string }): Promise<void>;
   castStatus(): Promise<{ active: boolean; key?: string | null; title?: string | null }>;
+  pendingExits(): Promise<{ exits?: AppExit[] }>;
+  ackExits(opts: { ts: number }): Promise<void>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
@@ -23,7 +25,28 @@ export interface PlayerErrorEvent {
   mime?: string; referer?: string; title?: string;
 }
 
+// Um fechamento do app guardado pelo Android: `ts` = quando fechou, `reason` = código
+// do ApplicationExitInfo (4 erro, 6 travou, 3 falta de memória…), `cause` = texto pronto.
+export interface AppExit { ts: number; reason: number; cause: string }
+
 const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
+
+// Fechamentos do app (erro, travamento, sistema) que a aba Bugs ainda não recebeu: o
+// processo que morre não consegue gravar a própria linha. APK antigo → lista vazia.
+export async function pendingAppExits(): Promise<AppExit[]> {
+  if (!Capacitor.isNativePlatform()) return [];
+  try {
+    return (await NativePlayer.pendingExits()).exits ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Confirma até este fechamento — o nativo não manda de novo.
+export function ackAppExits(ts: number): void {
+  if (!Capacitor.isNativePlatform()) return;
+  NativePlayer.ackExits({ ts }).catch(() => {});
+}
 
 // Progresso periódico do player nativo (a cada ~5s) — salva a posição de forma
 // robusta (não depende de o ExoPlayer devolver o result ao fechar).
