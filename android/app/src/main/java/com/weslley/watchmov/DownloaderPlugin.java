@@ -121,6 +121,18 @@ public class DownloaderPlugin extends Plugin {
      *    a MESMA DownloadRequest continua de onde parou (o já baixado está no
      *    SimpleCache), não recomeça do zero.
      * Roda em thread: lê o índice em disco.
+     *
+     * ⚠️ TODAS as chamadas ao WatchDownloadService saem com foreground=false (aqui, no
+     * enqueue e no botão de baixar do player): elas só acontecem com o app ABERTO, onde o
+     * startService comum é permitido, e o próprio DownloadService passa pra primeiro
+     * plano quando um download começa. CAUSA RAIZ do "app fechou sozinho" (19/09 e
+     * 23/09/2026, ForegroundServiceDidNotStartInTimeException apontando pra cá): este
+     * método misturava sendResumeDownloads(true) com sendSetStopReason/sendAddDownload
+     * (false). O startService comum zera o fgRequired do serviço antes do startForeground
+     * e o fgWaiting fica preso; o próximo startForegroundService (app reaberto, aba
+     * Download) liga o fgRequired de novo e ninguém mais limpa — quando o download
+     * termina e o serviço para sozinho, o Android derruba o app ("Bringing down service
+     * while still waiting for start foreground").
      */
     private void resumePending() {
         new Thread(() -> {
@@ -141,7 +153,7 @@ public class DownloaderPlugin extends Plugin {
                 }
                 if (!pending) return;
                 ProxyServer.ensure();
-                DownloadService.sendResumeDownloads(getContext(), WatchDownloadService.class, true);
+                DownloadService.sendResumeDownloads(getContext(), WatchDownloadService.class, false);
                 for (String id : unstop) {
                     DownloadService.sendSetStopReason(getContext(), WatchDownloadService.class,
                         id, Download.STOP_REASON_NONE, false);
@@ -207,7 +219,8 @@ public class DownloaderPlugin extends Plugin {
         if (mime != null && mime.toLowerCase().contains("mpegurl")) b.setMimeType(MimeTypes.APPLICATION_M3U8);
         if (title != null) b.setData(title.getBytes());
         try {
-            DownloadService.sendAddDownload(getContext(), WatchDownloadService.class, b.build(), true);
+            // false: ver resumePending (primeiro plano aqui derrubava o app).
+            DownloadService.sendAddDownload(getContext(), WatchDownloadService.class, b.build(), false);
             call.resolve();
         } catch (Exception e) { call.reject("falha ao enfileirar: " + e); }
     }
