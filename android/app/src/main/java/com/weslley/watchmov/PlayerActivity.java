@@ -1067,8 +1067,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 new androidx.media3.exoplayer.offline.DownloadRequest.Builder(key, android.net.Uri.parse(proxied));
             if (mMime != null && mMime.toLowerCase().contains("mpegurl")) b.setMimeType(MimeTypes.APPLICATION_M3U8);
             if (mTitle != null) b.setData(mTitle.getBytes());
+            // false: ver DownloaderPlugin.resumePending (primeiro plano aqui derrubava o app).
             androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(
-                this, WatchDownloadService.class, b.build(), true);
+                this, WatchDownloadService.class, b.build(), false);
             castMsg("Baixando… acompanhe na aba Download", 4000);
         } catch (Exception e) { castMsg("Falha ao baixar: " + e, 6000); }
     }
