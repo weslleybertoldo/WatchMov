@@ -1,5 +1,7 @@
 package com.weslley.watchmov;
 
+import android.app.ActivityManager;
+import android.content.Context;
 import android.net.Uri;
 
 import androidx.media3.common.MimeTypes;
@@ -19,6 +21,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -40,6 +43,30 @@ public class DownloaderPlugin extends Plugin {
     // Último estado visto por download: o listener repete o mesmo estado várias vezes,
     // e a aba Bugs deve registrar falha/conclusão só na TRANSIÇÃO.
     private static final Map<String, Integer> lastState = new ConcurrentHashMap<>();
+    // Downloads com link morto em confirmação (2ª consulta agendada): resumePending não os
+    // retenta enquanto a resposta não vem.
+    private static final Set<String> probing = ConcurrentHashMap.newKeySet();
+    // Espera entre a falha do Media3 e a 2ª consulta ao link — um 4xx passageiro (CDN, limite) já passou.
+    static final long DEAD_LINK_PROBE_DELAY_MS = 60_000;
+    // Links mortos confirmados com o app em 2º plano: a remoção fica pra próxima retomada em 1º plano.
+    private static final String DEAD_PREFS = "wm_dead_links";
+    private static final String DEAD_KEY = "ids";
+
+    private static java.util.Set<String> deadLinks(Context app) {
+        return new java.util.HashSet<>(app.getSharedPreferences(DEAD_PREFS, Context.MODE_PRIVATE)
+            .getStringSet(DEAD_KEY, java.util.Collections.emptySet()));
+    }
+
+    private static void saveDeadLinks(Context app, java.util.Set<String> ids) {
+        app.getSharedPreferences(DEAD_PREFS, Context.MODE_PRIVATE).edit().putStringSet(DEAD_KEY, ids).apply();
+    }
+
+    /** Este processo tem tela visível ou serviço em 1º plano → pode mexer no WatchDownloadService. */
+    private static boolean emPrimeiroPlano() {
+        ActivityManager.RunningAppProcessInfo info = new ActivityManager.RunningAppProcessInfo();
+        ActivityManager.getMyMemoryState(info);
+        return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE;
+    }
 
     @Override
     public void load() {
@@ -54,7 +81,7 @@ public class DownloaderPlugin extends Plugin {
                 boolean transicao = antes == null || antes != d.state;
                 if (d.state == Download.STATE_FAILED) {
                     failReasons.put(id, DownloadFailure.describe(e, d.getPercentDownloaded()));
-                    if (transicao) reportFailure(d, e);
+                    if (transicao) { reportFailure(d, e); maybeConfirmDeadLink(d, e); }
                 } else if (d.state == Download.STATE_DOWNLOADING || d.state == Download.STATE_COMPLETED) {
                     failReasons.remove(id);
                     if (transicao && d.state == Download.STATE_COMPLETED) reportDone(d);
@@ -64,6 +91,11 @@ public class DownloaderPlugin extends Plugin {
             @Override public void onDownloadRemoved(DownloadManager m, Download d) {
                 failReasons.remove(d.request.id);
                 lastState.remove(d.request.id);
+                try {
+                    Context app = getContext().getApplicationContext();
+                    java.util.Set<String> mortos = deadLinks(app);
+                    if (mortos.remove(d.request.id)) saveDeadLinks(app, mortos);
+                } catch (Throwable ignored) { }
                 JSObject o = new JSObject();
                 o.put("key", d.request.id);
                 o.put("state", "removed");
@@ -140,6 +172,8 @@ public class DownloaderPlugin extends Plugin {
                 DownloadManager dm = DownloadUtil.getDownloadManager(getContext());
                 java.util.List<DownloadRequest> retry = new java.util.ArrayList<>();
                 java.util.List<String> unstop = new java.util.ArrayList<>();
+                java.util.List<String> remover = new java.util.ArrayList<>();
+                java.util.Set<String> mortos = deadLinks(getContext().getApplicationContext());
                 boolean pending = false;
                 try (DownloadCursor c = dm.getDownloadIndex().getDownloads(
                         Download.STATE_QUEUED, Download.STATE_DOWNLOADING,
@@ -147,8 +181,13 @@ public class DownloaderPlugin extends Plugin {
                     while (c.moveToNext()) {
                         Download d = c.getDownload();
                         pending = true;
-                        if (d.state == Download.STATE_FAILED) retry.add(d.request);
-                        else if (d.state == Download.STATE_STOPPED) unstop.add(d.request.id);
+                        if (d.state == Download.STATE_FAILED) {
+                            // Link morto confirmado 2x com o app em 2º plano: cancela agora (1º plano), em
+                            // vez de retentar. Em confirmação (2ª consulta pendente): não retenta enquanto
+                            // a resposta não vem — era esse retentar a cada abertura que travava.
+                            if (mortos.contains(d.request.id)) remover.add(d.request.id);
+                            else if (!probing.contains(d.request.id)) retry.add(d.request);
+                        } else if (d.state == Download.STATE_STOPPED) unstop.add(d.request.id);
                     }
                 }
                 if (!pending) return;
@@ -161,8 +200,119 @@ public class DownloaderPlugin extends Plugin {
                 for (DownloadRequest r : retry) {
                     DownloadService.sendAddDownload(getContext(), WatchDownloadService.class, r, false);
                 }
+                for (String id : remover) {
+                    DownloadService.sendRemoveDownload(getContext(), WatchDownloadService.class, id, false);
+                }
             } catch (Exception ignored) { }
         }).start();
+    }
+
+    /**
+     * Link morto (404/410 = expirou; 403/451 = a fonte bloqueou) → o download é CANCELADO, mas só com
+     * DUPLA confirmação (Weslley 23/09/2026: "precisa ter certeza que o link expirou, para não cancelar
+     * link ativo"): 1ª = a falha do Media3 (depois das DL_MIN_RETRY_COUNT tentativas) com status de link
+     * morto; 2ª = consulta direta ao link real, DEAD_LINK_PROBE_DELAY_MS depois, com o MESMO status.
+     * Antes, resumePending re-adicionava todo FAILED a cada abertura do app/aba Download e o link morto
+     * do Black Torch (HTTP 410, parado em 24%) gastava ~90 s de rede, cache e serviço em 1º plano TODA
+     * vez — o "eps travado no download" que ele viu junto do vídeo travando (23/09/2026). Resposta
+     * diferente na 2ª consulta (200/206, erro de rede, outro status) = falha temporária: nada muda.
+     */
+    private void maybeConfirmDeadLink(Download d, Exception e) {
+        final int http = DownloadFailure.httpStatusOf(e);
+        if (!DownloadFailure.isDeadLinkStatus(http)) return;
+        final String id = d.request.id;
+        if (!probing.add(id)) return;
+        String falhou = DownloadFailure.failedUrlOf(e);
+        final String proxied = falhou != null ? falhou : d.request.uri.toString();
+        final String real = DownloadUtil.cacheKey(proxied);
+        final String referer = refererOf(proxied);
+        final android.content.Context app = getContext().getApplicationContext();
+        new Thread(() -> {
+            try {
+                Thread.sleep(DEAD_LINK_PROBE_DELAY_MS);
+                Download atual = DownloadUtil.getDownloadManager(app).getDownloadIndex().getDownload(id);
+                if (atual == null || atual.state != Download.STATE_FAILED) return;   // removido/retomado no meio
+                int probe = ProxyServer.probeStatus(real, referer);
+                if (!DownloadFailure.confirmsDeadLink(http, probe)) {
+                    android.util.Log.i("WatchMov", "link morto NÃO confirmado (" + http + " → " + probe + "); fica pra retomar: " + id);
+                    return;
+                }
+                cancelDeadLink(app, atual, http, probe, real, referer);
+            } catch (Throwable t) {
+                android.util.Log.w("WatchMov", "confirmação de link morto falhou: " + t);
+            } finally {
+                probing.remove(id);
+            }
+        }, "wm-dead-link").start();
+    }
+
+    // Confirmado 2x: some da fila (e o pedaço baixado com ele), avisa a aba Download, a central e a
+    // notificação, e registra na aba Bugs como DOWNLOAD_CANCELADO (com os dois status).
+    private void cancelDeadLink(android.content.Context app, Download d, int http, int probe, String real, String referer) {
+        String id = d.request.id;
+        String reason = DownloadFailure.deadLinkReason(http);
+        failReasons.put(id, reason);
+        JSObject falha = toJson(d);
+        falha.put("reason", reason);
+        notifyListeners("downloadChanged", falha);
+        JSObject cancel = new JSObject();
+        cancel.put("key", id);
+        try { if (d.request.data != null && d.request.data.length > 0) cancel.put("title", new String(d.request.data)); } catch (Exception ignored) {}
+        cancel.put("reason", reason);
+        cancel.put("http", http);
+        notifyListeners("downloadCancelled", cancel);
+        try {
+            NativePlayerPlugin.reportError(DownloadUtil.cacheKey(d.request.uri.toString()), d.failureReason, http, "DOWNLOAD_CANCELADO",
+                "[download] link morto confirmado 2x: falha do Media3=" + http + ", consulta direta 1 min depois=" + probe
+                    + " | percent=" + Math.round(d.getPercentDownloaded()) + " bytes=" + d.getBytesDownloaded()
+                    + " | url=" + real,
+                d.request.mimeType, referer, DownloadUtil.bugsTitleOf(d));
+        } catch (Throwable ignored) { /* diagnóstico nunca impede o cancelamento */ }
+        DownloadUtil.notifyReady(app, DownloadUtil.labelOf(d), http == 403 || http == 451
+            ? "download cancelado: a fonte bloqueou. Troque a fonte e baixe de novo."
+            : "download cancelado: o link expirou. Abra o título de novo pra baixar.");
+        if (emPrimeiroPlano()) {
+            DownloadService.sendRemoveDownload(app, WatchDownloadService.class, id, false);
+        } else {
+            // App em 2º plano com o serviço parado: mandar o intent agora RELIGA o WatchDownloadService, que
+            // ao ver REMOVING chama startForeground — e o Android 12+ nega (ForegroundServiceStartNotAllowed-
+            // Exception, crash visto no emulador em 23/09/2026). A remoção fica pra próxima retomada em 1º
+            // plano (resumePending), que também deixa de retentar este id. O tile já mostra "cancelado".
+            java.util.Set<String> mortos = deadLinks(app);
+            mortos.add(id);
+            saveDeadLinks(app, mortos);
+            android.util.Log.i("WatchMov", "link morto confirmado em 2º plano; remoção adiada pra próxima abertura: " + id);
+        }
+    }
+
+    /**
+     * App voltou pra tela (processo já vivo, então o load()/resumePending não roda de novo): aplica só a
+     * remoção dos links mortos confirmados em 2º plano — sem retentar mais nada, que retentar a cada
+     * volta era justamente o problema. Agora está em 1º plano, então mexer no serviço é seguro.
+     */
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        removerLinksMortos();
+    }
+
+    private void removerLinksMortos() {
+        new Thread(() -> {
+            try {
+                Context app = getContext().getApplicationContext();
+                java.util.Set<String> mortos = deadLinks(app);
+                if (mortos.isEmpty()) return;
+                DownloadManager dm = DownloadUtil.getDownloadManager(app);
+                for (String id : mortos) {
+                    Download d = dm.getDownloadIndex().getDownload(id);
+                    if (d != null && d.state == Download.STATE_FAILED) {
+                        DownloadService.sendRemoveDownload(app, WatchDownloadService.class, id, false);
+                    }
+                }
+            } catch (Throwable t) {
+                android.util.Log.w("WatchMov", "remoção adiada de link morto falhou: " + t);
+            }
+        }, "wm-dead-link-remove").start();
     }
 
     // Mesma retomada, disparável pelo JS (ex.: ao abrir a aba Download).

@@ -14,6 +14,15 @@ export interface DownloadItem {
   uri?: string;      // URI proxied (http://127.0.0.1:8099/s?u=...&r=...)
 }
 
+// Download cancelado pelo nativo: link morto (404/410 expirou, 403/451 a fonte bloqueou) confirmado
+// duas vezes — a falha do Media3 e uma consulta direta ao link 1 min depois com o mesmo status.
+export interface DownloadCancelled {
+  key: string;
+  title?: string;
+  reason?: string;   // "Link expirou · download cancelado · abra o título de novo pra baixar"
+  http?: number;     // status confirmado
+}
+
 interface DownloaderPlugin {
   enqueue(o: { key: string; url: string; referer?: string; mime?: string; title?: string }): Promise<void>;
   remove(o: { key: string }): Promise<void>;
@@ -21,6 +30,7 @@ interface DownloaderPlugin {
   resume(): Promise<void>;   // retoma o que ficou pela metade (app atualizado/fechado)
   storage(): Promise<{ freeBytes: number; totalBytes: number }>;
   addListener(event: 'downloadChanged', cb: (d: DownloadItem) => void): Promise<{ remove: () => void }>;
+  addListener(event: 'downloadCancelled', cb: (d: DownloadCancelled) => void): Promise<{ remove: () => void }>;
 }
 
 // Plugin nativo Media3 (offline HLS+MP4). Só existe no Android.

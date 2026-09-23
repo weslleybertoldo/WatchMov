@@ -21,3 +21,9 @@ export function tileReason(reason?: string | null): string {
   const p = reasonPercent(reason);
   return shortReason(reason) + (p != null ? ` (${p}%)` : '');
 }
+
+/** Aviso da central quando o nativo cancela um download de link morto (confirmado 2x). */
+export function cancelNotice(label: string, reason?: string | null): { title: string; body: string } {
+  const body = (reason ?? '').trim() || 'Link expirou · download cancelado · abra o título de novo pra baixar';
+  return { title: `Download de ${label} cancelado`, body };
+}

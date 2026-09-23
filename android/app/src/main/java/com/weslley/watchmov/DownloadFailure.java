@@ -34,6 +34,39 @@ final class DownloadFailure {
         return 0;
     }
 
+    /** URL (a do proxy, como o download pediu) da resposta que derrubou o download, ou null. */
+    static String failedUrlOf(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof HttpDataSource.InvalidResponseCodeException) {
+                try { return ((HttpDataSource.InvalidResponseCodeException) t).dataSpec.uri.toString(); }
+                catch (Throwable ignored) { return null; }
+            }
+            if (t.getCause() == t) break;
+        }
+        return null;
+    }
+
+    /** Status que dizem "este link não vai baixar nunca mais": 404/410 (expirou) e 403/451 (a fonte bloqueou). */
+    static boolean isDeadLinkStatus(int http) {
+        return http == 404 || http == 410 || http == 403 || http == 451;
+    }
+
+    /**
+     * Dupla confirmação de link morto (Weslley, 23/09/2026: "precisa ter certeza que o link expirou, para
+     * não cancelar link ativo"): a 1ª é a falha do Media3, depois das tentativas dele, com status de link
+     * morto; a 2ª é a consulta DIRETA ao link real, um tempo depois, com o MESMO status. Qualquer outra
+     * resposta (200/206, erro de rede = -1, outro status) NÃO confirma — fica como falha temporária.
+     */
+    static boolean confirmsDeadLink(int firstStatus, int probeStatus) {
+        return isDeadLinkStatus(firstStatus) && probeStatus == firstStatus;
+    }
+
+    /** Motivo mostrado na aba Download/central quando o link morto foi confirmado e o download cancelado. */
+    static String deadLinkReason(int http) {
+        if (http == 403 || http == 451) return "A fonte bloqueou o download · cancelado · troque a fonte e baixe de novo";
+        return "Link expirou · download cancelado · abra o título de novo pra baixar";
+    }
+
     static Throwable rootCause(Throwable e) {
         Throwable t = e;
         while (t != null && t.getCause() != null && t.getCause() != t) t = t.getCause();

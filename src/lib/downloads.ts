@@ -6,6 +6,7 @@ import { playNative, onPlayerProgress, onPlayerNext, onPlayerWatched, loadNextNa
 import { upsertNotice } from './appNotices';
 import { mp4DoneKeys, mp4UriOf, mp4Names, onMp4Change, removeMp4, reconcileMp4 } from './mp4Download';
 import { getDetails } from './tmdb';
+import { cancelNotice } from './downloadReason';
 
 // Downloads offline reais (Media3). Estado da verdade = DownloadManager nativo
 // (espelho em memória via list()+eventos+polling). A METADATA do título (título,
@@ -191,6 +192,14 @@ function ensureInit() {
       }
     }
     notify(); syncPolling();
+  }).catch(() => {});
+  // Link morto confirmado 2x (falha do Media3 + consulta direta 1 min depois com o mesmo
+  // status) → o nativo cancela o download (o 'removed' vem logo atrás e tira o tile) e
+  // avisa aqui: sem isso o item sumia da aba sem explicação.
+  Downloader.addListener('downloadCancelled', (d) => {
+    const n = cancelNotice(labelOf(d.key, d.title), d.reason);
+    upsertNotice(`dl:${d.key}`, { kind: 'download', error: true, title: n.title, body: n.body });
+    notify();
   }).catch(() => {});
 }
 

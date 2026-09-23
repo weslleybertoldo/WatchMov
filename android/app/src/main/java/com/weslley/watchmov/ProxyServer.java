@@ -402,6 +402,23 @@ public class ProxyServer extends NanoHTTPD {
         return rb;
     }
 
+    /**
+     * Consulta DIRETA ao link real (sem cache, fora do download): status HTTP da resposta, ou -1 em erro
+     * de rede. Mesmo disfarce do replay (UA do WebView, Referer/Origin, headers reais, cookies) e só 1 byte
+     * (Range 0-0). É a 2ª confirmação de link morto do DownloaderPlugin (23/09/2026).
+     */
+    public static int probeStatus(String url, String referer) {
+        ensure();
+        ProxyServer p = instance;
+        if (p == null || url == null || url.isEmpty()) return -1;
+        OkHttpClient c = p.http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build();
+        try (okhttp3.Response r = c.newCall(p.probeRequest(url, referer).header("Range", "bytes=0-0").build()).execute()) {
+            return r.code();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     // URL local (ExoPlayer no próprio aparelho).
     public static String local(String url, String referer) {
         ensure();
