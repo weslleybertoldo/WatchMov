@@ -222,8 +222,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
     let toPlay: SniffResult | null = null;
     // Link com prazo vencido (expires= na URL) não reabre: o resolvedor pega um novo (24/09/2026).
-    const fresh = (entry?.streams ?? []).filter(x => !isExpiredUrl(x.url));
-    if (entry?.lastMode === 'native' && entry.chosenUrl && !isExpiredUrl(entry.chosenUrl)) {
+    const fresh = (entry?.streams ?? []).filter(x => !isExpiredUrl(x.url) && !isEphemeralUrl(x.url));
+    // Efêmero salvo por versão antiga (pedaço /sora/ do Abyss) não reabre: roda o resolvedor (25/09/2026).
+    if (entry?.lastMode === 'native' && entry.chosenUrl && !isExpiredUrl(entry.chosenUrl) && !isEphemeralUrl(entry.chosenUrl)) {
       const ck = streamKey(entry.chosenUrl);
       toPlay = fresh.find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl };
     } else if ((pendingNextInPlayer || awaitingNextRef.current) && fresh.length) {

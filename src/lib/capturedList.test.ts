@@ -11,11 +11,14 @@ describe('link EFÊMERO (/abyss/ da página oculta, 15/09/2026)', () => {
     expect(out[0].ephemeral).toBe(true);
     expect(out[0].quality).toBe('720p');
   });
-  it('isEphemeralUrl reconhece só o /abyss/ do proxy local', () => {
+  it('isEphemeralUrl reconhece o /abyss/ do proxy local e o pedaço /sora/ do Abyss', () => {
     expect(isEphemeralUrl(abys)).toBe(true);
     expect(isEphemeralUrl('http://127.0.0.1:8099/s?u=x')).toBe(false);
     expect(isEphemeralUrl('https://edge1-madrid-sprintcdn.r66nv9ed.com/hls2/master.m3u8')).toBe(false);
     expect(isEphemeralUrl(undefined)).toBe(false);
+    // 25/09/2026: pedaço cifrado do Abyss também não persiste nem reabre
+    expect(isEphemeralUrl('https://wbtqi2taq32.sssrr.org/sora/1165877930/aXlyYjV4d1FwWGNaQ3lr')).toBe(true);
+    expect(isEphemeralUrl('https://cdn.x/filmes/sora/trailer.mp4')).toBe(false);
   });
   it('addStreams NUNCA persiste link efêmero (pela flag ou pela URL)', () => {
     localStorage.clear();
