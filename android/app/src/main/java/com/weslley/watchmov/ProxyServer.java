@@ -226,6 +226,15 @@ public class ProxyServer extends NanoHTTPD {
         return sb.toString();
     }
 
+    /** Status do último erro (≥ 400) servido a `ip` desde `sinceMs` (epoch); 0 = nenhum. Diz se a TV parou por link morto. */
+    public static int lastErrorStatus(long sinceMs, String ip) {
+        int st = 0;
+        synchronized (LOG) {
+            for (Access a : LOG) if (a.ts >= sinceMs && a.status >= 400 && (ip == null || ip.equals(a.ip))) st = a.status;
+        }
+        return st;
+    }
+
     /** IPs de quem falou com o proxy desde `sinceMs` (sem o 127.0.0.1 do player local). */
     public static java.util.List<String> clientIps(long sinceMs) {
         java.util.Set<String> ips = new java.util.TreeSet<>();
