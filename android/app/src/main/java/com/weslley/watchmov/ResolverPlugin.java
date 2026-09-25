@@ -78,12 +78,19 @@ public class ResolverPlugin extends Plugin {
     private long optMs = 30000;
     private Runnable optTimer;
     private int optTries = 0;
+    // 25/09/2026: progresso da opção (WMOPT|progress — player/gate apareceu no frame) recomeça o cronômetro dela,
+    // no máx. OPT_RESTARTS vezes e 1× por etapa. A Byse leva ~20 s no PC só pra soltar o vídeo depois do gate.
+    static final int OPT_RESTARTS = 2;
+    private int optRestarts = 0;
+    private final java.util.Set<String> optStages = new java.util.HashSet<>();
     private final StringBuilder abysLog = new StringBuilder();
 
     @Override
     public void load() {
         // O proxy avisa quando o JS do frame abysscdn leu as qualidades → emitimos os 3 links ao app.
         ProxyServer.onAbyssReady = (sid, qs) -> ui.post(() -> onAbyssReady(sid, qs));
+        // Qualidade que terminou de medir depois (a 1ª pronta já abriu o filme) → menu do player + troca pra maior.
+        ProxyServer.onAbyssAdd = (sid, qs) -> ui.post(() -> onAbyssAdd(sid, qs));
     }
 
     @PluginMethod
@@ -112,6 +119,7 @@ public class ResolverPlugin extends Plugin {
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
                 this.referer = referer; optMs = optMsArg; optK = Math.max(1, startOptArg); optN = 0; optReports = 0; optTries = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0); StreamSnifferPlugin.currentOption = "";
+                optRestarts = 0; optStages.clear();
                 // v4.64: a lista de opções da Fonte 1 vem do console (WMOPT), como na Fonte 6 — não é mais fixa (ABYS/Byse).
                 WebView w = new WebView(act);
                 WebSettings s = w.getSettings();
@@ -232,7 +240,7 @@ public class ResolverPlugin extends Plugin {
         ui.post(() -> {
             if (web == null || optN <= 0) { call.resolve(); return; }
             optK = Math.max(1, Math.min(k, optN));
-            optTries = 0;
+            optTries = 0; optRestarts = 0; optStages.clear();
             emitOption();
             try {
                 if (injectHandler != null) injectHandler.remove();
@@ -273,6 +281,23 @@ public class ResolverPlugin extends Plugin {
         }
         report("RESOLVER_ABYS_READY", sb.toString());
         emit("abyss", currentUrl);
+    }
+
+    // 25/09/2026: qualidade que o pump mediu DEPOIS do ready (a 1ª pronta já abriu o filme). Entra na lista do app
+    // (streamFound) e, com o player aberto nesta sessão, no menu dele — que troca sozinho se ela for maior.
+    // Sem emit("abyss"): o reprodutor já abriu, não é pra abrir de novo.
+    private void onAbyssAdd(String sid, java.util.List<ProxyServer.AbyssQuality> qs) {
+        if (web == null || sid == null || !sid.equals(abyssSid) || !abyssReady) return;
+        StringBuilder sb = new StringBuilder();
+        for (ProxyServer.AbyssQuality q : qs) {
+            String u = ProxyServer.abyssUrl(sid, q.q);
+            if (sb.length() > 0) sb.append(',');
+            sb.append(q.q).append("p=").append(q.total / 1048576).append("MiB");
+            StreamSnifferPlugin.emitDirect(u, "video/mp4", q.q + "p", currentUrl, true);
+            PlayerActivity p = PlayerActivity.current();
+            if (p != null) p.offerQuality(u, "video/mp4", q.q + "p");
+        }
+        report("RESOLVER_ABYS_ADD", sb.toString());
     }
 
     // Player em IFRAME cross-origin de host conhecido → vira frame principal (só assim dá pra clicar por JS).
@@ -418,6 +443,18 @@ public class ResolverPlugin extends Plugin {
             ui.post(() -> { if (mySession == session) skipOption(mySession, note); });
             return;
         }
+        // 25/09/2026: `progress|k=K|stage=S` (player/gate apareceu no frame) e `dead|k=K|reason=R` (vídeo apagado).
+        // O K diz de QUAL opção: recado atrasado da página anterior (outra opção) é ignorado.
+        if (body.startsWith("progress|") || body.startsWith("dead|")) {
+            final boolean dead = body.startsWith("dead|");
+            final String rest = body.substring(dead ? 5 : 9);
+            final int k = OptionMsg.k(rest);
+            ui.post(() -> {
+                if (mySession != session || k != optK) return;
+                if (dead) deadOption(mySession, rest); else onOptionProgress(mySession, OptionMsg.stage(rest));
+            });
+            return;
+        }
         if (!body.startsWith("n=")) return;
         int n; String[] names;
         try {
@@ -448,6 +485,26 @@ public class ResolverPlugin extends Plugin {
         advanceOption(mySession, true);
     }
 
+    // 25/09/2026: a UPNS avisou que o vídeo foi apagado (404 no /api/v1/video) → próxima opção NA HORA, sem os 30 s.
+    private void deadOption(int mySession, String note) {
+        if (mySession != session || web == null || optTimer == null || abyssReady || engine) return;
+        String cur = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
+        reportOption("RESOLVER_OPTION_DEAD", "name=" + cur + " " + note);
+        advanceOption(mySession, true);
+    }
+
+    // 25/09/2026: o player da opção apareceu / o gate foi tocado → recomeça o cronômetro dela (1× por etapa,
+    // no máx. OPT_RESTARTS). Sem isso a Byse perdia: no emulador o gate só aparece ~30 s depois do clique.
+    private void onOptionProgress(int mySession, String stage) {
+        if (mySession != session || web == null || optTimer == null || abyssReady || engine) return;
+        if (optRestarts >= OPT_RESTARTS || !optStages.add(stage)) return;
+        optRestarts++;
+        ui.removeCallbacks(optTimer);
+        ui.postDelayed(optTimer, optMs);
+        String cur = (optNames != null && optK - 1 >= 0 && optK - 1 < optNames.length) ? optNames[optK - 1] : "";
+        reportOption("RESOLVER_OPTION_WAIT", "k=" + optK + "/" + optN + " name=" + cur + " stage=" + stage + " +" + optMs + " ms");
+    }
+
     // Opcao k nao achou video em optMs -> registra e tenta a proxima; todas falharam -> timeout (picker manual).
     private void advanceOption(int mySession) { advanceOption(mySession, false); }
 
@@ -464,7 +521,7 @@ public class ResolverPlugin extends Plugin {
             return;
         }
         if (!skipped) reportOption("RESOLVER_OPTION_FAIL", "k=" + optK + "/" + optN + " name=" + cur + (abyssSid != null && !abyssSid.isEmpty() && cur.toUpperCase().contains("ABYS") ? " frame=" + ProxyServer.abyssHasProgress(abyssSid) + " log=" + tailLog() : ""));
-        abyssExtended = false;
+        abyssExtended = false; optRestarts = 0; optStages.clear();
         optTries++;
         if (optTries < optN) {
             optK = (optK % optN) + 1;

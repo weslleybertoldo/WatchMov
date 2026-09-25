@@ -37,7 +37,8 @@ export const HOP_HOSTS = ['playerflix.ink', 'embedplay.one', 'f7hyg4q.org'];
 // Ordem importa: 1 clique por tick e no máximo 1 por seletor por página. "text:" = por texto.
 const STEPS_TAIL = [
   '#optionList .option', '.option',      // playerflix (1ª = Blogger)
-  '.captcha-gate__play',                 // f7hyg4q.org (Byse)
+  '.captcha-gate__play',                 // Byse (f7hyg4q.org; 25/09/2026 n1mwq.org — o host troca)
+  '#player-button',                      // UPNS (upns.xyz, Vidstack): o play próprio — os 1ºs toques abrem anúncio (STEPS_REPEAT)
   '.jw-icon-display', '.jw-display-icon-display', '.vjs-big-play-button', '.plyr__control--overlaid',
   "button[aria-label*='Play' i]", '.play-btn', '.btn-play', '#play', '.play',
 ];
@@ -46,6 +47,15 @@ export const CLICK_STEPS_BYSE = ['text:Mostrar Opções', 'text:Opção 2', ...S
 export const CLICK_STEPS = CLICK_STEPS_BYSE;   // padrão das demais fontes/fallback (compatível com os testes antigos)
 // v4.64: Fonte 1 no ciclo de opções — só revela a lista ('Mostrar Opções'); a opção K vem da lista REAL (.player_select_item)
 export const CLICK_STEPS_F1 = ['text:Mostrar Opções', ...STEPS_TAIL];
+// 25/09/2026: seletor que pode precisar de mais de 1 toque (no PC o play da UPNS abriu 2 anúncios antes de tocar).
+// Toca de novo só se continuar visível, com 3 s entre toques.
+export const STEPS_REPEAT: Record<string, number> = { '#player-button': 3 };
+// Clique que põe o player pra carregar (gate da Byse / play da UPNS) = progresso da opção (WMOPT|progress|stage=play).
+const STEPS_PLAY = ['.captcha-gate__play', '#player-button'];
+// Player dentro do frame (Byse / UPNS): aparecer = progresso da opção (WMOPT|progress|stage=player).
+const PLAYER_MARKERS = '.video-page__player,.captcha-gate,#player-button';
+// Texto da UPNS quando o vídeo foi apagado (/api/v1/video → 404): opção morta, o nativo pula na hora.
+export const DEAD_TEXTS = ['Video not found or deleted'];
 
 // Script injetado no document-start em TODOS os frames (androidx.webkit, origins '*'): cada frame
 // roda seu próprio loop clicando opção/gate/play e dando play mudo nos vídeos. Resolve o gate da
@@ -87,9 +97,15 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 // nome curto = o que está entre parênteses ("Opção 1 (ABYS)" → ABYS). Acaba a lista fixa ABYS/Byse do nativo:
 // título com só "Opção 1 (ABYS)" mostra 1 opção; UPNS/BYSE só aparecem quando existem. O pump do ABYS continua
 // concatenado (roda só no frame abysscdn) e o Byse continua pelo clicador genérico (`.captcha-gate__play`).
+// 25/09/2026 (Fonte 1 — BYSE e UPNS): o frame do player avisa o nativo pelo console com o K da opção:
+// `WMOPT|progress|k=K|stage=player|play` (player apareceu / gate ou play tocado → o nativo dá mais tempo à opção;
+// a Byse leva ~20 s no PC pra soltar o vídeo e o app desistia aos 30 s, antes do gate carregar no emulador) e
+// `WMOPT|dead|k=K|reason=not-found` (a UPNS disse que o vídeo foi apagado → o nativo pula na hora).
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
+    + 'var REP=' + JSON.stringify(STEPS_REPEAT) + ',PLAY=' + JSON.stringify(STEPS_PLAY) + ',DEAD=' + JSON.stringify(DEAD_TEXTS) + ',lastAt={};'
+    + "var prog=function(s){try{console.log('WMOPT|progress|k='+K+'|stage='+s)}catch(_){}};"
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
@@ -115,6 +131,9 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
     + 'var tick=function(){try{'
     + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+    + "if(!done['__pp__']&&document.querySelector(" + JSON.stringify(PLAYER_MARKERS) + ")){done['__pp__']=1;prog('player');}"
+    // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
+    + "if(done['__pp__']&&!done['__dead__']&&document.body){var bt=document.body.innerText||document.body.textContent||'';for(var di=0;di<DEAD.length;di++){if(bt.indexOf(DEAD[di])>=0){done['__dead__']=1;try{console.log('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}break;}}}"
     + "var f=findPF()||findEP()||findFS();var os=f?f.os:[],out=f?f.out:0;"
     // embedplay.one esconde a lista atras de "Mostrar Opções" (.changeOptions) — revela uma vez
     + "if(f&&f.kind==='ep'){var co=document.querySelector('.changeOptions');if(co&&!done['__show__']&&vis(co)&&String(co.className).indexOf('hidden')<0){done['__show__']=1;fire(co);}}"
@@ -124,9 +143,10 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "if(!done['__opt__']){done['__opt__']=1;var emb=os[ki].getAttribute('data-embed')||'';"
     + "if(emb.indexOf('superflixapi.')>=0){try{console.log('WMOPT|skip|k='+K+'|name='+nm[ki]+'|reason=turnstile')}catch(_){}return;}"
     + "try{console.log('WMOPT|click|k='+K+'|name='+nm[ki])}catch(_){}fire(os[ki]);}return;}"
-    + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];if(done[st])continue;var el=null;'
+    // 1 clique por tick; seletor do STEPS_REPEAT pode repetir (até N, 3 s entre toques, só se seguir visível)
+    + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];var dn=done[st]||0;if(dn>=(REP[st]||1)||(dn&&Date.now()-(lastAt[st]||0)<3000))continue;var el=null;'
     + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
-    + 'if(el){done[st]=1;fire(el);return;}}}catch(_){}};'
+    + 'if(el){done[st]=dn+1;lastAt[st]=Date.now();fire(el);if(!dn&&PLAY.indexOf(st)>=0)prog(\'play\');return;}}}catch(_){}};'
     + 'var n=0,iv=setInterval(function(){n++;tick();if(n>140)clearInterval(iv);},650);'
     + "if(document.readyState!=='loading')tick();else document.addEventListener('DOMContentLoaded',tick);"
     + '}catch(_){}})();';
@@ -140,10 +160,15 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
 // Laços do pump em paralelo (24/09/2026): o proxy marca cada pedaço como "em voo" e não repete. Com 1 laço só,
 // o 1080p engasgava — cada busca de 2 MiB no SW do Abyss tinha que sair em < 5 s pra acompanhar ~3,3 Mbps.
 export const ABYSS_PUMPS = 3;
+// Qualidade atrasada (25/09/2026, pedido dele): a 1ª qualidade medida abre o filme depois desta folga — as que
+// terminarem até lá entram juntas; as que chegarem depois vão por /abyss/add (menu do player + troca sozinha pra
+// maior, decisão dele "1"). Antes esperava as 3: no Pecadores a 360p ficou pronta, a 720p/1080p (sem erro, só
+// lentas) seguraram o `ready` e o app desistiu da ABYS.
+export const ABYSS_LATE_MS = 10000;
 export function buildAbyssScript(sid: string, port = PROXY_PORT): string {
   return `(function(){try{
 if(!/(^|\\.)(abysscdn|abyssplayer)\\.com$/.test(location.hostname)||window.__wmAbys)return;window.__wmAbys=1;
-var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${ABYSS_PUMPS};
+var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${ABYSS_PUMPS},LATE=${ABYSS_LATE_MS};
 var log=function(m){try{console.log('WMABYS '+m)}catch(_){}};
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=frame').then(function(r){log('frame '+location.hostname+' progress '+r.status)}).catch(function(e){log('progress-err '+e)});
 var srcs=null,tries=0;
@@ -167,11 +192,17 @@ if(!buf.byteLength){log('pump vazio q='+n.q+' off='+n.off);return setTimeout(pum
 var t1=performance.now();return fetch(BASE+'abyss/push?sid='+SID+'&q='+n.q+'&off='+n.off,{method:'POST',body:buf}).then(function(r){if(!r.ok)log('push '+r.status);var t2=performance.now();if(n.off%(16*1048576)<n.len)log('pump q='+n.q+' off='+n.off+' '+buf.byteLength+'B sw='+Math.round(t1-t0)+'ms push='+Math.round(t2-t1)+'ms');return pump()})})
 }).catch(function(e){log('pump-err '+e);setTimeout(pump,1000)})}
 var iv=setInterval(function(){tries++;var s=readSources();if(!s){if(tries>90){clearInterval(iv);log('sem sources')}return}
-clearInterval(iv);srcs=s;log('sources '+s.map(function(x){return x.q}).join(','));
+clearInterval(iv);log('sources '+s.map(function(x){return x.q}).join(','));
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=sources').catch(function(){});
-Promise.all(s.map(meta)).then(function(){var ok=s.filter(function(x){return x.ok});if(!ok.length){log('sem meta');return}
-srcs=ok;try{var p=jwplayer();p.pause&&p.pause();document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(_){}})}catch(_){}
-return fetch(BASE+'abyss/ready?sid='+SID+'&list='+encodeURIComponent(JSON.stringify(ok.map(function(x){return{q:x.q,total:x.total}})))).then(function(r){log('ready '+r.status);for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})})},700);
+var okq=[],sent=false,pend=s.length,lt=null;srcs=[];
+var lst=function(l){return encodeURIComponent(JSON.stringify(l.map(function(x){return{q:x.q,total:x.total}})))};
+var send=function(){if(sent)return;sent=true;if(lt)clearTimeout(lt);if(!okq.length){log('sem meta');return}
+for(var i=0;i<okq.length;i++)srcs.push(okq[i]);try{var p=jwplayer();p.pause&&p.pause();document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(_){}})}catch(_){}
+fetch(BASE+'abyss/ready?sid='+SID+'&list='+lst(okq)).then(function(r){log('ready '+r.status+' q='+okq.map(function(x){return x.q}).join(','));for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})};
+s.forEach(function(x){meta(x).then(function(ok){pend--;
+if(ok){if(!sent){okq.push(x);if(okq.length===1)lt=setTimeout(send,LATE)}
+else{srcs.push(x);fetch(BASE+'abyss/add?sid='+SID+'&list='+lst([x])).then(function(r){log('add q='+x.q+' '+r.status)}).catch(function(e){log('add-err '+e)})}}
+if(!pend&&!sent)send()})})},700);
 }catch(e){try{console.log('WMABYS err '+e)}catch(_){}}})();`;
 }
 

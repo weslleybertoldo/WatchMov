@@ -417,7 +417,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
       setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
-    }, Math.max(budgetFor(providerId), 150000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo)
+    }, Math.max(budgetFor(providerId), 210000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo). 25/09/2026: 150→210 s — a opção que mostra progresso (gate da Byse) ganha até +2×30 s
     // keep = o reprodutor abriu por link efêmero (/abyss/): a página oculta segue viva como motor.
     return () => { window.clearTimeout(t); stopResolver(keepEngineRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
