@@ -331,7 +331,11 @@ public class ProxyServer extends NanoHTTPD {
         }
         try {
             String host = new URL(url).getHost();
-            if (host != null) HDRS.put(host.toLowerCase(), new java.util.HashMap<>(headers));
+            if (host != null) {
+                java.util.Map<String, String> h = new java.util.HashMap<>(headers);
+                h.keySet().removeIf(k -> "x-requested-with".equalsIgnoreCase(k));   // nome do app: Fontes 2/4 bloqueiam por ele
+                HDRS.put(host.toLowerCase(), h);
+            }
         } catch (Exception ignored) {}
     }
 
@@ -1072,8 +1076,13 @@ public class ProxyServer extends NanoHTTPD {
     // O leitor manda: o JS só busca o que o leitor atual precisa (janela ABYSS_AHEAD à frente).
     // ---------------------------------------------------------------------------
     public static final int ABYSS_PIECE = 2 * 1024 * 1024;     // pedaço por busca do JS (o SW já trabalha em 2 MiB)
-    public static final int ABYSS_AHEAD = 12 * 1024 * 1024;    // buffer à frente do leitor (RAM)
+    public static final int ABYSS_AHEAD = 24 * 1024 * 1024;    // buffer à frente do leitor (RAM) — era 12 MiB (~30 s de 1080p)
     static final long ABYSS_WAIT_MS = 30000;                    // leitor espera um pedaço até 30 s (o player aguenta 35 s)
+    // Pump PARALELO (24/09/2026): o JS roda vários laços next→fetch→push ao mesmo tempo. Cada pedaço entregue a
+    // um laço fica "em voo" e o next dos outros pula ele; sem entrega em 45 s, volta pra fila. Com 1 laço só, o
+    // 1080p (~3,3 Mbps) dependia de cada busca de 2 MiB no SW terminar em < 5 s — no emulador levou 12,7 s e
+    // no celular dele o Black Torch 1080p virou 720p (19/09): "engasga como se a internet estivesse lenta".
+    static final long ABYSS_INFLIGHT_MS = 45000;
 
     public static final class AbyssQuality { public final int q; public final long total; AbyssQuality(int q, long total) { this.q = q; this.total = total; } }
     /** Avisado no "ready" (o ResolverPlugin registra pra emitir os links ao app). */
@@ -1084,6 +1093,7 @@ public class ProxyServer extends NanoHTTPD {
         final java.util.Map<Integer, Long> totals = new java.util.concurrent.ConcurrentHashMap<>();
         final java.util.Map<Integer, java.util.TreeMap<Long, byte[]>> pieces = new java.util.HashMap<>();   // só sob lock
         final Object lock = new Object();
+        final java.util.Map<Long, Long> inflight = new java.util.HashMap<>();   // off (da wantQ) → quando um laço pegou; só sob lock
         int wantQ = 0; long wantOff = -1;      // o que o leitor atual precisa (o JS segue isto)
         int gen = 0;                            // leitor novo (seek/troca) → leitor velho morre
         volatile boolean dead = false;
@@ -1102,17 +1112,22 @@ public class ProxyServer extends NanoHTTPD {
         long[] nextMissing() {   // sob lock
             Long total = totals.get(wantQ);
             if (wantQ == 0 || wantOff < 0 || total == null) return null;
-            long p = wantOff;
+            long p = wantOff, now = System.currentTimeMillis();
             while (p < total && p < wantOff + ABYSS_AHEAD) {
                 java.util.Map.Entry<Long, byte[]> e = map(wantQ).floorEntry(p);
                 if (e != null && p < e.getKey() + e.getValue().length) { p = e.getKey() + e.getValue().length; continue; }
-                return new long[]{ wantQ, p, Math.min((long) ABYSS_PIECE, total - p) };
+                long len = Math.min((long) ABYSS_PIECE, total - p);
+                Long pego = inflight.get(p);
+                if (pego != null && now - pego < ABYSS_INFLIGHT_MS) { p += len; continue; }   // outro laço já está buscando
+                inflight.put(p, now);
+                return new long[]{ wantQ, p, len };
             }
             return null;
         }
         void put(int q, long off, byte[] data) {
             synchronized (lock) {
                 map(q).put(off, data);
+                if (q == wantQ) inflight.remove(off);
                 // Poda (RAM): outras qualidades inteiras e pedaços > 4 MiB atrás do leitor.
                 for (java.util.Map.Entry<Integer, java.util.TreeMap<Long, byte[]>> me : pieces.entrySet()) {
                     if (me.getKey() != wantQ) { me.getValue().clear(); continue; }
@@ -1123,7 +1138,7 @@ public class ProxyServer extends NanoHTTPD {
             }
             lastSeen = System.currentTimeMillis();
         }
-        void want(int q, long off) { synchronized (lock) { wantQ = q; wantOff = off; gen++; lock.notifyAll(); } }
+        void want(int q, long off) { synchronized (lock) { if (q != wantQ) inflight.clear(); wantQ = q; wantOff = off; gen++; lock.notifyAll(); } }
     }
     private static final java.util.Map<String, AbyssSession> ABYSS = new java.util.concurrent.ConcurrentHashMap<>();
     public static String abyssUrl(String sid, int q) { return "http://127.0.0.1:" + PORT + "/abyss/" + sid + "/" + q + "p.mp4"; }

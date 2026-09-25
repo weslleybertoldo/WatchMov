@@ -11,7 +11,7 @@ import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, Download, Downl
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
 import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
-import { getEntry, streamKey } from '@/lib/streamCache';
+import { getEntry, streamKey, isExpiredUrl } from '@/lib/streamCache';
 import type { DownloadItem } from '@/lib/downloader';
 import { toast } from 'sonner';
 import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
@@ -399,7 +399,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const movieFalhou = !movieDownloaded && (movieDl?.state === 'failed' || movieDl?.state === 'stopped');
   const streamFor = (s: number | undefined, ep: number | undefined) => {
     const e = getEntry(media.tmdbId, media.type, s, ep);
-    if (!e?.chosenUrl) return null;
+    // Link com prazo vencido (Fonte 6 vence em ~10 min) começava um download que morria em 410 no 0%.
+    if (!e?.chosenUrl || isExpiredUrl(e.chosenUrl)) return null;
     const st = (e.streams ?? []).find(x => streamKey(x.url) === streamKey(e.chosenUrl!));
     return { url: e.chosenUrl, referer: st?.referer, mime: st?.mime };
   };
@@ -408,6 +409,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     if (movieBaixando) { toast.info('Baixando…', { description: 'Acompanhe aqui ou na aba Download.' }); return; }
     if (movieDownloaded) { setDownloaded([movieKey(media.tmdbId)], false); return; }
     const s = streamFor(undefined, undefined);
+    if (!s && isExpiredUrl(getEntry(media.tmdbId, media.type)?.chosenUrl)) { toast.error('O link desta fonte venceu', { description: 'Toque em Assistir (ele pega um link novo) e baixe pelo ⤓ do player.' }); return; }
     if (!s) { toast.error('Abra o filme uma vez pra baixar', { description: 'O download usa o link que o player captura ao reproduzir.' }); return; }
     enqueueDownload(movieKey(media.tmdbId), { ...s, title: media.title, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl });
     toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });

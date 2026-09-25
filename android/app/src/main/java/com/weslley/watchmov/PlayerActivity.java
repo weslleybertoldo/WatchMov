@@ -102,6 +102,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private boolean localOnly = false;            // abriu OUTRO ep com a TV espelhando e escolheu "Não": toca só aqui
     private String[] urls;
     private boolean errorHandled = false; // evita tratar o MESMO link 2x (ExoPlayer às vezes emite erro repetido)
+    private boolean everReady = false;    // o link atual já tocou (READY) → erro/buffering depois disso é "no meio"
+    // Engasgos (buffering depois de já ter tocado) → aba Bugs como PLAYER_ENGASGOU, no máx. 1×/min (24/09/2026:
+    // "fica engasgando no 1080p" não deixava rastro nenhum).
+    private long stallStartMs = 0, stallTotalMs = 0, lastStallReportMs = 0, stallBufAheadMs = 0;
+    private int stallCount = 0;
+    private long seekAtMs = 0;            // seek do usuário: o buffering logo depois não é engasgo
     private final java.util.HashSet<String> triedUrls = new java.util.HashSet<>(); // links que já falharam (não repetir)
     private String[] mimes;
     private String[] qualities;
@@ -496,9 +502,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
         // Buffer maior p/ o HLS via proxy (cada segmento é um round-trip extra):
         // acumula mais antes de tocar e, sobretudo, ~15s após rebuffer → menos
-        // travadas/paradas pra carregar. prioritizeTime = mantém a janela por tempo.
+        // travadas/paradas pra carregar. prioritizeTime = garante os 50 s mínimos.
+        // TETO DE MEMÓRIA (24/09/2026): o buffer mora no heap Java (256 MB neste aparelho) e sem teto ia a
+        // 180 s / ~140 MB no 1080p — com o motor /abyss/ e o download junto o processo passava de 500 MB,
+        // o sistema paginava e o vídeo engasgava. 48 MiB ≈ 80 s de 1080p; acima dos 50 s mínimos para no teto.
+        // Começa com 10 s prontos (eram 5): o motor /abyss/ entrega os 1ºs pedaços juntos (pump paralelo) e o
+        // filme abre pré-carregado em vez de engasgar logo no início (pedido dele, 25/09/2026).
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-            .setBufferDurationsMs(50000, 180000, 5000, 15000)
+            .setBufferDurationsMs(50000, 120000, 10000, 15000)
+            .setTargetBufferBytes(48 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build();
 
@@ -536,6 +548,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 }
             }
             @Override public void onIsPlayingChanged(boolean isPlaying) { refreshMediaNotification(); }
+            @Override public void onPositionDiscontinuity(androidx.media3.common.Player.PositionInfo oldPos,
+                                                          androidx.media3.common.Player.PositionInfo newPos, int reason) {
+                if (reason == androidx.media3.common.Player.DISCONTINUITY_REASON_SEEK) seekAtMs = System.currentTimeMillis();
+            }
             @Override public void onPlayerError(PlaybackException error) {
                 // Detalha o motivo (código + causa: ex. "Response code: 403", codec, etc.)
                 // pra diagnosticar o SuperFlix — o Weslley manda esse texto.
@@ -563,6 +579,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 // decide: ▣ Servidor ou Links). errorHandled evita tratar o mesmo link 2x.
                 if (errorHandled) return;
                 errorHandled = true;
+                // Onde parou: o próximo link é o MESMO vídeo (outra opção/qualidade) → continua daqui, não do 0.
+                final long posAtError = Math.max(0, player.getCurrentPosition());
+                final long agora = System.currentTimeMillis();
                 final int total = urls != null ? urls.length : 0;
                 final int failedIdx = linkIndex();   // 0-based do link que falhou
                 if (currentUrl != null) triedUrls.add(currentUrl);
@@ -573,7 +592,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                     // teria escolhido o 1). Acabou a lista → para. Se o link atual não está
                     // em urls[] (failedIdx<0), começa do início.
                     for (int i = Math.max(failedIdx + 1, 0); i < urls.length; i++) {
-                        if (urls[i] != null && !triedUrls.contains(urls[i]) && !isTrackOnly(urls[i])) {
+                        if (urls[i] != null && !triedUrls.contains(urls[i]) && !isTrackOnly(urls[i]) && !LinkExpiry.isExpired(urls[i], agora)) {
                             nextUrl = urls[i]; nextIdx = i;
                             nextMime = (mimes != null && i < mimes.length) ? mimes[i] : null;
                             break;
@@ -584,13 +603,19 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 if (nextUrl != null) {
                     status.setText(falhou + " — tentando " + (nextIdx + 1) + "/" + total + "…");
                     final String nu = nextUrl, nm = nextMime;
-                    progressHandler.postDelayed(() -> playUrl(nu, nm, 0), 700);
+                    progressHandler.postDelayed(() -> playUrl(nu, nm, posAtError), 700);
+                } else if (!offline && LinkExpiry.shouldRecapture(httpCode, LinkExpiry.isExpired(currentUrl, agora), everReady)) {
+                    // Link venceu ou caiu no meio do filme e não sobrou outro: o app pega um link NOVO pelo
+                    // resolvedor e reabre nesta posição (finishWithResult salva) — antes parava aqui (24/09/2026).
+                    status.setText(falhou + " — pegando um link novo…");
+                    progressHandler.postDelayed(() -> finishWithResult(false, false, true), 900);
                 } else {
                     status.setText(falhou + ". Nenhum link tocou — toque em ▣ Servidor ou Links.");
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
                 refreshMediaNotification();
+                noteStall(state);
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
                 else if (state == androidx.media3.common.Player.STATE_BUFFERING) {
                     int i = linkIndex(), n = urls != null ? urls.length : 0;
@@ -828,6 +853,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
     private void playUrl(String url, String mime, long startMs) {
         currentUrl = url;
+        everReady = false; stallStartMs = 0;
         ProxyServer.currentTitle = mTitle;   // rótulo dos eventos que o proxy emite (CAST_MASTER_INFO)
         errorHandled = false; // novo link → volta a permitir tratar erro
         // Link novo = qualidade entregue desconhecida até o proxy/player dizerem.
@@ -2418,6 +2444,34 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (activeCastMode != CAST_NONE && !localOnly) recastCurrent(start);
             refreshMediaNotification();   // título/⏭ do novo episódio
         });
+    }
+
+    // Buffering DEPOIS de já ter tocado = engasgo. Não contam: o 1º carregamento de cada link (everReady zera
+    // no playUrl) e a espera logo depois de um seek do usuário (seekAtMs).
+    private void noteStall(int state) {
+        if (player == null) return;
+        long now = System.currentTimeMillis();
+        if (state == androidx.media3.common.Player.STATE_READY) {
+            everReady = true;
+            if (stallStartMs > 0) {
+                long dur = now - stallStartMs; stallStartMs = 0;
+                stallCount++; stallTotalMs += dur;
+                if (now - lastStallReportMs >= 60_000) {
+                    lastStallReportMs = now;
+                    String tipo = currentUrl == null ? "?" : currentUrl.contains("/abyss/") ? "abyss" : (mMime != null && mMime.toLowerCase().contains("mpegurl")) || currentUrl.toLowerCase().contains(".m3u8") ? "hls" : "outro";
+                    NativePlayerPlugin.reportError(currentUrl, 0, 0, "PLAYER_ENGASGOU",
+                        "[engasgo] " + dur + "ms agora | total " + stallCount + "x/" + (stallTotalMs / 1000) + "s nesta sessão"
+                            + " | pos=" + (player.getCurrentPosition() / 1000) + "s bufAntes=" + stallBufAheadMs + "ms"
+                            + " | tipo=" + tipo + " altura=" + localVideoH + "p offline=" + offline,
+                        mMime, mReferer, mTitle);
+                }
+            }
+        } else if (state == androidx.media3.common.Player.STATE_BUFFERING && everReady && stallStartMs == 0 && now - seekAtMs > 2000) {
+            stallStartMs = now;
+            stallBufAheadMs = Math.max(0, player.getBufferedPosition() - player.getCurrentPosition());
+        } else if (state == androidx.media3.common.Player.STATE_ENDED || state == androidx.media3.common.Player.STATE_IDLE) {
+            stallStartMs = 0;
+        }
     }
 
     private void finishWithResult(boolean next, boolean server) { finishWithResult(next, server, false); }

@@ -46,6 +46,15 @@ final class DownloadFailure {
         return null;
     }
 
+    /**
+     * Falha que costuma PASSAR sozinha: servidor fora/sobrecarregado (5xx), timeout (408), limite (429) ou sem
+     * status HTTP (rede/timeout do socket). O Media3 desiste em ~1 min de tentativas; essas voltam pra fila
+     * sozinhas com espera crescente (DownloaderPlugin.scheduleAutoRetry).
+     */
+    static boolean isTemporaryStatus(int http) {
+        return http <= 0 || http >= 500 || http == 408 || http == 429;
+    }
+
     /** Status que dizem "este link não vai baixar nunca mais": 404/410 (expirou) e 403/451 (a fonte bloqueou). */
     static boolean isDeadLinkStatus(int http) {
         return http == 404 || http == 410 || http == 403 || http == 451;
