@@ -53,7 +53,11 @@ export function qualityFromUrl(url: string): string {
 // Link EFÊMERO (/abyss/ servido pela página oculta do resolvedor, 15/09/2026): só existe enquanto o app
 // está aberto com o motor vivo → NUNCA persiste (reabrir o título roda o resolvedor de novo). Vale pela
 // flag `ephemeral` E pela URL (o onPlayerQuality/fechar do player mandam só {url, quality}).
-export const isEphemeralUrl = (u: string | undefined | null) => /^https?:\/\/127\.0\.0\.1:\d+\/abyss\//i.test(u || '');
+// Pedaço CIFRADO do player Abyss (`…/sora/<tamanho>/<token>`): nunca toca sozinho. O nativo não captura mais
+// (25/09/2026), e um que ficou salvo antes não pode reabrir — no celular dele o Pecadores reabria direto nele e dava
+// "Nenhum link tocou". Conta como efêmero: não entra na lista salva nem vira o último link.
+export const isAbyssChunkUrl = (u: string | undefined | null) => /\/sora\/\d+\//i.test(u || '');
+export const isEphemeralUrl = (u: string | undefined | null) => /^https?:\/\/127\.0\.0\.1:\d+\/abyss\//i.test(u || '') || isAbyssChunkUrl(u);
 
 // Link com PRAZO na própria URL (`expires=<unix>`): a Fonte 6/WatchPlay vence em ~10 min (medido 24/09/2026).
 // Vencido, o servidor responde 410/403 — reabrir o título ou baixar com ele "dava erro" (A Hipótese do Amor

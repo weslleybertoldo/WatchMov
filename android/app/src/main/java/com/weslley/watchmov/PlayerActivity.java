@@ -189,6 +189,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         urls = getIntent().getStringArrayExtra(EXTRA_URLS);
         mimes = getIntent().getStringArrayExtra(EXTRA_MIMES);
         qualities = getIntent().getStringArrayExtra(EXTRA_QUALITIES);
+        // ABYS (25/09/2026): a qualidade maior chegou (/abyss/add) antes da tela abrir → já começa nela.
+        int bestAbyss = LiveQuality.bestIndex(currentUrl, urls, qualities);
+        if (bestAbyss >= 0) currentUrl = urls[bestAbyss];
         final String referer = getIntent().getStringExtra(EXTRA_REFERER);
         mReferer = referer;
         final String ua = getIntent().getStringExtra(EXTRA_UA);
@@ -842,6 +845,25 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         long tv = Math.max(0, lastRemoteDurMs);
         long dur = castMode == CAST_DLNA ? (local > 0 ? local : tv) : (tv > 0 ? tv : local);
         return Math.max(dur, lastRemotePosMs);
+    }
+
+    // ABYS (25/09/2026): qualidade que terminou de medir com o player já aberto (a 1ª pronta abriu o filme).
+    // Entra no fim da lista (menu "Qualidade") e, se for MAIOR que a que está tocando, troca sozinho na mesma
+    // posição — decisão dele ("1"). Só do mesmo motor (/abyss/<sid>/) e fora do espelhamento (a TV recarregaria).
+    public void offerQuality(String url, String mime, String quality) {
+        if (url == null || urls == null || currentUrl == null || !LiveQuality.sameEngine(currentUrl, url)) return;
+        for (String u : urls) if (url.equals(u)) return;
+        int n = urls.length;
+        String[] nu = java.util.Arrays.copyOf(urls, n + 1); nu[n] = url;
+        String[] nm = java.util.Arrays.copyOf(mimes != null ? mimes : new String[n], n + 1); nm[n] = mime;
+        String[] nq = java.util.Arrays.copyOf(qualities != null ? qualities : new String[n], n + 1); nq[n] = quality;
+        int cur = linkIndex();
+        String curLabel = cur >= 0 && cur < nq.length && nq[cur] != null && !nq[cur].isEmpty() ? nq[cur] : qualityFromUrl(currentUrl);
+        urls = nu; mimes = nm; qualities = nq;
+        if (player == null || activeCastMode != CAST_NONE || !LiveQuality.shouldSwitch(curLabel, quality)) return;
+        long pos = player.getCurrentPosition();
+        android.widget.Toast.makeText(this, "Trocando pra " + quality, android.widget.Toast.LENGTH_SHORT).show();
+        playUrl(url, mime, pos);
     }
 
     // Posição (0-based) do link atual dentro de urls[] — pro contador "X/N".

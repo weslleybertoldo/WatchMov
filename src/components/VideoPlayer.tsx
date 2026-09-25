@@ -222,8 +222,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
     let toPlay: SniffResult | null = null;
     // Link com prazo vencido (expires= na URL) não reabre: o resolvedor pega um novo (24/09/2026).
-    const fresh = (entry?.streams ?? []).filter(x => !isExpiredUrl(x.url));
-    if (entry?.lastMode === 'native' && entry.chosenUrl && !isExpiredUrl(entry.chosenUrl)) {
+    const fresh = (entry?.streams ?? []).filter(x => !isExpiredUrl(x.url) && !isEphemeralUrl(x.url));
+    // Efêmero salvo por versão antiga (pedaço /sora/ do Abyss) não reabre: roda o resolvedor (25/09/2026).
+    if (entry?.lastMode === 'native' && entry.chosenUrl && !isExpiredUrl(entry.chosenUrl) && !isEphemeralUrl(entry.chosenUrl)) {
       const ck = streamKey(entry.chosenUrl);
       toPlay = fresh.find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl };
     } else if ((pendingNextInPlayer || awaitingNextRef.current) && fresh.length) {
@@ -417,7 +418,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
       setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
-    }, Math.max(budgetFor(providerId), 150000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo)
+    }, Math.max(budgetFor(providerId), 210000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo). 25/09/2026: 150→210 s — a opção que mostra progresso (gate da Byse) ganha até +2×30 s
     // keep = o reprodutor abriu por link efêmero (/abyss/): a página oculta segue viva como motor.
     return () => { window.clearTimeout(t); stopResolver(keepEngineRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

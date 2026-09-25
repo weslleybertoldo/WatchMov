@@ -1070,6 +1070,7 @@ public class ProxyServer extends NanoHTTPD {
     // ---------------------------------------------------------------------------
     // ABYS — "página oculta como motor" (15/09/2026). Rotas em 127.0.0.1:PORT:
     //   GET  /abyss/ready?sid=S&list=[{"q":720,"total":N},…]  → JS leu as qualidades e o tamanho de cada MP4
+    //   GET  /abyss/add?sid=S&list=[{"q":1080,"total":N}]     → qualidade que terminou de medir depois (25/09/2026)
     //   GET  /abyss/next?sid=S                                → long-poll ≤ 8 s: próximo pedaço {q,off,len} ou {}
     //   POST /abyss/push?sid=S&q=720&off=N  (corpo = bytes)   → JS entrega um pedaço
     //   GET  /abyss/S/720p.mp4  (Range)                       → ExoPlayer lê como arquivo (206, corpo bloqueante)
@@ -1087,6 +1088,8 @@ public class ProxyServer extends NanoHTTPD {
     public static final class AbyssQuality { public final int q; public final long total; AbyssQuality(int q, long total) { this.q = q; this.total = total; } }
     /** Avisado no "ready" (o ResolverPlugin registra pra emitir os links ao app). */
     public static volatile java.util.function.BiConsumer<String, java.util.List<AbyssQuality>> onAbyssReady;
+    /** Avisado no "add" (25/09/2026): qualidade medida DEPOIS do ready → menu do player aberto. */
+    public static volatile java.util.function.BiConsumer<String, java.util.List<AbyssQuality>> onAbyssAdd;
 
     static final class AbyssSession {
         final String sid;
@@ -1158,15 +1161,23 @@ public class ProxyServer extends NanoHTTPD {
     }
 
     // Os 3 canais (usados pelas rotas HTTP e, no fallback, pela ponte WebMessageListener do ResolverPlugin):
-    public static boolean abyssReadyFromJson(String sid, String listJson) {
+    public static boolean abyssReadyFromJson(String sid, String listJson) { return abyssQualities(sid, listJson, false); }
+    /** 25/09/2026: qualidade atrasada (o ready já saiu com as prontas) — só as que a sessão ainda não tem. */
+    public static boolean abyssAddFromJson(String sid, String listJson) { return abyssQualities(sid, listJson, true); }
+    private static boolean abyssQualities(String sid, String listJson, boolean add) {
         if (sid == null || sid.isEmpty() || listJson == null) return false;
-        AbyssSession s = ABYSS.get(sid); if (s == null) { s = new AbyssSession(sid); ABYSS.put(sid, s); }
+        AbyssSession s = ABYSS.get(sid);
+        if (s == null) { if (add) return false; s = new AbyssSession(sid); ABYSS.put(sid, s); }   // add sem ready = sessão já morreu
         java.util.List<AbyssQuality> qs = new java.util.ArrayList<>();
         try {
             org.json.JSONArray a = new org.json.JSONArray(listJson);
-            for (int i = 0; i < a.length(); i++) { org.json.JSONObject o = a.getJSONObject(i); int q = o.optInt("q", 0); long t = o.optLong("total", 0); if (q > 0 && t > 0) { s.totals.put(q, t); qs.add(new AbyssQuality(q, t)); } }
-        } catch (Exception e) { lastDiag = "abyss ready json: " + e; return false; }
-        java.util.function.BiConsumer<String, java.util.List<AbyssQuality>> cb = onAbyssReady;
+            for (int i = 0; i < a.length(); i++) {
+                org.json.JSONObject o = a.getJSONObject(i); int q = o.optInt("q", 0); long t = o.optLong("total", 0);
+                if (q <= 0 || t <= 0 || (add && s.totals.containsKey(q))) continue;
+                s.totals.put(q, t); qs.add(new AbyssQuality(q, t));
+            }
+        } catch (Exception e) { lastDiag = "abyss " + (add ? "add" : "ready") + " json: " + e; return false; }
+        java.util.function.BiConsumer<String, java.util.List<AbyssQuality>> cb = add ? onAbyssAdd : onAbyssReady;
         if (cb != null && !qs.isEmpty()) cb.accept(sid, qs);
         return !qs.isEmpty();
     }
@@ -1224,9 +1235,10 @@ public class ProxyServer extends NanoHTTPD {
             rq.note = "progress sid=" + p.get("sid") + " ok=" + ok;
             return cors(newFixedLengthResponse(ok ? Response.Status.OK : Response.Status.BAD_REQUEST, "application/json", "{\"ok\":" + ok + "}"));
         }
-        if (uri.equals("/abyss/ready")) {
-            boolean ok = abyssReadyFromJson(p.get("sid"), p.get("list"));
-            rq.note = "ready sid=" + p.get("sid") + " ok=" + ok;
+        if (uri.equals("/abyss/ready") || uri.equals("/abyss/add")) {
+            boolean add = uri.equals("/abyss/add");
+            boolean ok = add ? abyssAddFromJson(p.get("sid"), p.get("list")) : abyssReadyFromJson(p.get("sid"), p.get("list"));
+            rq.note = (add ? "add" : "ready") + " sid=" + p.get("sid") + " ok=" + ok;
             return cors(newFixedLengthResponse(ok ? Response.Status.OK : Response.Status.BAD_REQUEST, "application/json", "{\"ok\":" + ok + "}"));
         }
         if (uri.equals("/abyss/next")) {

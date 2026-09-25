@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, STEPS_REPEAT, DEAD_TEXTS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -377,5 +377,144 @@ describe('resolver oculto (regras puras)', () => {
     // os escapes do JSON tem de sumir (senao a URL nao toca)
     expect(blog[0]).not.toContain('\\u0026');
     expect(blog[0]).toContain('&source=blogger');
+  });
+  // ── 25/09/2026: Fonte 1 — BYSE (mais tempo), UPNS (play + vídeo apagado), ABYS (qualidade atrasada) ──
+  // Roda o script do ciclo num DOM de frame de player; jsdom não mede layout → getBoundingClientRect falso (visível).
+  const runCycle = (html: string, k: number, steps: () => void, before?: () => void) => {
+    document.body.innerHTML = html;
+    before?.();
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 100, height: 50, top: 0, left: 0, right: 100, bottom: 50, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, String(k)))();
+      steps();
+    } finally {
+      vi.useRealTimers();
+      rect.mockRestore();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    return logs;
+  };
+
+  it('25/09: BYSE — o frame do player avisa progresso (com o K) e o gate é tocado 1×', () => {
+    let gate = 0;
+    const logs = runCycle(`<div class="video-page__player"><div class="captcha-gate"><button class="captcha-gate__play">play</button></div></div>`, 2, () => {
+      vi.advanceTimersByTime(650 * 6);
+    }, () => document.querySelector('.captcha-gate__play')!.addEventListener('click', () => gate++));
+    expect(logs).toContain('WMOPT|progress|k=2|stage=player|host=localhost');
+    expect(logs).toContain('WMOPT|progress|k=2|stage=play|host=localhost');
+    expect(gate).toBe(1);   // o gate não tem repetição: 1 toque
+    expect(logs.filter(l => l.startsWith('WMOPT|progress')).length).toBe(2);   // 1× por etapa
+  });
+
+  it('25/09: UPNS — toca o #player-button até 3×, com 3 s entre toques, só enquanto visível', () => {
+    expect(STEPS_REPEAT['#player-button']).toBe(3);
+    let toques = 0;
+    runCycle(`<div id="player-button-container"><div id="player-button"></div></div>`, 2, () => {
+      expect(toques).toBe(1);             // 1º toque já na 1ª volta (document pronto)
+      vi.advanceTimersByTime(2000);       // < 3 s: não repete
+      expect(toques).toBe(1);
+      vi.advanceTimersByTime(20000);      // passa do intervalo várias vezes: para no 3º
+    }, () => document.getElementById('player-button')!.addEventListener('click', () => toques++));
+    expect(toques).toBe(3);
+  });
+
+  it('25/09: UPNS — "Video not found or deleted" depois do player = opção morta (1 recado, com o K)', () => {
+    expect(DEAD_TEXTS).toContain('Video not found or deleted');
+    const logs = runCycle(`<div id="player-button-container"><div id="player-button"></div></div>`, 3, () => {
+      vi.advanceTimersByTime(650);
+      document.body.innerHTML = '<div>Video not found or deleted</div>';   // a UPNS troca o player pelo aviso (404)
+      vi.advanceTimersByTime(650 * 4);
+    });
+    expect(logs).toContain('WMOPT|progress|k=3|stage=player|host=localhost');
+    expect(logs.filter(l => l === 'WMOPT|dead|k=3|reason=not-found').length).toBe(1);
+  });
+
+  it('25/09: página sem player (lista da embedplay.one) não avisa progresso nem opção morta', () => {
+    const logs = runCycle(`<div>Video not found or deleted</div>`, 1, () => { vi.advanceTimersByTime(650 * 4); });
+    expect(logs.some(l => l.startsWith('WMOPT|progress') || l.startsWith('WMOPT|dead'))).toBe(false);
+  });
+
+  // Motor ABYS com jwplayer/fetch/location falsos: mede as 3 qualidades com atrasos diferentes.
+  const runAbyss = async (delays: Record<number, number>) => {
+    const calls: string[] = [];
+    const w = window as unknown as Record<string, unknown>;
+    const prev = w.__wmAbys; w.__wmAbys = undefined;
+    const origLog = console.log; console.log = () => {};
+    const jw = () => ({ pause: () => {}, getPlaylistItem: () => ({ sources: [360, 720, 1080].map(q => ({ file: `https://cdn.teste/${q}p/v.mp4`, label: `${q}p` })) }) });
+    const resp = (total: number) => ({ status: 206, type: 'basic', body: null, headers: { get: (h: string) => (h === 'content-range' ? `bytes 0-1023/${total}` : null) }, arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)) });
+    const fakeFetch = (u: string) => {
+      if (u.startsWith('http://127.0.0.1:8099/abyss/next')) return new Promise(() => {});   // pump parado: não interessa aqui
+      if (u.startsWith('http://127.0.0.1:8099/')) { calls.push(decodeURIComponent(u)); return Promise.resolve({ status: 200, ok: true }); }
+      const q = Number(/\/(\d+)p\//.exec(u)![1]);
+      return new Promise(res => setTimeout(() => res(resp(q * 1000)), delays[q]));
+    };
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'jwplayer', 'fetch', buildAbyssScript('sid1'))({ hostname: 'abysscdn.com' }, jw, fakeFetch);
+      await vi.advanceTimersByTimeAsync(60000);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmAbys = prev;
+    }
+    return { ready: calls.filter(c => c.includes('/abyss/ready')), add: calls.filter(c => c.includes('/abyss/add')) };
+  };
+
+  it('25/09: ABYS — a qualidade atrasada não segura o filme: abre com as prontas e a atrasada vai por /abyss/add', async () => {
+    expect(ABYSS_LATE_MS).toBe(10000);
+    const { ready, add } = await runAbyss({ 360: 1000, 720: 5000, 1080: 30000 });
+    expect(ready.length).toBe(1);
+    expect(ready[0]).toContain('"q":360'); expect(ready[0]).toContain('"q":720'); expect(ready[0]).not.toContain('"q":1080');
+    expect(add.length).toBe(1);
+    expect(add[0]).toContain('"q":1080');
+  });
+
+  it('25/09: ABYS — as 3 prontas dentro da folga saem juntas no ready (sem add)', async () => {
+    const { ready, add } = await runAbyss({ 360: 500, 720: 1500, 1080: 3000 });
+    expect(ready.length).toBe(1);
+    for (const q of [360, 720, 1080]) expect(ready[0]).toContain(`"q":${q}`);
+    expect(add.length).toBe(0);
+  });
+  it('25/09: UPNS — pergunta à API se o vídeo existe; 404 = opção morta sem precisar do play', async () => {
+    const logs: string[] = [];
+    const origLog = console.log; console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined;
+    const pedidos: string[] = [];
+    const fakeFetch = (u: string) => { pedidos.push(u); return Promise.resolve({ status: 404 }); };
+    const loc = { hostname: 'embedplayapiupn.upns.xyz', hash: '#epzlri', href: 'https://embedplayapiupn.upns.xyz/#epzlri' };
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'fetch', buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '2'))(loc, fakeFetch);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmInj = prevInj; w.__wmUpns = prevUp; document.body.innerHTML = '';
+    }
+    expect(pedidos.length).toBe(1);
+    expect(pedidos[0]).toContain('/api/v1/video?id=epzlri&w=');
+    expect(logs).toContain('WMOPT|probe|k=2|status=404');
+    expect(logs).toContain('WMOPT|dead|k=2|reason=upns-404');
+  });
+
+  it('25/09: fora da UPNS não pergunta nada à API', async () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined;
+    const pedidos: string[] = [];
+    const origLog = console.log; console.log = () => {};
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'fetch', buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '1'))({ hostname: 'www.embedplay.one', hash: '', href: 'https://www.embedplay.one/filme/tt1' }, (u: string) => { pedidos.push(u); return Promise.resolve({ status: 200 }); });
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmInj = prevInj; w.__wmUpns = prevUp; document.body.innerHTML = '';
+    }
+    expect(pedidos.length).toBe(0);
   });
 });
