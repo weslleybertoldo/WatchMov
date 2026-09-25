@@ -482,4 +482,38 @@ describe('resolver oculto (regras puras)', () => {
     for (const q of [360, 720, 1080]) expect(ready[0]).toContain(`"q":${q}`);
     expect(add.length).toBe(0);
   });
+  it('25/09: UPNS — pergunta à API se o vídeo existe; 404 = opção morta sem precisar do play', async () => {
+    const logs: string[] = [];
+    const origLog = console.log; console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined; w.__wmUpns = undefined;
+    const pedidos: string[] = [];
+    const fakeFetch = (u: string) => { pedidos.push(u); return Promise.resolve({ status: 404 }); };
+    const loc = { hostname: 'embedplayapiupn.upns.xyz', hash: '#epzlri', href: 'https://embedplayapiupn.upns.xyz/#epzlri' };
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'fetch', buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '2'))(loc, fakeFetch);
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmInj = prevInj; w.__wmUpns = prevUp; document.body.innerHTML = '';
+    }
+    expect(pedidos.length).toBe(1);
+    expect(pedidos[0]).toContain('/api/v1/video?id=epzlri&w=');
+    expect(logs).toContain('WMOPT|dead|k=2|reason=upns-404');
+  });
+
+  it('25/09: fora da UPNS não pergunta nada à API', async () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined; w.__wmUpns = undefined;
+    const pedidos: string[] = [];
+    const origLog = console.log; console.log = () => {};
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'fetch', buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '1'))({ hostname: 'www.embedplay.one', hash: '', href: 'https://www.embedplay.one/filme/tt1' }, (u: string) => { pedidos.push(u); return Promise.resolve({ status: 200 }); });
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmInj = prevInj; w.__wmUpns = prevUp; document.body.innerHTML = '';
+    }
+    expect(pedidos.length).toBe(0);
+  });
 });

@@ -106,6 +106,10 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
     + 'var REP=' + JSON.stringify(STEPS_REPEAT) + ',PLAY=' + JSON.stringify(STEPS_PLAY) + ',DEAD=' + JSON.stringify(DEAD_TEXTS) + ',lastAt={};'
     + "var prog=function(s){try{console.log('WMOPT|progress|k='+K+'|stage='+s+'|host='+location.hostname)}catch(_){}};"
+    // UPNS: pergunta direto à API se o vídeo existe (o play dela não sai com clique automático no celular — 25/09/2026,
+    // prova no aparelho: tocou o botão e nada). 404 = apagado → a opção morre na hora em vez de gastar 30 s.
+    + "if(/upns/.test(location.hostname)&&location.hash.length>1&&!window.__wmUpns){window.__wmUpns=1;var rh='';try{rh=new URL(document.referrer).hostname.replace(/^www\\./,'')}catch(_){}"
+    + "fetch('/api/v1/video?id='+encodeURIComponent(location.hash.slice(1))+'&w='+innerWidth+'&h='+innerHeight+'&r='+encodeURIComponent(rh)).then(function(r){if(r.status===404){try{console.log('WMOPT|dead|k='+K+'|reason=upns-404')}catch(_){}}}).catch(function(){});}"
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
