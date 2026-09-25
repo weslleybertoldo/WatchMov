@@ -409,8 +409,8 @@ describe('resolver oculto (regras puras)', () => {
     const logs = runCycle(`<div class="video-page__player"><div class="captcha-gate"><button class="captcha-gate__play">play</button></div></div>`, 2, () => {
       vi.advanceTimersByTime(650 * 6);
     }, () => document.querySelector('.captcha-gate__play')!.addEventListener('click', () => gate++));
-    expect(logs).toContain('WMOPT|progress|k=2|stage=player');
-    expect(logs).toContain('WMOPT|progress|k=2|stage=play');
+    expect(logs).toContain('WMOPT|progress|k=2|stage=player|host=localhost');
+    expect(logs).toContain('WMOPT|progress|k=2|stage=play|host=localhost');
     expect(gate).toBe(1);   // o gate não tem repetição: 1 toque
     expect(logs.filter(l => l.startsWith('WMOPT|progress')).length).toBe(2);   // 1× por etapa
   });
@@ -434,7 +434,7 @@ describe('resolver oculto (regras puras)', () => {
       document.body.innerHTML = '<div>Video not found or deleted</div>';   // a UPNS troca o player pelo aviso (404)
       vi.advanceTimersByTime(650 * 4);
     });
-    expect(logs).toContain('WMOPT|progress|k=3|stage=player');
+    expect(logs).toContain('WMOPT|progress|k=3|stage=player|host=localhost');
     expect(logs.filter(l => l === 'WMOPT|dead|k=3|reason=not-found').length).toBe(1);
   });
 

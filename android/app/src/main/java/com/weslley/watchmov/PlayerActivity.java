@@ -189,6 +189,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         urls = getIntent().getStringArrayExtra(EXTRA_URLS);
         mimes = getIntent().getStringArrayExtra(EXTRA_MIMES);
         qualities = getIntent().getStringArrayExtra(EXTRA_QUALITIES);
+        // ABYS (25/09/2026): a qualidade maior chegou (/abyss/add) antes da tela abrir → já começa nela.
+        int bestAbyss = LiveQuality.bestIndex(currentUrl, urls, qualities);
+        if (bestAbyss >= 0) currentUrl = urls[bestAbyss];
         final String referer = getIntent().getStringExtra(EXTRA_REFERER);
         mReferer = referer;
         final String ua = getIntent().getStringExtra(EXTRA_UA);

@@ -98,14 +98,14 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 // título com só "Opção 1 (ABYS)" mostra 1 opção; UPNS/BYSE só aparecem quando existem. O pump do ABYS continua
 // concatenado (roda só no frame abysscdn) e o Byse continua pelo clicador genérico (`.captcha-gate__play`).
 // 25/09/2026 (Fonte 1 — BYSE e UPNS): o frame do player avisa o nativo pelo console com o K da opção:
-// `WMOPT|progress|k=K|stage=player|play` (player apareceu / gate ou play tocado → o nativo dá mais tempo à opção;
+// `WMOPT|progress|k=K|stage=player|play|host=H` (player apareceu / gate ou play tocado, em qual frame → o nativo dá mais tempo à opção;
 // a Byse leva ~20 s no PC pra soltar o vídeo e o app desistia aos 30 s, antes do gate carregar no emulador) e
 // `WMOPT|dead|k=K|reason=not-found` (a UPNS disse que o vídeo foi apagado → o nativo pula na hora).
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
     + 'var REP=' + JSON.stringify(STEPS_REPEAT) + ',PLAY=' + JSON.stringify(STEPS_PLAY) + ',DEAD=' + JSON.stringify(DEAD_TEXTS) + ',lastAt={};'
-    + "var prog=function(s){try{console.log('WMOPT|progress|k='+K+'|stage='+s)}catch(_){}};"
+    + "var prog=function(s){try{console.log('WMOPT|progress|k='+K+'|stage='+s+'|host='+location.hostname)}catch(_){}};"
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"

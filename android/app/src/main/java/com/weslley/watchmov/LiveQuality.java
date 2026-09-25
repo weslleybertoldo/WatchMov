@@ -34,4 +34,28 @@ final class LiveQuality {
         int cur = height(currentLabel), nova = height(newLabel);
         return cur > 0 && nova > cur;
     }
+
+    /**
+     * Ao ABRIR o player: a qualidade maior do mesmo motor pode ter terminado de medir entre o "ready" e o player
+     * abrir (no emulador a 1080p chegou 18 s antes da tela) → índice dela pra já começar nela; -1 = fica no link pedido.
+     */
+    static int bestIndex(String currentUrl, String[] urls, String[] qualities) {
+        if (urls == null || abyssSid(currentUrl) == null) return -1;
+        int best = -1, bestH = 0;
+        for (int i = 0; i < urls.length; i++) {
+            if (currentUrl.equals(urls[i])) { bestH = Math.max(bestH, heightAt(urls, qualities, i)); break; }
+        }
+        for (int i = 0; i < urls.length; i++) {
+            if (!sameEngine(currentUrl, urls[i])) continue;
+            int h = heightAt(urls, qualities, i);
+            if (h > bestH) { bestH = h; best = i; }
+        }
+        return best;
+    }
+
+    private static int heightAt(String[] urls, String[] qualities, int i) {
+        String q = qualities != null && i < qualities.length ? qualities[i] : null;
+        int h = height(q);
+        return h > 0 ? h : height(urls[i]);
+    }
 }
