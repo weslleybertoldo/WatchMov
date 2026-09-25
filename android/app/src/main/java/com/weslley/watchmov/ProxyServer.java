@@ -45,19 +45,6 @@ public class ProxyServer extends NanoHTTPD {
         if (ua != null && !ua.trim().isEmpty()) webViewUa = ua.trim();
     }
 
-    /**
-     * O Android WebView manda o NOME DO APP em toda requisição (header X-Requested-With: com.weslley.watchmov).
-     * As Fontes 2 (SuperFlix) e 4 (WarezCDN) bloqueiam por ele: "ACESSO BLOQUEADO — Embed não disponível aqui.
-     * Acesso bloqueado para este app" com o pacote na tela (print dele, 25/09/2026) — no servidor e no
-     * resolvedor. Lista vazia = o WebView não manda o header pra site nenhum. WebView sem o recurso: sem efeito.
-     */
-    public static void hideAppPackage(android.webkit.WebSettings s) {
-        try {
-            if (s != null && androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST))
-                androidx.webkit.WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, java.util.Collections.emptySet());
-        } catch (Throwable ignored) { }
-    }
-
     /** UA que o proxy/sniffer/player mandam: o do WebView; sem ele, o padrão do WebView do sistema; por fim o fixo. */
     public static String userAgent() {
         String u = webViewUa;
@@ -346,7 +333,7 @@ public class ProxyServer extends NanoHTTPD {
             String host = new URL(url).getHost();
             if (host != null) {
                 java.util.Map<String, String> h = new java.util.HashMap<>(headers);
-                h.keySet().removeIf(k -> "x-requested-with".equalsIgnoreCase(k));   // nome do app: fonte bloqueia (hideAppPackage)
+                h.keySet().removeIf(k -> "x-requested-with".equalsIgnoreCase(k));   // nome do app: Fontes 2/4 bloqueiam por ele
                 HDRS.put(host.toLowerCase(), h);
             }
         } catch (Exception ignored) {}
