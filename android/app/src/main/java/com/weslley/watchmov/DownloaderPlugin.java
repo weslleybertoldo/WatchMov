@@ -48,6 +48,10 @@ public class DownloaderPlugin extends Plugin {
     private static final Set<String> probing = ConcurrentHashMap.newKeySet();
     // Espera entre a falha do Media3 e a 2ª consulta ao link — um 4xx passageiro (CDN, limite) já passou.
     static final long DEAD_LINK_PROBE_DELAY_MS = 60_000;
+    // Falha TEMPORÁRIA (5xx/timeout/rede): volta pra fila sozinha depois de 1, 3, 10 e 30 min (24/09/2026: A
+    // Hipótese do Amor parou em 48% com 503 do servidor do vídeo e ficou parada até o app ser reaberto).
+    static final long[] AUTO_RETRY_MS = { 60_000, 180_000, 600_000, 1_800_000 };
+    private static final Map<String, Integer> autoRetries = new ConcurrentHashMap<>();
     // Links mortos confirmados com o app em 2º plano: a remoção fica pra próxima retomada em 1º plano.
     private static final String DEAD_PREFS = "wm_dead_links";
     private static final String DEAD_KEY = "ids";
@@ -81,15 +85,16 @@ public class DownloaderPlugin extends Plugin {
                 boolean transicao = antes == null || antes != d.state;
                 if (d.state == Download.STATE_FAILED) {
                     failReasons.put(id, DownloadFailure.describe(e, d.getPercentDownloaded()));
-                    if (transicao) { reportFailure(d, e); maybeConfirmDeadLink(d, e); }
+                    if (transicao) { reportFailure(d, e); maybeConfirmDeadLink(d, e); scheduleAutoRetry(d, e); }
                 } else if (d.state == Download.STATE_DOWNLOADING || d.state == Download.STATE_COMPLETED) {
                     failReasons.remove(id);
-                    if (transicao && d.state == Download.STATE_COMPLETED) reportDone(d);
+                    if (transicao && d.state == Download.STATE_COMPLETED) { reportDone(d); autoRetries.remove(id); }
                 }
                 notifyListeners("downloadChanged", toJson(d));
             }
             @Override public void onDownloadRemoved(DownloadManager m, Download d) {
                 failReasons.remove(d.request.id);
+                autoRetries.remove(d.request.id);
                 lastState.remove(d.request.id);
                 try {
                     Context app = getContext().getApplicationContext();
@@ -205,6 +210,33 @@ public class DownloaderPlugin extends Plugin {
                 }
             } catch (Exception ignored) { }
         }).start();
+    }
+
+    /**
+     * Falha temporária → re-enfileira a MESMA DownloadRequest (continua de onde parou; o baixado está no cache)
+     * depois de AUTO_RETRY_MS[n], até 4 vezes por processo. Só com o app em 1º plano: daqui, com o app em 2º
+     * plano, religar o serviço crasha (ForegroundServiceStartNotAllowed, ver cancelDeadLink) — nesse caso fica
+     * pra retomada normal da próxima abertura (resumePending).
+     */
+    private void scheduleAutoRetry(Download d, Exception e) {
+        if (!DownloadFailure.isTemporaryStatus(DownloadFailure.httpStatusOf(e))) return;
+        final String id = d.request.id;
+        final int n = autoRetries.merge(id, 1, Integer::sum);
+        if (n > AUTO_RETRY_MS.length) return;
+        final DownloadRequest req = d.request;
+        final android.content.Context app = getContext().getApplicationContext();
+        new Thread(() -> {
+            try {
+                Thread.sleep(AUTO_RETRY_MS[n - 1]);
+                Download atual = DownloadUtil.getDownloadManager(app).getDownloadIndex().getDownload(id);
+                if (atual == null || atual.state != Download.STATE_FAILED) return;   // removido/retomado no meio
+                if (!emPrimeiroPlano()) return;
+                android.util.Log.i("WatchMov", "download: retentativa automática " + n + "/" + AUTO_RETRY_MS.length + " de " + id);
+                DownloadService.sendAddDownload(app, WatchDownloadService.class, req, false);
+            } catch (Throwable t) {
+                android.util.Log.w("WatchMov", "retentativa automática do download falhou: " + t);
+            }
+        }, "wm-dl-retry").start();
     }
 
     /**

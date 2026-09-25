@@ -5,7 +5,7 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor
 import { toast } from 'sonner';
 import { PROVIDERS, type PlayerTarget } from '@/lib/players';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl } from '@/lib/streamCache';
+import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl, isExpiredUrl } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
 import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
@@ -101,6 +101,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => { resolvingRef.current = resolving; });
   const resolveTriedRef = useRef<string | null>(null);   // embedUrl em que já tentou (1×/fonte por abertura)
   const cacheOpenRef = useRef(false);                     // abriu direto do cache (efeito A) → não resolve
+  const recaptureUsedRef = useRef(false);                 // já pediu link novo sozinho nesta abertura (1×)
   const keepEngineRef = useRef(false);                    // link efêmero (/abyss/) tocando → o WebView oculto (motor) fica vivo
   // Espelho do stream atual: o listener de progresso precisa do valor NA HORA do
   // evento (a closure do state fica velha) pra descartar o progresso do ep anterior.
@@ -206,6 +207,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setPickerOpen(false); setPreferIframe(false); setOwnStream(null);
     playedRef.current = false;
     freshKeysRef.current = new Set(); autoFiredRef.current = null; resolveTriedRef.current = null; cacheOpenRef.current = false;
+    recaptureUsedRef.current = false;
     if (!isNative()) return;
     // Veio do "Próximo episódio": este ep começa do ZERO. Limpa a posição salva nos
     // DOIS stores (streamCache + SharedPreferences do player) — as versões antigas
@@ -219,11 +221,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     autoArmedRef.current = entry?.lastMode !== 'server';
     // Só reabre no reprodutor se a última vez foi nele; senão fica no servidor.
     let toPlay: SniffResult | null = null;
-    if (entry?.lastMode === 'native' && entry.chosenUrl) {
+    // Link com prazo vencido (expires= na URL) não reabre: o resolvedor pega um novo (24/09/2026).
+    const fresh = (entry?.streams ?? []).filter(x => !isExpiredUrl(x.url));
+    if (entry?.lastMode === 'native' && entry.chosenUrl && !isExpiredUrl(entry.chosenUrl)) {
       const ck = streamKey(entry.chosenUrl);
-      toPlay = (entry.streams ?? []).find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl };
-    } else if ((pendingNextInPlayer || awaitingNextRef.current) && entry?.streams?.length) {
-      toPlay = entry.streams[0];        // veio do "Próximo" e o ep já tem link → reprodutor
+      toPlay = fresh.find(x => streamKey(x.url) === ck) || { url: entry.chosenUrl };
+    } else if ((pendingNextInPlayer || awaitingNextRef.current) && fresh.length) {
+      toPlay = fresh[0];        // veio do "Próximo" e o ep já tem link → reprodutor
     }
     if (toPlay) setOwnStream(toPlay);
     cacheOpenRef.current = !!toPlay;   // abriu direto do cache → o resolvedor não roda
@@ -267,7 +271,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // acumulando links sem mexer no que já está tocando/escolhido.
   useEffect(() => {
     if (!open || !embedUrl || !isNative()) { setCapturedList([]); return; }
-    setCapturedList(withCompletos(getEntry(tmdbId, type, season, episode)?.streams ?? []));
+    setCapturedList(withCompletos((getEntry(tmdbId, type, season, episode)?.streams ?? []).filter(x => !isExpiredUrl(x.url))));
     let alive = true;
     let stop = () => {};
     watchStream(rr => {
@@ -340,6 +344,21 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       url: r.url, referer: r.referer, mime: r.mime,
     });
     downloadAsMp4(dlKey, { url: r.url, referer: r.referer, mime: r.mime, title });
+  };
+
+  // Link novo pelo resolvedor oculto (mesma fonte), sem passar pelo servidor: o efeito (R) roda de novo e o
+  // (C) reabre o reprodutor no 1º link capturado — na posição salva do título (24/09/2026).
+  const reResolve = () => {
+    setPickerOpen(false);
+    setOwnStream(null);
+    setPreferIframe(false);
+    playedRef.current = false;
+    cacheOpenRef.current = false;
+    autoArmedRef.current = true;
+    autoFiredRef.current = null;
+    resolveTriedRef.current = null;
+    freshKeysRef.current = new Set();
+    setResolverRetry(n => n + 1);
   };
 
   // Assistir pelo servidor (iframe): grava que a última vez foi no servidor
@@ -488,7 +507,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         setStreamPosition(res.positionMs, ep.tmdbId, ep.type, ep.season, ep.episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
       }
-      if (res.recapture) { setCapturedList([]); goServer(); return; }  // link expirou (403/410) → recaptura fresco
+      // Link venceu/caiu no meio do filme (403/410/prazo da URL, ou nenhum link da lista tocou): pega link
+      // NOVO pelo resolvedor e reabre na posição salva acima — 1× por abertura; falhou de novo = servidor.
+      if (res.recapture) { setCapturedList([]); if (recaptureUsedRef.current) goServer(); else { recaptureUsedRef.current = true; reResolve(); } return; }
       if (res.server) { goServer(); return; }                 // botão Servidor → modo servidor
       // O player fechou pedindo o próximo ep. Se o JS JÁ tinha avançado (in-place que
       // não achou link), NÃO avança de novo — senão pularia um episódio.

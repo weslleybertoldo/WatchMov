@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -15,6 +15,54 @@ describe('resolver oculto (regras puras)', () => {
     expect(buildInjectScript(CLICK_STEPS_BYSE)).toContain('text:Opção 2');
     expect(buildInjectScript(CLICK_STEPS_BYSE)).not.toContain('WMABYS');
     expect(budgetFor('embedplayapi')).toBe(90000); expect(budgetFor('embedmovies')).toBe(45000);
+  });
+
+  it('Fonte 5 (FS/HD): escolhe "Dublado", clica o 1º servidor e roda no motor Abyss (abyssplayer.com)', () => {
+    expect(usesAbys('fshd')).toBe(true); expect(usesAbys('embedplayapi')).toBe(true); expect(usesAbys('embedmovies')).toBe(false);
+    expect(budgetFor('fshd')).toBe(budgetFor('embedplayapi'));
+    expect(buildAbyssScript('x')).toContain('abyssplayer');
+    document.body.innerHTML = `<div class="player-options-audios">
+      <div class="audio-selector active"><span class="audio-text">Legendado</span></div>
+      <div class="audio-selector"><span class="audio-text">Dublado</span></div>
+    </div>
+    <div class="player-options-servers active">
+      <div class="server-selector" data-server="126078">Abyss
+        Boa velocidade e poucos anúncios.</div>
+      <div class="server-selector" data-server="126090">Streamwish</div>
+    </div>
+    <div class="player-options-servers hidden"><div class="server-selector" data-server="1">Oculto</div></div>`;
+    const aud = document.querySelectorAll('.audio-selector');
+    aud[1].addEventListener('click', () => { aud[0].className = 'audio-selector'; aud[1].className = 'audio-selector active'; });
+    const clicked: string[] = [];
+    document.querySelectorAll('.server-selector').forEach(o => o.addEventListener('click', () => clicked.push(o.getAttribute('data-server') || '')));
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+      expect(aud[1].className).toContain('active');   // 1º tick: escolheu Dublado
+      expect(clicked).toEqual([]);
+      vi.advanceTimersByTime(700);                     // 2º tick: lista os servidores do Dublado e clica o 1º
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(clicked).toEqual(['126078']);
+    expect(logs).toContain('WMOPT|n=2|names=Abyss»Streamwish');
+    expect(logs).toContain('WMOPT|click|k=1|name=Abyss');
+  });
+
+  it('ABYS: o pump roda vários laços em paralelo (1080p engasgava com 1 só)', () => {
+    const s = buildAbyssScript('abc123');
+    expect(ABYSS_PUMPS).toBeGreaterThanOrEqual(2);
+    expect(s).toContain('PUMPS=' + ABYSS_PUMPS);
+    expect(s).toContain('for(var w=0;w<PUMPS;w++)pump()');
   });
 
   it('clickScript é JS válido, leva os passos na ordem e muta os vídeos', () => {

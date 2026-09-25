@@ -122,6 +122,7 @@ public class ResolverPlugin extends Plugin {
                 s.setSupportMultipleWindows(false);                // popup = anúncio → não abre
                 s.setJavaScriptCanOpenWindowsAutomatically(false);
                 s.setUserAgentString(ProxyServer.userAgent());     // MESMO UA do app (googlevideo prende a URL ao UA)
+                ProxyServer.hideAppPackage(s);                     // sem o nome do app: Fontes 2/4 bloqueiam por ele
                 CookieManager.getInstance().setAcceptThirdPartyCookies(w, true);   // cf_clearance / Blogger
                 w.setWebChromeClient(new WebChromeClient() {
                     @Override public boolean onConsoleMessage(ConsoleMessage cm) {

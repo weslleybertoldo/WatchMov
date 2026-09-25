@@ -94,6 +94,7 @@ public class MainActivity extends BridgeActivity {
         ProxyServer.setWebViewUserAgent(webView.getSettings().getUserAgentString());
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
         webView.getSettings().setSupportMultipleWindows(true);
+        ProxyServer.hideAppPackage(webView.getSettings());   // Fontes 2/4 bloqueiam pelo nome do app (25/09/2026)
 
         webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
             // Popup (window.open): fora da captura recusa (anti-anúncio). DURANTE a
@@ -112,6 +113,7 @@ public class MainActivity extends BridgeActivity {
                     sniffPopup = new WebView(MainActivity.this);
                     android.webkit.WebSettings ps = sniffPopup.getSettings();
                     ps.setJavaScriptEnabled(true);
+                    ProxyServer.hideAppPackage(ps);
                     ps.setDomStorageEnabled(true);
                     ps.setMediaPlaybackRequiresUserGesture(false);
                     ps.setSupportMultipleWindows(true);

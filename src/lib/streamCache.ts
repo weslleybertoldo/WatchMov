@@ -55,6 +55,24 @@ export function qualityFromUrl(url: string): string {
 // flag `ephemeral` E pela URL (o onPlayerQuality/fechar do player mandam só {url, quality}).
 export const isEphemeralUrl = (u: string | undefined | null) => /^https?:\/\/127\.0\.0\.1:\d+\/abyss\//i.test(u || '');
 
+// Link com PRAZO na própria URL (`expires=<unix>`): a Fonte 6/WatchPlay vence em ~10 min (medido 24/09/2026).
+// Vencido, o servidor responde 410/403 — reabrir o título ou baixar com ele "dava erro" (A Hipótese do Amor
+// tocou às 12:47 um link das 01:22). Vencido = não reusa: reabrir roda o resolvedor e pega link novo.
+// Margem de 1 min pra não vencer no meio da abertura. Só aceita número com cara de data (2017–2103).
+export function linkExpiresAt(u: string | undefined | null): number | null {
+  let s = u || '';
+  try { s = decodeURIComponent(s); } catch { /* URL já decodificada */ }
+  const m = /[?&](?:expires|exp)=(\d{10,13})(?=&|$)/i.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const ms = n < 1e12 ? n * 1000 : n;
+  return ms > 1.5e12 && ms < 4.2e12 ? ms : null;
+}
+export const isExpiredUrl = (u: string | undefined | null, now = Date.now()) => {
+  const t = linkExpiresAt(u);
+  return t != null && now > t - 60_000;
+};
+
 export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, season?: number, episode?: number) {
   list = list.filter(s => !s.ephemeral && !isEphemeralUrl(s.url));
   if (!list.length) return;

@@ -63,11 +63,13 @@ export const PROVIDERS: Provider[] = [
     name: 'Fonte 3 (Fembed PT-BR)',
     tag: 'Fembed', color: '#4ade80',
     // Herdeiro do Superflix, catálogo dublado pt-br. TMDB id.
+    // 25/09/2026: fembed.sx morreu (DNS SERVFAIL até na Cloudflare) e a fonte ficava ~45 s "procurando" à toa;
+    // o site mudou pra fembed.lol (o /e/ antigo redireciona pra /filme/{id} e /serie/{id}/{s}/{e} — já direto).
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
-        ? `https://fembed.sx/e/${t.tmdbId}`
-        : `https://fembed.sx/e/${t.tmdbId}/${s(t)}-${e(t)}`;
+        ? `https://fembed.lol/filme/${t.tmdbId}`
+        : `https://fembed.lol/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
     },
   },
   // ── Candidatos BR (esquema validado com o Weslley 09/08 no navegador) ──────────

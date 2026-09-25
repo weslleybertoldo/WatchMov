@@ -29,6 +29,22 @@ public class DownloadFailureTest {
     }
 
     @Test
+    public void falhaTemporaria_voltaPraFilaSozinha() {
+        assertTrue(DownloadFailure.isTemporaryStatus(503));   // A Hipótese do Amor, 48%, 24/09/2026
+        assertTrue(DownloadFailure.isTemporaryStatus(500));
+        assertTrue(DownloadFailure.isTemporaryStatus(502));
+        assertTrue(DownloadFailure.isTemporaryStatus(504));
+        assertTrue(DownloadFailure.isTemporaryStatus(408));
+        assertTrue(DownloadFailure.isTemporaryStatus(429));
+        assertTrue(DownloadFailure.isTemporaryStatus(0));     // sem status: rede/timeout do socket
+        // link morto e sucesso: não
+        assertFalse(DownloadFailure.isTemporaryStatus(404));
+        assertFalse(DownloadFailure.isTemporaryStatus(410));
+        assertFalse(DownloadFailure.isTemporaryStatus(403));
+        assertFalse(DownloadFailure.isTemporaryStatus(200));
+    }
+
+    @Test
     public void duplaConfirmacao_exigeOMesmoStatusDeLinkMorto() {
         assertTrue(DownloadFailure.confirmsDeadLink(410, 410));
         assertTrue(DownloadFailure.confirmsDeadLink(404, 404));

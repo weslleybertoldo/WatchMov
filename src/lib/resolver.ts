@@ -27,7 +27,11 @@ export const ABYS_FALLBACK_MS = 30000;
 export const RESOLVER_OPT_MS = 30000;   // v4.57: tempo por opcao (Fonte 6 playerflix: Blogger->VIP Player->...) antes de tentar a proxima
 export const PROXY_PORT = 8099;   // ProxyServer.PORT
 export const ABYS_PROVIDER = 'embedplayapi';   // Fonte 1: "Mostrar Opções" → Opção 1 (ABYS) / Opção 2 (BYSE)
-export function budgetFor(providerId: string): number { return providerId === ABYS_PROVIDER ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
+// Fontes cujo servidor principal é o player Abyss (motor /abyss/ + pump): a Fonte 5 (FS/HD) abre o Abyss em
+// abyssplayer.com depois de "Dublado" + servidor (25/09/2026) — antes ficava 45 s "procurando" sem clicar nada.
+export const ABYS_PROVIDERS = [ABYS_PROVIDER, 'fshd'];
+export const usesAbys = (providerId?: string) => !!providerId && ABYS_PROVIDERS.includes(providerId);
+export function budgetFor(providerId: string): number { return usesAbys(providerId) ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
 // Iframes de player em que é preciso CLICAR (opção/gate) → frame-hop (só no fallback sem injeção).
 export const HOP_HOSTS = ['playerflix.ink', 'embedplay.one', 'f7hyg4q.org'];
 // Ordem importa: 1 clique por tick e no máximo 1 por seletor por página. "text:" = por texto.
@@ -100,11 +104,18 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var dub=null;for(var li=0;li<langs.length;li++){if((langs[li].textContent||'').toLowerCase().indexOf('dublado')>=0)dub=langs[li];}var tg=dub?dub.getAttribute('data-target'):null;"
     + "var os=[],out=0;for(var ai=0;ai<all.length;ai++){var g=all[ai].closest?all[ai].closest('.players_select_items'):null;var gt=g?g.getAttribute('data-target'):null;if(tg===null||gt===null||gt===tg)os.push(all[ai]);else out++;}"
     + "if(dub&&String(dub.className).indexOf('active')<0&&!done['__dub__']){done['__dub__']=1;fire(dub);}return {os:os,out:out,kind:'ep'};};"
+    // (C) FS/HD (Fonte 5, 25/09/2026): áudio em .audio-selector (Legendado/Dublado) e servidores em .server-selector
+    // (Abyss/Streamwish). Escolhe "Dublado" 1× e cicla os servidores visíveis; sem Dublado = só legendado → filtrado.
+    + "var findFS=function(){var aud=document.querySelectorAll('.audio-selector'),srv=document.querySelectorAll('.server-selector');if(!aud.length&&!srv.length)return null;"
+    + "var dub=null;for(var i=0;i<aud.length;i++){if((aud[i].textContent||'').toLowerCase().indexOf('dublado')>=0)dub=aud[i];}"
+    + "if(!dub)return {os:[],out:srv.length||1,kind:'fs'};"
+    + "if(String(dub.className).indexOf('active')<0){if(!done['__fsdub__']){done['__fsdub__']=1;fire(dub);}return {os:[],out:0,kind:'fs'};}"
+    + "var os=[];for(var j=0;j<srv.length;j++){var g=srv[j].closest?srv[j].closest('.player-options-servers'):null;if(!g||String(g.className).indexOf('hidden')<0)os.push(srv[j]);}return {os:os,out:0,kind:'fs'};};"
     // nome curto da opcao da embedplay.one: "Opção 1 (ABYS)" → "ABYS"
     + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
     + 'var tick=function(){try{'
     + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
-    + "var f=findPF()||findEP();var os=f?f.os:[],out=f?f.out:0;"
+    + "var f=findPF()||findEP()||findFS();var os=f?f.os:[],out=f?f.out:0;"
     // embedplay.one esconde a lista atras de "Mostrar Opções" (.changeOptions) — revela uma vez
     + "if(f&&f.kind==='ep'){var co=document.querySelector('.changeOptions');if(co&&!done['__show__']&&vis(co)&&String(co.className).indexOf('hidden')<0){done['__show__']=1;fire(co);}}"
     + "if(f&&!os.length&&out&&!reported){reported=true;try{console.log('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"
@@ -126,10 +137,13 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
 // Service Worker responde content-range …/total), avisa o ProxyServer (/abyss/ready) e fica no loop
 // /abyss/next → fetch(Range) no SW → POST /abyss/push. O leitor (ExoPlayer) manda: o JS só busca o que
 // o proxy pede. Logs `WMABYS …` no console (logcat I/chromium) são o diagnóstico do emulador.
+// Laços do pump em paralelo (24/09/2026): o proxy marca cada pedaço como "em voo" e não repete. Com 1 laço só,
+// o 1080p engasgava — cada busca de 2 MiB no SW do Abyss tinha que sair em < 5 s pra acompanhar ~3,3 Mbps.
+export const ABYSS_PUMPS = 3;
 export function buildAbyssScript(sid: string, port = PROXY_PORT): string {
   return `(function(){try{
-if(!/(^|\\.)abysscdn\\.com$/.test(location.hostname)||window.__wmAbys)return;window.__wmAbys=1;
-var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0;
+if(!/(^|\\.)(abysscdn|abyssplayer)\\.com$/.test(location.hostname)||window.__wmAbys)return;window.__wmAbys=1;
+var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${ABYSS_PUMPS};
 var log=function(m){try{console.log('WMABYS '+m)}catch(_){}};
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=frame').then(function(r){log('frame '+location.hostname+' progress '+r.status)}).catch(function(e){log('progress-err '+e)});
 var srcs=null,tries=0;
@@ -157,7 +171,7 @@ clearInterval(iv);srcs=s;log('sources '+s.map(function(x){return x.q}).join(',')
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=sources').catch(function(){});
 Promise.all(s.map(meta)).then(function(){var ok=s.filter(function(x){return x.ok});if(!ok.length){log('sem meta');return}
 srcs=ok;try{var p=jwplayer();p.pause&&p.pause();document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(_){}})}catch(_){}
-return fetch(BASE+'abyss/ready?sid='+SID+'&list='+encodeURIComponent(JSON.stringify(ok.map(function(x){return{q:x.q,total:x.total}})))).then(function(r){log('ready '+r.status);pump()}).catch(function(e){log('ready-err '+e)})})},700);
+return fetch(BASE+'abyss/ready?sid='+SID+'&list='+encodeURIComponent(JSON.stringify(ok.map(function(x){return{q:x.q,total:x.total}})))).then(function(r){log('ready '+r.status);for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})})},700);
 }catch(e){try{console.log('WMABYS err '+e)}catch(_){}}})();`;
 }
 
@@ -306,13 +320,13 @@ export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; ar
 // ── plugin ─────────────────────────────────────────────────────────────────────
 export async function startResolver(o: { url: string; referer?: string; providerId?: string; startOpt?: number; budgetMs?: number }): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
-  const abys = o.providerId === ABYS_PROVIDER;
+  const abys = usesAbys(o.providerId);
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
   await Resolver.start({
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
     // v4.64: Fonte 1 também roda o ciclo de opções (lista REAL da embedplay.one) + o pump do ABYS; o antigo par
     // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
-    injectScript: abys ? buildOptionCycleScript(CLICK_STEPS_F1) + buildAbyssScript(sid) : buildOptionCycleScript() + buildBloggerScript(),
+    injectScript: abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript() + buildBloggerScript(),
     injectScriptAlt: '',
     abyssSid: sid, fallbackMs: 0,
     optMs: RESOLVER_OPT_MS,
