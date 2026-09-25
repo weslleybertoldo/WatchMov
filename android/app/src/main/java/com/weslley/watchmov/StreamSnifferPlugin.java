@@ -84,6 +84,10 @@ public class StreamSnifferPlugin extends Plugin {
         if (url == null) return false;
         String u = url.toLowerCase();
         for (String h : NOT_CONTENT_HOSTS) if (u.contains(h)) return true;
+        // Pedaço CIFRADO do player Abyss (`…sssrr.org/sora/<tamanho>/<token>`, 2 MiB): nunca toca sozinho — o ABYS toca
+        // pelo /abyss/ do ProxyServer. 25/09/2026, no celular dele: o probe pegou um /sora/ como vídeo, o auto-abrir
+        // abriu ele antes do `ready` e o player deu "Nenhum link tocou" (EOFException).
+        if (u.contains("/sora/")) return true;
         // Blogger entrega o episódio via googlevideo (source=blogger — MANTÉM); trailer/anúncio
         // do YouTube vem do mesmo CDN com source=youtube → lixo.
         return u.contains("googlevideo.com") && u.contains("source=youtube");
