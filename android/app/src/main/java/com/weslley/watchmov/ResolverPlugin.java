@@ -446,6 +446,12 @@ public class ResolverPlugin extends Plugin {
             ui.post(() -> { if (mySession == session) report("RESOLVER_OPTION_FILTER", note); });
             return;
         }
+        // 25/09/2026: resultado da pergunta da UPNS à API (diagnóstico na aba Bugs; a decisão vem no `dead|`)
+        if (body.startsWith("probe|")) {
+            final String note = body.substring(6);
+            ui.post(() -> { if (mySession == session) reportOption("RESOLVER_UPNS_PROBE", note); });
+            return;
+        }
         if (body.startsWith("skip|")) {
             final String note = body.substring(5);
             ui.post(() -> { if (mySession == session) skipOption(mySession, note); });

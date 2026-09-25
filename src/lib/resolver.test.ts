@@ -486,7 +486,7 @@ describe('resolver oculto (regras puras)', () => {
     const logs: string[] = [];
     const origLog = console.log; console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
     const w = window as unknown as Record<string, unknown>;
-    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined; w.__wmUpns = undefined;
+    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined;
     const pedidos: string[] = [];
     const fakeFetch = (u: string) => { pedidos.push(u); return Promise.resolve({ status: 404 }); };
     const loc = { hostname: 'embedplayapiupn.upns.xyz', hash: '#epzlri', href: 'https://embedplayapiupn.upns.xyz/#epzlri' };
@@ -499,12 +499,13 @@ describe('resolver oculto (regras puras)', () => {
     }
     expect(pedidos.length).toBe(1);
     expect(pedidos[0]).toContain('/api/v1/video?id=epzlri&w=');
+    expect(logs).toContain('WMOPT|probe|k=2|status=404');
     expect(logs).toContain('WMOPT|dead|k=2|reason=upns-404');
   });
 
   it('25/09: fora da UPNS não pergunta nada à API', async () => {
     const w = window as unknown as Record<string, unknown>;
-    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined; w.__wmUpns = undefined;
+    const prevInj = w.__wmInj, prevUp = w.__wmUpns; w.__wmInj = undefined;
     const pedidos: string[] = [];
     const origLog = console.log; console.log = () => {};
     vi.useFakeTimers();

@@ -107,9 +107,10 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + 'var REP=' + JSON.stringify(STEPS_REPEAT) + ',PLAY=' + JSON.stringify(STEPS_PLAY) + ',DEAD=' + JSON.stringify(DEAD_TEXTS) + ',lastAt={};'
     + "var prog=function(s){try{console.log('WMOPT|progress|k='+K+'|stage='+s+'|host='+location.hostname)}catch(_){}};"
     // UPNS: pergunta direto à API se o vídeo existe (o play dela não sai com clique automático no celular — 25/09/2026,
-    // prova no aparelho: tocou o botão e nada). 404 = apagado → a opção morre na hora em vez de gastar 30 s.
-    + "if(/upns/.test(location.hostname)&&location.hash.length>1&&!window.__wmUpns){window.__wmUpns=1;var rh='';try{rh=new URL(document.referrer).hostname.replace(/^www\\./,'')}catch(_){}"
-    + "fetch('/api/v1/video?id='+encodeURIComponent(location.hash.slice(1))+'&w='+innerWidth+'&h='+innerHeight+'&r='+encodeURIComponent(rh)).then(function(r){if(r.status===404){try{console.log('WMOPT|dead|k='+K+'|reason=upns-404')}catch(_){}}}).catch(function(){});}"
+    // prova no aparelho: tocou o botão e nada). 404 = apagado → a opção morre na hora em vez de gastar 30 s. Roda no
+    // tick (não no document-start): no aparelho o #id do vídeo ainda não estava na URL quando o script começou.
+    + "var upns=function(){if(done['__upns__']||!/upns/.test(location.hostname)||location.hash.length<2)return;done['__upns__']=1;var rh='';try{rh=new URL(document.referrer).hostname.replace(/^www\\./,'')}catch(_){}"
+    + "fetch('/api/v1/video?id='+encodeURIComponent(location.hash.slice(1))+'&w='+innerWidth+'&h='+innerHeight+'&r='+encodeURIComponent(rh)).then(function(r){try{console.log('WMOPT|probe|k='+K+'|status='+r.status)}catch(_){}if(r.status===404){try{console.log('WMOPT|dead|k='+K+'|reason=upns-404')}catch(_){}}}).catch(function(e){try{console.log('WMOPT|probe|k='+K+'|erro='+String(e).slice(0,60))}catch(_){}});};"
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
@@ -133,7 +134,7 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var os=[];for(var j=0;j<srv.length;j++){var g=srv[j].closest?srv[j].closest('.player-options-servers'):null;if(!g||String(g.className).indexOf('hidden')<0)os.push(srv[j]);}return {os:os,out:0,kind:'fs'};};"
     // nome curto da opcao da embedplay.one: "Opção 1 (ABYS)" → "ABYS"
     + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
-    + 'var tick=function(){try{'
+    + 'var tick=function(){try{upns();'
     + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
     + "if(!done['__pp__']&&document.querySelector(" + JSON.stringify(PLAYER_MARKERS) + ")){done['__pp__']=1;prog('player');}"
     // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
