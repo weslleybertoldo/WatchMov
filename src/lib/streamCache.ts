@@ -77,6 +77,12 @@ export const isExpiredUrl = (u: string | undefined | null, now = Date.now()) => 
   return t != null && now > t - 60_000;
 };
 
+// Link novo pedido sozinho pelo player (venceu/caiu no meio): antes era 1× por abertura — num filme longo
+// espelhando, o link novo também vence e o 2º pedido jogava pro servidor. Agora vale de novo se o anterior foi
+// há 3 min ou mais (o link novo tocou e venceu); pedido em menos de 3 min = o novo nem tocou → servidor (25/09/2026).
+export const RECAPTURE_MIN_GAP_MS = 180_000;
+export const canRecaptureAgain = (lastAtMs: number, now = Date.now()) => lastAtMs <= 0 || now - lastAtMs >= RECAPTURE_MIN_GAP_MS;
+
 export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, season?: number, episode?: number) {
   list = list.filter(s => !s.ephemeral && !isEphemeralUrl(s.url));
   if (!list.length) return;
