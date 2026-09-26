@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickNext, type Box } from './tvNav';
+import { inicioDaSetinha, pickNext, type Box } from './tvNav';
 
 const box = (left: number, top: number, w: number, h: number): Box => ({ left, top, right: left + w, bottom: top + h });
 
@@ -58,5 +58,28 @@ describe('pickNext', () => {
     expect(pickNext(grade[1], grade, 'down')).toBe(4);
     expect(pickNext(grade[4], grade, 'up')).toBe(1);
     expect(pickNext(grade[4], grade, 'right')).toBe(5);
+  });
+});
+
+// Servidor na TV: barra do topo (52 de altura, o Ligar ao lado dos Links) e a página do servidor logo abaixo.
+describe('inicioDaSetinha', () => {
+  const ligar = box(700, 8, 60, 36);
+  const pagina = box(0, 52, 912, 461);
+
+  it('nasce 32 abaixo do topo da página, no meio do botão, e sai no topo da página', () => {
+    expect(inicioDaSetinha(ligar, pagina)).toEqual({ x: 730, y: 84, exitY: 52 });
+  });
+
+  it('botão por cima da página → nasce 32 abaixo dele e ainda sai no topo da página', () => {
+    expect(inicioDaSetinha(box(390, 56, 180, 32), pagina)).toEqual({ x: 480, y: 120, exitY: 52 });
+  });
+
+  it('botão na ponta → a setinha fica dentro da página', () => {
+    expect(inicioDaSetinha(box(-20, 8, 20, 36), pagina)?.x).toBe(8);
+  });
+
+  it('sem página abaixo do botão → não liga', () => {
+    expect(inicioDaSetinha(box(390, 500, 180, 32), pagina)).toBeNull();
+    expect(inicioDaSetinha(ligar, box(0, 52, 30, 461))).toBeNull();
   });
 });

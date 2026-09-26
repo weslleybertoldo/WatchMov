@@ -3,6 +3,7 @@ package com.weslley.watchmov;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.os.Message;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.webkit.WebChromeClient;
@@ -90,6 +91,9 @@ public class MainActivity extends BridgeActivity {
         if (TvMode.isTv(this)) tirarBrowserNaTv();
 
         WebView webView = this.bridge.getWebView();
+        if (TvMode.isTv(this)) margemSeguraTv(webView);
+        // Setinha do Servidor na TV: o toque vai pra tela cheia do player da página quando ela está aberta.
+        TvCursor.alvo(() -> customView != null ? customView : webView);
         // UA REAL deste WebView → proxy/sniffer/player reenviam o mesmo (googlevideo/Blogger
         // prende a URL ao UA que a gerou; com UA fixo diferente o replay dava 403).
         ProxyServer.attach(getApplicationContext());
@@ -153,6 +157,7 @@ public class MainActivity extends BridgeActivity {
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
                 if (!TvMode.isTv(MainActivity.this)) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 applyImmersive(true);
+                TvCursor.paraFrente();
             }
 
             @Override
@@ -231,6 +236,31 @@ public class MainActivity extends BridgeActivity {
         // castStatus (4 s). Idempotente; sem sessão gravada não faz nada.
         try { ProxyServer.ensure(getApplicationContext()); } catch (Exception ignored) {}
         try { MediaNotificationService.restoreIfAlive(this, null); } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onPause() {
+        // Player nativo por cima ou app pro fundo: a setinha sai e o foco volta pro Ligar.
+        TvCursor.desligar("pausa");
+        super.onPause();
+    }
+
+    // Setinha do Servidor ligada: setas e OK são dela (antes do WebView). O resto (Voltar…) segue normal.
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (TvCursor.onKey(event)) return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    // TV: a TV corta um pouco das bordas da imagem (overscan; 26/09/2026, "cortando bem pouco nas laterais").
+    // O app fica dentro da margem segura, com fundo preto em volta. A tela cheia do player da página não muda.
+    private void margemSeguraTv(WebView wv) {
+        android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+        int mx = Math.round(m.widthPixels * TvCursor.MARGEM_SEGURA), my = Math.round(m.heightPixels * TvCursor.MARGEM_SEGURA);
+        ((View) wv.getParent()).setBackgroundColor(android.graphics.Color.BLACK);
+        android.view.ViewGroup.MarginLayoutParams lp = (android.view.ViewGroup.MarginLayoutParams) wv.getLayoutParams();
+        lp.setMargins(mx, my, mx, my);
+        wv.setLayoutParams(lp);
     }
 
     // Liga/desliga tela cheia imersiva. NÃO mexe no layoutInDisplayCutoutMode pra
