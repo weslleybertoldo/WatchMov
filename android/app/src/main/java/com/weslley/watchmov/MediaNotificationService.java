@@ -98,6 +98,7 @@ public class MediaNotificationService extends Service {
     private boolean polling = false;
     private int pollGen = 0;          // invalida ticks em voo quando o poll para/reinicia
     private int pollFails = 0;
+    private long tvPosGravada = 0;   // última posição da TV gravada no "continuar" (headless)
 
     public static void setController(Controller c) {
         controller = c;
@@ -303,7 +304,7 @@ public class MediaNotificationService extends Service {
         if (headless == null) return;
         acquireLocks();
         if (polling) return;
-        polling = true; pollFails = 0; pollGen++;
+        polling = true; pollFails = 0; pollGen++; tvPosGravada = 0;
         handler.removeCallbacks(pollTick);
         handler.post(pollTick);
     }
@@ -361,6 +362,7 @@ public class MediaNotificationService extends Service {
             pollFails = 0;
             sSub = (sPlaying ? "Reproduzindo " : "Pausado ") + onde(s.mode);
             render();
+            gravarPosicaoTv(s);
         } else if (++pollFails >= HEADLESS_FAILS_TO_END) {
             // TV parou (fim do buffer/episódio, Stop no controle dela) ou sumiu da rede →
             // sessão encerrada: apaga a gravada, zera os estáticos e a notificação some.
@@ -368,6 +370,17 @@ public class MediaNotificationService extends Service {
             return;
         }
         handler.postDelayed(pollTick, HEADLESS_POLL_MS);
+    }
+
+    // Player fechado com a TV tocando (25/09/2026): o "continuar" ficava com a posição do FECHAR — a TV seguiu até 19 min,
+    // caiu, a sessão foi apagada e o título reabriu em 14. Grava a posição da TV onde o player grava (o player reaberto lê
+    // dela) e avisa o app, que salva o progresso se o título ainda estiver aberto nele.
+    private void gravarPosicaoTv(CastSessionStore.Session s) {
+        final long pos = sPos;
+        if (s.key == null || !CastLocal.gravarPosicaoTv(pos, tvPosGravada)) return;
+        tvPosGravada = pos;
+        try { getSharedPreferences(PlayerActivity.RESUME_PREFS, MODE_PRIVATE).edit().putLong(s.key, pos).apply(); } catch (Exception ignored) {}
+        NativePlayerPlugin.reportProgress(s.url, pos, sDur);
     }
 
     private void headlessToggle() {

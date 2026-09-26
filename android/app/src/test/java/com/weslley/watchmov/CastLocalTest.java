@@ -33,4 +33,17 @@ public class CastLocalTest {
     @Test public void nuncaMenorQueAPosicao() {
         assertEquals(7_000_000, CastLocal.duracao(true, 0, 0, 999_000, 7_000_000));
     }
+
+    // 25/09/2026: player fechado, TV tocando até 19 min, caiu → o título reabriu em 14 (a posição do fechar).
+    @Test public void gravaPosicaoDaTvQuandoAndou5s() {
+        assertTrue(CastLocal.gravarPosicaoTv(1_140_000, 0));          // 1ª leitura
+        assertTrue(CastLocal.gravarPosicaoTv(1_145_000, 1_140_000));  // andou 5 s
+        assertTrue(CastLocal.gravarPosicaoTv(600_000, 1_140_000));    // voltou (seek pra trás)
+    }
+
+    @Test public void naoGravaInicioNemPassoPequeno() {
+        assertFalse(CastLocal.gravarPosicaoTv(2_000, 0));             // < 3 s: igual ao saveResume do player
+        assertFalse(CastLocal.gravarPosicaoTv(1_143_000, 1_140_000)); // só 3 s depois da última
+        assertFalse(CastLocal.gravarPosicaoTv(0, 1_140_000));         // TV sem posição
+    }
 }
