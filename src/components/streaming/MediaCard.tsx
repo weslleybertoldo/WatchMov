@@ -34,6 +34,8 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   return (
     <button
       onClick={onClick}
+      data-tv-card
+      data-tv-key={`${media.type}-${media.tmdbId}`}
       className="relative shrink-0 w-28 sm:w-32 text-left group"
     >
       {rank !== undefined && (
@@ -50,7 +52,7 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
           Novo
         </span>
       ) : null}
-      <div className={`rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>
+      <div className={`tv-poster rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>
         {media.posterUrl ? (
           <img
             src={media.posterUrl}
