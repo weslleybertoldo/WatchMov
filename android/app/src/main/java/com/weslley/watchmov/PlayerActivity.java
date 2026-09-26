@@ -876,13 +876,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // no DLNA ela manda; a da TV só entra quando o local não sabe (não abriu). Chromecast
     // continua com o RemoteMediaClient (confiável). Se esta tela abriu OUTRO título com a
     // sessão viva (activeCastKey ≠ resumeKey), o local não fala da mídia da TV → só TV.
-    // E nunca menor que a posição.
+    // E nunca menor que a posição. Espelhando ABYS o local fica parado (CastLocal): vale a duração que ele já sabia.
     private long castDurMs() {
         boolean mesmaMidia = activeCastKey == null || activeCastKey.equals(resumeKey);
         long local = mesmaMidia && player != null && player.getDuration() > 0 ? player.getDuration() : 0;
-        long tv = Math.max(0, lastRemoteDurMs);
-        long dur = castMode == CAST_DLNA ? (local > 0 ? local : tv) : (tv > 0 ? tv : local);
-        return Math.max(dur, lastRemotePosMs);
+        long guardada = resumeKey != null && resumeKey.equals(activeCastDurKey) ? activeCastDurMs : 0;
+        return CastLocal.duracao(castMode == CAST_DLNA, local, mesmaMidia ? guardada : 0, lastRemoteDurMs, lastRemotePosMs);
     }
 
     // ABYS (25/09/2026): qualidade que terminou de medir com o player já aberto (a 1ª pronta abriu o filme).
@@ -985,7 +984,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (startMs > 0) player.seekTo(startMs);
         player.setPlayWhenReady(!castSilentStart);
         if (castSilentStart) player.setVolume(0f);
-        player.prepare();
+        // TV tocando fonte de 1 leitor (ABYS): o prepare() mesmo em silêncio abria leitor na sessão da TV e derrubava
+        // o dela (25/09/2026 21:07: "leitor substituído" → TV parada 18 s depois → recarga). Carrega ao parar de espelhar.
+        if ((castSilentStart || castMode != CAST_NONE) && CastLocal.umLeitor(url)) localPendente = true;
+        else { localPendente = false; player.prepare(); }
         progressHandler.removeCallbacks(progressTick);
         progressHandler.postDelayed(progressTick, 5000);
     }
@@ -1313,6 +1315,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private static String activeCastKey;
     private static String activeCastTitle;     // o que está na TV (pro atalho do topo do app)
     private static String activeCastUrl;       // fonte que a TV está puxando (a do último envio aceito)
+    private static long activeCastDurMs;       // duração que o player local sabia antes de parar (espelhando ABYS)…
+    private static String activeCastDurKey;    // …e de qual título ela é
 
     /** Espelhamento ativo? (sobrevive ao fechar o player — os estados são estáticos.) */
     public static boolean isCasting() { return activeCastMode != CAST_NONE; }
@@ -1337,7 +1341,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     /** "Parar" na notificação com o app fechado / TV parou sozinha: sessão encerrada. */
     static void clearActiveCast() {
         activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeDlnaRenderCtrl = null;
-        activeCastKey = null; activeCastTitle = null; activeCastUrl = null;
+        activeCastKey = null; activeCastTitle = null; activeCastUrl = null; activeCastDurMs = 0; activeCastDurKey = null;
     }
 
     // Grava a sessão de cast em prefs (CastSessionStore): é o que deixa o serviço seguir
@@ -1362,6 +1366,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private static String castRelinkKey = null;
     private static long castRelinkAt = 0;
     private boolean castSilentStart = false;   // abriu já espelhando → não toca local
+    private boolean localPendente = false;     // player local com o vídeo posto mas sem prepare() (espelhando ABYS)
     // Símbolos de TEXTO (não emoji): ⏸/▶ caíam na fonte de emoji colorida do Android.
     private static final String SYM_PAUSE = "❚❚", SYM_PLAY = "►", SYM_NEXT = "►|";
     private long recastAtMs = 0;               // instante do recast (p/ diagnosticar queda)
@@ -1434,6 +1439,26 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     }
 
     // Conectou: pausa o player local e mostra o overlay de controle da TV.
+    // Fonte de 1 leitor (ABYS, 25/09/2026): o player local lendo a mesma sessão da TV derrubava o leitor dela
+    // ("abyss: leitor substituído" → TV parada → recarga). Para de carregar (stop mantém item e posição) e guarda a
+    // duração que ele já sabia; volta a carregar em stopCasting (ou em retomarLocal, se a TV recusar). true = parou.
+    private boolean pararLocalSeUmLeitor(String url) {
+        if (player == null || localPendente || !CastLocal.umLeitor(url)) return false;
+        long d = player.getDuration();
+        if (d > 0) { activeCastDurMs = d; activeCastDurKey = resumeKey; }
+        player.pause(); player.stop();
+        localPendente = true;
+        return true;
+    }
+
+    // A TV recusou o envio: o player local volta de onde estava.
+    private void retomarLocal(long posMs) {
+        if (player == null || !localPendente) return;
+        localPendente = false;
+        if (posMs > 0) player.seekTo(posMs);
+        player.prepare(); player.setPlayWhenReady(true);
+    }
+
     private void startCasting(int mode, String ctrl) {
         castGen++; // nova sessão — invalida qualquer poll da sessão anterior
         castMode = mode; dlnaCtrl = ctrl; dlnaPaused = false;
@@ -1448,6 +1473,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // Pausa E muta o local: às vezes só o pause não pegava (continuava tocando) e
         // o áudio do celular disputava foco com a TV → oscilava. Mudo garante silêncio.
         if (player != null) { player.pause(); player.setPlayWhenReady(false); player.setVolume(0f); }
+        pararLocalSeUmLeitor(currentUrl);   // pausado, o ExoPlayer seguia enchendo o buffer na sessão ABYS da TV
         updateCastButton(true); // botão verde (conectado) nos 2 modos
         if (castStatusTv != null) setCastStatus(mode == CAST_CC ? "Reproduzindo no Chromecast" : "Reproduzindo na TV (DLNA)");
         // IP do proxy num Toast (o texto do overlay corta) — pro teste do /ping.
@@ -1620,7 +1646,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         dlnaRenderCtrl = null; activeDlnaRenderCtrl = null;
         remoteVolTarget = -1; remoteVolAppliedAt = 0; volKnown = false;
         if (volSeek != null) volSeek.setVisibility(View.GONE);
-        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; activeCastUrl = null; // sessão encerrada
+        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; activeCastUrl = null; activeCastDurMs = 0; activeCastDurKey = null; // sessão encerrada
         CastSessionStore.clear(this);             // encerrada de verdade → nada pra restaurar ao reabrir
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
@@ -1630,6 +1656,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (castMsgTv != null) castMsgTv.setVisibility(View.GONE);   // some com a faixa
         castSilentStart = false;                  // sem espelho, o local volta a tocar
         if (player != null) player.setVolume(1f); // restaura o áudio local
+        if (localPendente && player != null) { localPendente = false; if (tvPos > 0) player.seekTo(tvPos); player.prepare(); }
         if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
         castDeliveredH = 0; updateCastQualityLabel();   // próximo cast recomeça sem valor velho
         refreshMediaNotification();               // notificação volta a falar do local
@@ -2362,6 +2389,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                     final long castFromMs = player != null ? player.getCurrentPosition() : 0; // continua de onde estava
                     final String srcUrl = currentUrl, srcRef = mReferer, srcTitle = mTitle;
                     final int qH = castQualityH;
+                    // A TV já lê o vídeo no SetAVTransportURI/Play: com fonte de 1 leitor (ABYS) o local para antes.
+                    final boolean pausouLocal = pararLocalSeUmLeitor(srcUrl);
                     castMsg("Enviando para " + dev.name + "…", 0);
                     new Thread(() -> {
                         // A TV não alcança a URL do CDN (punycode/HLS) nem um content:// →
@@ -2398,7 +2427,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                         // tem que continuar de onde o celular estava).
                         runOnUiThread(() -> {
                             castMsg(ferr == null ? "Tocando na TV — o app vira controle" : "TV recusou: " + ferr, ferr == null ? 4000 : 10000);
-                            if (ferr != null) return;
+                            if (ferr != null) { if (pausouLocal) retomarLocal(castFromMs); return; }
                             activeDlnaRenderCtrl = dev.renderUrl;      // volume da TV (RenderingControl), se ela expõe
                             startCasting(CAST_DLNA, dev.controlUrl);
                             activeCastUrl = srcUrl;
