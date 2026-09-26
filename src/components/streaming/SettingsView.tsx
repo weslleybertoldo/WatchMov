@@ -1,5 +1,6 @@
 import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Bookmark, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { isTv } from '@/lib/device';
 
 export interface WatchedStats {
   moviesCount: number;
@@ -36,11 +37,12 @@ interface SettingsViewProps {
   onDownload: () => void;
   onServers: () => void;
   onBugs: () => void;
+  onTv: () => void;
   onSignOut: () => void;
   onBack: () => void;
 }
 
-export default function SettingsView({ stats, onList, onHistory, onDownload, onServers, onBugs, onSignOut, onBack }: SettingsViewProps) {
+export default function SettingsView({ stats, onList, onHistory, onDownload, onServers, onBugs, onTv, onSignOut, onBack }: SettingsViewProps) {
   return (
     <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -70,6 +72,13 @@ export default function SettingsView({ stats, onList, onHistory, onDownload, onS
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onServers}>
         <Server className="w-4 h-4" /> Servidores
       </Button>
+
+      {/* Login da TV (Fire TV): TVs conectadas + Conectar (código que a TV mostra). Na própria TV não aparece. */}
+      {!isTv() && (
+        <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onTv}>
+          <Tv className="w-4 h-4" /> Entrar na TV
+        </Button>
+      )}
 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onBugs}>
         <Bug className="w-4 h-4" /> Bugs

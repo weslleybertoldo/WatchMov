@@ -47,6 +47,8 @@ public class TvMode extends Plugin {
     public void get(PluginCall call) {
         JSObject r = new JSObject();
         r.put("tv", isTv(getContext()));
+        r.put("brand", android.os.Build.MANUFACTURER);   // "Amazon" no Fire TV
+        r.put("model", android.os.Build.MODEL);          // "AFTSSS", "t950s_be311"…
         call.resolve(r);
     }
 }

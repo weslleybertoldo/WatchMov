@@ -17,6 +17,7 @@ import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard from '@/components/streaming/MediaCard';
 import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
+import TvDevicesView from '@/components/streaming/TvDevicesView';
 import NoticesView from '@/components/streaming/NoticesView';
 import { useNotices } from '@/lib/appNotices';
 import { startMp4Listener, useMp4All } from '@/lib/mp4Download';
@@ -144,6 +145,7 @@ export default function Index() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [serversOpen, setServersOpen] = useState(false);    // aba Servidores (favorito do Assistir)
+  const [tvOpen, setTvOpen] = useState(false);              // aba Entrar na TV (TVs conectadas + Conectar)
   const [bugsOpen, setBugsOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);          // Minha Lista (agora dentro do Painel)
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null); // canal ao vivo tocando
@@ -275,6 +277,7 @@ export default function Index() {
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
     if (serversOpen) { setServersOpen(false); return true; }
+    if (tvOpen) { setTvOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
     if (listFilter) { setListFilter(null); return true; }
     if (listOpen) { setListOpen(false); return true; }
@@ -285,7 +288,7 @@ export default function Index() {
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
     return false;
-  }, [liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
+  }, [liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
   useAndroidBackButton(handleBack);
 
   if (store.loading) {
@@ -332,7 +335,7 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
+  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -411,6 +414,8 @@ export default function Index() {
             <DownloadView onBack={() => setDownloadOpen(false)} />
           ) : serversOpen ? (
             <ServersView onBack={() => setServersOpen(false)} />
+          ) : tvOpen ? (
+            <TvDevicesView onBack={() => setTvOpen(false)} />
           ) : bugsOpen ? (
             <BugsView onBack={() => setBugsOpen(false)} />
           ) : listOpen ? (
@@ -434,7 +439,7 @@ export default function Index() {
               )}
             </div>
           ) : (
-            <SettingsView stats={watchedStats} onList={() => setListOpen(true)} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+            <SettingsView stats={watchedStats} onList={() => setListOpen(true)} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
           )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
