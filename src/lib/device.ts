@@ -14,9 +14,13 @@ export function isTv(): boolean {
   return tv;
 }
 
+export function isFireTv(): boolean {
+  return tv && /amazon/i.test(brand);
+}
+
 // Nome que aparece na lista "TVs conectadas" do celular.
 export function tvDeviceInfo(): { name: string; model: string } {
-  return { name: /amazon/i.test(brand) ? 'Fire TV' : 'TV Android', model };
+  return { name: isFireTv() ? 'Fire TV' : 'TV Android', model };
 }
 
 // Sem resposta do nativo no prazo (ou erro) = celular: a abertura do app nunca fica presa aqui.

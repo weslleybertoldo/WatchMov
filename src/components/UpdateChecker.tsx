@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Download, X, CheckCircle, RefreshCw, AlertTriangle } from "lucide-react";
 import { downloadAndInstall } from "@/lib/apkUpdater";
+import { isFireTv, isTv } from "@/lib/device";
 
 const CURRENT_VERSION = __APP_VERSION__;
 const BUILD_DATE = __BUILD_DATE__;   // carimbo de quando este APK foi gerado
@@ -64,6 +65,18 @@ export function checkErrorMessage(status?: number): string {
   if (status)
     return "Não consegui verificar a atualização agora.";
   return "Sem conexão para verificar a atualização.";
+}
+
+/**
+ * O que fazer depois que o app abriu as configurações pra liberar a instalação. Na TV não tem
+ * toque (é o OK do controle), e no Fire TV a tela que abre é "Opções para desenvolvimento".
+ */
+export function permissionHint(tv: boolean, fireTv: boolean): string {
+  if (fireTv)
+    return 'Na tela que abriu, entre em "Instalar aplicativos desconhecidos" e ative o WatchMov. Depois volte e aperte Tentar novamente.';
+  if (tv)
+    return 'Nas configurações que abriram, permita instalar apps desconhecidos para o WatchMov. Depois volte e aperte Tentar novamente.';
+  return 'Permita "instalar apps desconhecidos" para o WatchMov nas configuracoes que abriram, depois toque em baixar novamente.';
 }
 
 export default function UpdateChecker() {
@@ -151,7 +164,8 @@ export default function UpdateChecker() {
     return (
       <>
         {forced && <div className="fixed inset-0 z-40 bg-black/80" />}
-        <div className={`fixed left-4 right-4 z-50 mx-auto max-w-md ${forced ? "top-1/2 -translate-y-1/2" : "bottom-4"}`}>
+        {/* role=dialog: na TV o foco do controle fica no aviso até baixar ou fechar (tvNav) */}
+        <div role="dialog" aria-label="Atualização disponível" className={`fixed left-4 right-4 z-50 mx-auto max-w-md ${forced ? "top-1/2 -translate-y-1/2" : "bottom-4"}`}>
           <div className="bg-card border border-blue-300 dark:border-blue-700 rounded-xl p-4 shadow-lg">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1">
@@ -182,12 +196,12 @@ export default function UpdateChecker() {
               <>
                 {needsPerm && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Permita "instalar apps desconhecidos" para o WatchMov nas
-                    configuracoes que abriram, depois toque em baixar novamente.
+                    {permissionHint(isTv(), isFireTv())}
                   </p>
                 )}
                 <button
                   type="button"
+                  data-tv-autofocus
                   onClick={handleDownload}
                   className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 transition-colors"
                 >

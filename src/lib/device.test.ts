@@ -60,4 +60,20 @@ describe("device (TV ou celular)", () => {
     await d.initDevice();
     expect(d.isTv()).toBe(false);
   });
+
+  it("Fire TV = TV da Amazon", async () => {
+    get.mockResolvedValue({ tv: true, brand: "Amazon", model: "AFTSSS" });
+    const d = await load();
+    await d.initDevice();
+    expect(d.isFireTv()).toBe(true);
+    expect(d.tvDeviceInfo().name).toBe("Fire TV");
+  });
+
+  it("TV Android de outra marca não é Fire TV", async () => {
+    get.mockResolvedValue({ tv: true, brand: "Amlogic", model: "t950s" });
+    const d = await load();
+    await d.initDevice();
+    expect(d.isFireTv()).toBe(false);
+    expect(d.tvDeviceInfo().name).toBe("TV Android");
+  });
 });
