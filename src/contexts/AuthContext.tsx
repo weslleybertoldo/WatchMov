@@ -95,7 +95,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      // Só ESTE aparelho: o padrão ("global") derrubava a conta no celular e nas TVs juntos
+      // (26/09/2026: Sair na box deslogou o celular e o Fire TV).
+      await supabase.auth.signOut({ scope: "local" });
     } catch (e) {
       console.warn("[Auth] Erro ao fazer signOut:", e);
     } finally {

@@ -2,8 +2,16 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
+import { isTv } from "@/lib/device";
+import { TvLogin } from "@/components/TvLogin";
 
 export function LoginScreen() {
+  // TV: sem navegador pro Google (Fire TV) — entra pelo celular (QR + código).
+  if (isTv()) return <TvLogin />;
+  return <GoogleLogin />;
+}
+
+function GoogleLogin() {
   const { signInWithGoogle } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

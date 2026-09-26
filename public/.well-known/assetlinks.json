@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.weslley.watchmov",
+      "sha256_cert_fingerprints": [
+        "A7:F1:EE:8D:0E:D1:14:A7:DE:6A:B4:A6:EF:7A:E1:BB:18:7C:ED:2B:1D:69:C2:77:6A:CE:FA:2E:06:68:9A:DA"
+      ]
+    }
+  }
+]

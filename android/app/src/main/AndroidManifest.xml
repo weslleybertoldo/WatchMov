@@ -49,6 +49,15 @@
                 <data android:scheme="com.weslley.watchmov" />
             </intent-filter>
 
+            <!-- QR do login da TV lido pela câmera do celular: abre direto no app (App Link verificado
+                 pelo /.well-known/assetlinks.json do site); sem o app, abre o site, que também aprova. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="watchmovbr.vercel.app" android:path="/tv" />
+            </intent-filter>
+
         </activity>
 
         <activity
