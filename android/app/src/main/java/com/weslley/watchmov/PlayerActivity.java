@@ -104,6 +104,11 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private boolean localOnly = false;            // abriu OUTRO ep com a TV espelhando e escolheu "Não": toca só aqui
     private String[] urls;
     private boolean errorHandled = false; // evita tratar o MESMO link 2x (ExoPlayer às vezes emite erro repetido)
+    // O link atual toca SEM imagem (o aparelho não tem decodificador pro vídeo) e já foi tratado. Sem troca de link,
+    // o aviso fica fixo na tela (o READY/BUFFERING não mexe nele).
+    private boolean semImagem = false;
+    // Teto de qualidade por filme/série NESTE aparelho (26/09/2026): altura que tocou sem imagem aqui.
+    private static final String TETO_PREFS = "wm_teto_video";
     private boolean everReady = false;    // o link atual já tocou (READY) → erro/buffering depois disso é "no meio"
     // Engasgos (buffering depois de já ter tocado) → aba Bugs como PLAYER_ENGASGOU, no máx. 1×/min (24/09/2026:
     // "fica engasgando no 1080p" não deixava rastro nenhum).
@@ -193,7 +198,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         mimes = getIntent().getStringArrayExtra(EXTRA_MIMES);
         qualities = getIntent().getStringArrayExtra(EXTRA_QUALITIES);
         // ABYS (25/09/2026): a qualidade maior chegou (/abyss/add) antes da tela abrir → já começa nela.
-        int bestAbyss = LiveQuality.bestIndex(currentUrl, urls, qualities);
+        // Teto (26/09/2026): nunca na altura que já tocou sem imagem neste aparelho pra esse filme/série.
+        int bestAbyss = LiveQuality.bestIndex(currentUrl, urls, qualities, tetoVideo(getIntent().getStringExtra(EXTRA_KEY)));
         if (bestAbyss >= 0) currentUrl = urls[bestAbyss];
         final String referer = getIntent().getStringExtra(EXTRA_REFERER);
         mReferer = referer;
@@ -585,6 +591,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                                                           androidx.media3.common.Player.PositionInfo newPos, int reason) {
                 if (reason == androidx.media3.common.Player.DISCONTINUITY_REASON_SEEK) seekAtMs = System.currentTimeMillis();
             }
+            // Aparelho sem decodificador pro vídeo (26/09/2026: box sem AV1 — a Fonte 1 em 1080p tocava só o som,
+            // tela preta). O ExoPlayer não escolhe a faixa de vídeo e segue com o áudio, sem erro nenhum.
+            // Espelhando, quem mostra a imagem é a TV — não mexe.
+            @Override public void onTracksChanged(Tracks tracks) {
+                if (semImagem || activeCastMode != CAST_NONE) return;
+                if (!tracks.containsType(C.TRACK_TYPE_VIDEO) || tracks.isTypeSupported(C.TRACK_TYPE_VIDEO, true)) return;
+                semImagem = true;
+                tratarSemImagem(tracks);
+            }
             @Override public void onPlayerError(PlaybackException error) {
                 // Detalha o motivo (código + causa: ex. "Response code: 403", codec, etc.)
                 // pra diagnosticar o SuperFlix — o Weslley manda esse texto.
@@ -649,6 +664,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             @Override public void onPlaybackStateChanged(int state) {
                 refreshMediaNotification();
                 noteStall(state);
+                if (semImagem) return;   // o aviso de "sem imagem" fica na tela
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
                 else if (state == androidx.media3.common.Player.STATE_BUFFERING) {
                     int i = linkIndex(), n = urls != null ? urls.length : 0;
@@ -924,7 +940,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         int cur = linkIndex();
         String curLabel = cur >= 0 && cur < nq.length && nq[cur] != null && !nq[cur].isEmpty() ? nq[cur] : qualityFromUrl(currentUrl);
         urls = nu; mimes = nm; qualities = nq;
-        if (player == null || activeCastMode != CAST_NONE || !LiveQuality.shouldSwitch(curLabel, quality)) return;
+        if (player == null || activeCastMode != CAST_NONE || !LiveQuality.shouldSwitch(curLabel, quality, tetoVideo(resumeKey))) return;
         long pos = player.getCurrentPosition();
         android.widget.Toast.makeText(this, "Trocando pra " + quality, android.widget.Toast.LENGTH_SHORT).show();
         playUrl(url, mime, pos);
@@ -937,11 +953,49 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         return -1;
     }
 
+    // Teto salvo pro filme/série dessa chave do "continuar" (0 = sem teto) — ver LiveQuality.capKey.
+    private int tetoVideo(String key) {
+        String k = LiveQuality.capKey(key);
+        return k == null ? 0 : getSharedPreferences(TETO_PREFS, MODE_PRIVATE).getInt(k, 0);
+    }
+
+    // O link atual toca sem imagem (26/09/2026, box sem AV1). ABYS: guarda o teto do filme/série neste aparelho e
+    // desce pra maior qualidade abaixo do mesmo motor, na mesma posição. Sem opção abaixo (ou outra fonte) → aviso.
+    private void tratarSemImagem(Tracks tracks) {
+        String mime = null;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() == C.TRACK_TYPE_VIDEO && g.length > 0) { mime = g.getTrackFormat(0).sampleMimeType; break; }
+        }
+        int h = LiveQuality.currentHeight(currentUrl, urls, qualities);
+        int teto = 0, idx = -1;
+        String k = LiveQuality.capKey(resumeKey);
+        if (LiveQuality.abyssSid(currentUrl) != null && h > 0) {
+            teto = LiveQuality.mergeCap(tetoVideo(resumeKey), h);
+            if (k != null && teto > 0) getSharedPreferences(TETO_PREFS, MODE_PRIVATE).edit().putInt(k, teto).apply();
+            idx = LiveQuality.bestIndex(currentUrl, urls, qualities, teto);
+        }
+        String destino = idx < 0 ? null
+            : qualities != null && idx < qualities.length && qualities[idx] != null && !qualities[idx].isEmpty()
+                ? qualities[idx] : qualityFromUrl(urls[idx]);
+        NativePlayerPlugin.reportError(currentUrl, 0, 0, "VIDEO_SEM_IMAGEM",
+            "[tv] mime=" + mime + " h=" + h + " teto=" + teto + " chave=" + k + " → " + (destino != null ? destino : "aviso"),
+            mMime, mReferer, mTitle);
+        if (destino != null) {
+            android.widget.Toast.makeText(this, "Este aparelho não mostra o " + h + "p — trocando pra " + destino,
+                android.widget.Toast.LENGTH_LONG).show();
+            playUrl(urls[idx], mimes != null && idx < mimes.length ? mimes[idx] : null, Math.max(0, player.getCurrentPosition()));
+        } else {
+            status.setText("Este aparelho não mostra a imagem deste vídeo. Troque de fonte em ▣ Servidor ou Links.");
+            status.setVisibility(View.VISIBLE);
+        }
+    }
+
     private void playUrl(String url, String mime, long startMs) {
         currentUrl = url;
         everReady = false; stallStartMs = 0;
         ProxyServer.currentTitle = mTitle;   // rótulo dos eventos que o proxy emite (CAST_MASTER_INFO)
         errorHandled = false; // novo link → volta a permitir tratar erro
+        semImagem = false;    // …e a conferir se ele mostra imagem
         // Link novo = qualidade entregue desconhecida até o proxy/player dizerem.
         localVideoH = 0; castDeliveredH = 0; fileHeightPending = false;
         updateCastQualityLabel();
@@ -2623,7 +2677,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             // Espelhando: o local NÃO toca (os dois puxariam o mesmo HLS pelo mesmo
             // proxy). Parar o espelhamento devolve o áudio/play local.
             castSilentStart = activeCastMode != CAST_NONE && !localOnly;   // localOnly: esta tela não mexe na TV
-            playUrl(url, mime, start);
+            // Teto do aparelho (26/09/2026): o próximo episódio já abre abaixo da altura que não mostra imagem aqui.
+            String nextUrl = url, nextMime = mime;
+            int teto = castSilentStart ? 0 : tetoVideo(key);
+            if (teto > 0 && LiveQuality.currentHeight(url, urls, qualities) >= teto) {
+                int b = LiveQuality.bestIndex(url, urls, qualities, teto);
+                if (b >= 0) { nextUrl = urls[b]; nextMime = mimes != null && b < mimes.length ? mimes[b] : mime; }
+            }
+            playUrl(nextUrl, nextMime, start);
             if (activeCastMode != CAST_NONE && !localOnly) recastCurrent(start);
             refreshMediaNotification();   // título/⏭ do novo episódio
         });
