@@ -236,6 +236,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         shareBtn.setOnClickListener(v -> onShareButton());
         refreshShareBtn();
 
+        // Na TV o vídeo já está na tela grande: sem espelhar pra outra TV e sem mandar pra outro app.
+        final boolean tv = TvMode.isTv(this);
+        if (tv) { castBtn.setVisibility(View.GONE); shareBtn.setVisibility(View.GONE); }
+
         downloadBtn = view.findViewById(R.id.wm_download);
         if (downloadBtn != null) {
             downloadBtn.setColorFilter(Color.WHITE);
@@ -282,7 +286,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         bar.addView(nextBtn);
         nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
         if (urls != null && urls.length > 1) bar.addView(links);
-        bar.addView(qualityBtn); bar.addView(speed); bar.addView(resize); bar.addView(rotate);
+        bar.addView(qualityBtn); bar.addView(speed); bar.addView(resize);
+        if (!tv) bar.addView(rotate);   // TV não tem retrato
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
         // A barra de cima some/aparece junto com os controles do player (o título e os

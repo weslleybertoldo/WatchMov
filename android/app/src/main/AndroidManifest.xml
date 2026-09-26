@@ -11,9 +11,15 @@
         <package android:name="com.mxtech.videoplayer.pro" />
     </queries>
 
+    <!-- O mesmo APK roda na TV (Fire TV / Android TV): sem tela de toque e com o launcher
+         leanback. required=false = o celular continua instalando igual. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
     <application
         android:usesCleartextTraffic="true"
         android:allowBackup="true"
+        android:banner="@drawable/banner_tv"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -23,6 +29,7 @@
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
+            android:banner="@drawable/banner_tv"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
@@ -31,6 +38,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- Ícone na tela inicial da TV (usa o android:banner) -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
 
             <intent-filter android:autoVerify="true">
