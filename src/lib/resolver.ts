@@ -353,8 +353,11 @@ export function clearResolverCooldown(providerId: string): void {
 // Por que o resolvedor NÃO vai rodar nesta abertura — pra mostrar na tela e gravar na aba Bugs.
 // Antes ele calava e o servidor abria como se o recurso não existisse.
 export type ResolverSkip = 'off' | 'cache' | 'server-mode' | 'cooldown' | 'tried' | 'unavailable' | null;
-export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; armed: boolean; cooldown: boolean; tried: boolean }): ResolverSkip {
+// serverChosen = ele escolheu o SERVIDOR agora (▣ Servidor do reprodutor, picker): não roda, mas é 'server-mode'
+// mesmo se o reprodutor tinha aberto do cache — o chip mostra o "Ligar" (26/09/2026: sumia até reabrir o título).
+export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; armed: boolean; cooldown: boolean; tried: boolean; serverChosen?: boolean }): ResolverSkip {
   if (!o.enabled) return 'off';
+  if (o.serverChosen) return 'server-mode';
   if (o.cacheOpen) return 'cache';
   if (!o.armed) return 'server-mode';
   if (o.cooldown) return 'cooldown';

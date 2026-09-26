@@ -393,19 +393,21 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // seguidos → 2 h). Achou → o efeito (C) abre o reprodutor; não achou → servidor como sempre.
   // 15/09/2026: quando NÃO roda, diz POR QUÊ — chip na tela (resolverPaused) e RESOLVER_SKIP na aba
   // Bugs. Antes calava: a pausa de 24 h herdada da v4.52 fez ele "parecer desativado".
+  // 26/09/2026: com o SERVIDOR escolhido (preferIframe) o resolvedor continua sem rodar, mas o motivo vira
+  // 'server-mode' e o chip mostra o "Ligar" — sumia depois do ▣ Servidor do reprodutor e só voltava ao reabrir.
   const [resolverPaused, setResolverPaused] = useState<ResolverSkip>(null);
   const [resolverRetry, setResolverRetry] = useState(0);   // "Tentar agora" re-dispara este efeito
   useEffect(() => {
-    const base = open && isNative() && !!embedUrl && !ownStream && !preferIframe;
+    const base = open && isNative() && !!embedUrl && !ownStream;
     if (!base) { setResolverPaused(null); if (resolvingRef.current && !ownStream) setResolving(false); return; }
     const reason = resolverSkipReason({
       enabled: resolverEnabled(), cacheOpen: cacheOpenRef.current, armed: autoArmedRef.current,
-      cooldown: resolverOnCooldown(providerId), tried: resolveTriedRef.current === embedUrl,
+      cooldown: resolverOnCooldown(providerId), tried: resolveTriedRef.current === embedUrl, serverChosen: preferIframe,
     });
     if (reason) {
       if (resolvingRef.current) setResolving(false);
       setResolverPaused(reason === 'cache' ? null : reason);   // do cache o reprodutor já abre: sem aviso
-      if (reason !== 'cache' && reason !== 'tried') {
+      if (reason !== 'cache' && reason !== 'tried' && !preferIframe) {   // Servidor escolhido agora: não é diagnóstico
         const until = reason === 'cooldown' ? ' until=' + new Date(resolverCooldownUntil(providerId)).toISOString() : '';
         logPlaybackError({ url: embedUrl!, code: 0, name: 'RESOLVER_SKIP', cause: `reason=${reason}${until} provider=${providerId}`, title });
       }
@@ -444,9 +446,13 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   }, [open, providerId]);
 
   // "Tentar agora"/"Ligar" no chip: esquece a pausa da fonte, re-arma o auto-abrir e roda de novo.
+  // Sai do servidor escolhido e zera o "já abriu"/cache/links ao vivo desta abertura (26/09/2026): é o
+  // mesmo estado de reabrir o título — senão, depois do ▣ Servidor, o resolvedor não roda e o reprodutor não reabre.
   const retryResolver = () => {
     clearResolverCooldown(providerId);
+    setPreferIframe(false);
     autoArmedRef.current = true; resolveTriedRef.current = null;
+    autoFiredRef.current = null; cacheOpenRef.current = false; freshKeysRef.current = new Set();
     setResolverRetry(n => n + 1);
   };
 
@@ -813,8 +819,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             )}
             <p className="text-white/50 text-xs">Abre sozinho no reprodutor quando achar. Se demorar, você pode abrir o servidor.</p>
             <div className="flex flex-wrap gap-2 justify-center">
-              {/* Escolheu o SERVIDOR → desarma o auto-abrir (regra dele: "não é pra ficar me jogando"). */}
-              <Button size="sm" variant="outline" onClick={() => { autoArmedRef.current = false; setResolving(false); stopResolver(); }}>Abrir servidor</Button>
+              {/* Escolheu o SERVIDOR → desarma o auto-abrir (regra dele: "não é pra ficar me jogando") e deixa o "Ligar" à vista. */}
+              <Button size="sm" variant="outline" onClick={() => { autoArmedRef.current = false; setResolving(false); stopResolver(); setResolverPaused('server-mode'); }}>Abrir servidor</Button>
               <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setSourceOpen(true)} data-tv-autofocus>Trocar fonte</Button>
             </div>
           </div>
@@ -824,7 +830,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-white/50 text-xs">Tente outra fonte. Se preferir, abra o servidor desta fonte.</p>
             <div className="flex flex-wrap gap-2 justify-center">
               <Button size="sm" onClick={() => setSourceOpen(true)} data-tv-autofocus>Trocar fonte</Button>
-              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => { autoArmedRef.current = false; setResolverPaused(null); }}>Abrir servidor</Button>
+              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => { autoArmedRef.current = false; setResolverPaused('server-mode'); }}>Abrir servidor</Button>
             </div>
           </div>
         ) : (
@@ -842,8 +848,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
 
       {/* Resolvedor NÃO rodou (pausa da fonte / "Servidor" neste título / desligado / não achou) → diz
           por quê e deixa tentar (15/09/2026). Sumia calado e parecia "desativado". Fica logo abaixo da
-          barra do topo (top-14) pra não cobrir o título nem os botões. */}
-      {!nativeOwn && !preferIframe && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && isNative() && (
+          barra do topo (top-14) pra não cobrir o título nem os botões. Vale também com o Servidor escolhido (26/09/2026). */}
+      {!nativeOwn && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && isNative() && (
         <div className="absolute left-1/2 -translate-x-1/2 top-14 z-30 flex items-center gap-2 rounded-full bg-card/95 border border-border px-3 py-1.5 shadow-lg text-xs animate-fade-in" data-resolver-paused={resolverPaused}>
           <span className="text-muted-foreground">
             {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
