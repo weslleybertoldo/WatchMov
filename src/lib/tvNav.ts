@@ -66,10 +66,19 @@ function visivel(el: HTMLElement): boolean {
   return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05;
 }
 
-// Com um diálogo aberto (Radix: role=dialog/alertdialog) o foco não sai dele.
+// Com um diálogo aberto (Radix: role=dialog/alertdialog) o foco não sai dele. Camada por cima de tudo sem ser
+// diálogo (player "Procurando…", canal ao vivo: um `fixed` que cobre a tela) também prende o foco — senão ele
+// ficava no botão escondido atrás dela.
 function raiz(): ParentNode {
   const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]');
-  return dialogs.length ? dialogs[dialogs.length - 1] : document;
+  if (dialogs.length) return dialogs[dialogs.length - 1];
+  const w = window.innerWidth, h = window.innerHeight;
+  for (let el = document.elementFromPoint(w / 2, h / 2) as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
+    if (el.getAttribute('aria-hidden') === 'true' || getComputedStyle(el).position !== 'fixed') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width >= w * 0.9 && r.height >= h * 0.9) return el;
+  }
+  return document;
 }
 
 function candidatos(): HTMLElement[] {
@@ -102,7 +111,9 @@ function focoInicial(): HTMLElement | null {
 
 function semFoco(): boolean {
   const a = document.activeElement as HTMLElement | null;
-  return !a || a === document.body || !a.isConnected || !visivel(a);
+  if (!a || a === document.body || !a.isConnected || !visivel(a)) return true;
+  const r = raiz();
+  return r !== document && !(r as HTMLElement).contains(a);   // foco ficou atrás da camada de cima
 }
 
 function mover(dir: Dir): boolean {

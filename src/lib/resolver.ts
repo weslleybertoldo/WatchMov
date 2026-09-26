@@ -1,6 +1,7 @@
 // src/lib/resolver.ts
 import { useEffect, useState } from 'react';
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { isTv } from './device';
 
 // Resolvedor OCULTO (pedido dele 14/09/2026: "quando clicar em assistir abra direto no
 // reprodutor"). O nativo (ResolverPlugin.java) carrega a página da fonte num WebView invisível
@@ -165,6 +166,8 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
 // Laços do pump em paralelo (24/09/2026): o proxy marca cada pedaço como "em voo" e não repete. Com 1 laço só,
 // o 1080p engasgava — cada busca de 2 MiB no SW do Abyss tinha que sair em < 5 s pra acompanhar ~3,3 Mbps.
 export const ABYSS_PUMPS = 3;
+// TV (W4, 26/09/2026): box de 1 GB / Fire TV Stick — 2 laços (cada pedaço de 2 MiB em voo pesa no WebView do motor).
+export function abyssPumps(): number { return isTv() ? 2 : ABYSS_PUMPS; }
 // Qualidade atrasada (25/09/2026, pedido dele): a 1ª qualidade medida abre o filme depois desta folga — as que
 // terminarem até lá entram juntas; as que chegarem depois vão por /abyss/add (menu do player + troca sozinha pra
 // maior, decisão dele "1"). Antes esperava as 3: no Pecadores a 360p ficou pronta, a 720p/1080p (sem erro, só
@@ -177,7 +180,7 @@ export const ABYSS_PIECE_TIMEOUT_MS = 20000;
 export function buildAbyssScript(sid: string, port = PROXY_PORT): string {
   return `(function(){try{
 if(!/(^|\\.)(abysscdn|abyssplayer)\\.com$/.test(location.hostname)||window.__wmAbys)return;window.__wmAbys=1;
-var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${ABYSS_PUMPS},LATE=${ABYSS_LATE_MS},PT=${ABYSS_PIECE_TIMEOUT_MS};
+var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${abyssPumps()},LATE=${ABYSS_LATE_MS},PT=${ABYSS_PIECE_TIMEOUT_MS};
 var log=function(m){try{console.log('WMABYS '+m)}catch(_){}};
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=frame').then(function(r){log('frame '+location.hostname+' progress '+r.status)}).catch(function(e){log('progress-err '+e)});
 var srcs=null,tries=0;

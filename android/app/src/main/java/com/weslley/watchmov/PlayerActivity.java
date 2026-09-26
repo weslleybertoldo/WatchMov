@@ -8,6 +8,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -19,6 +20,7 @@ import android.widget.TextView;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
@@ -161,6 +163,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private final String[] resizeNames = { "Ajustar", "Zoom", "Esticar" };
     private int resizeIdx = 0;
     private boolean landscape = true;
+    private boolean tvMode = false;               // Fire TV / Android TV: teclas do controle (dispatchKeyEvent)
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -211,13 +214,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        final boolean tv = TvMode.isTv(this);
+        tvMode = tv;
 
         // PlayerView com controller customizado (wm_player_control_view.xml): título +
         // botões assistido/espelhar ficam DENTRO da barra de baixo, junto de legenda/config.
         view = (PlayerView) getLayoutInflater().inflate(R.layout.wm_player_view, root, false);
         view.setKeepScreenOn(true);
         view.setResizeMode(resizeModes[resizeIdx]);
-        view.setControllerShowTimeoutMs(3500);
+        view.setControllerShowTimeoutMs(tv ? 8000 : 3500);   // TV: dá tempo de achar o botão com o controle
         root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         wmTitleTv = view.findViewById(R.id.wm_title);
@@ -237,7 +242,6 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         refreshShareBtn();
 
         // Na TV o vídeo já está na tela grande: sem espelhar pra outra TV e sem mandar pra outro app.
-        final boolean tv = TvMode.isTv(this);
         if (tv) { castBtn.setVisibility(View.GONE); shareBtn.setVisibility(View.GONE); }
 
         downloadBtn = view.findViewById(R.id.wm_download);
@@ -278,16 +282,30 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         });
 
         bar.addView(back);
-        View spacer = new View(this);
-        bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
-        bar.addView(server);
-        bar.addView(dlBtn);
-        bar.addView(fwd60);
-        bar.addView(nextBtn);
+        // Na TV os botões da direita ficam numa faixa que rola: na box 720p os 9 passavam da tela e o "Tela"
+        // sumia; com o controle o foco anda pela faixa e ela rola até o botão.
+        LinearLayout grupo = bar;
+        if (tv) {
+            grupo = new LinearLayout(this);
+            grupo.setOrientation(LinearLayout.HORIZONTAL);
+            grupo.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            android.widget.HorizontalScrollView faixa = new android.widget.HorizontalScrollView(this);
+            faixa.setHorizontalScrollBarEnabled(false);
+            faixa.setFillViewport(true);
+            faixa.addView(grupo, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            bar.addView(faixa, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        } else {
+            View spacer = new View(this);
+            bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        }
+        grupo.addView(server);
+        grupo.addView(dlBtn);
+        grupo.addView(fwd60);
+        grupo.addView(nextBtn);
         nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
-        if (urls != null && urls.length > 1) bar.addView(links);
-        bar.addView(qualityBtn); bar.addView(speed); bar.addView(resize);
-        if (!tv) bar.addView(rotate);   // TV não tem retrato
+        if (urls != null && urls.length > 1) grupo.addView(links);
+        grupo.addView(qualityBtn); grupo.addView(speed); grupo.addView(resize);
+        if (!tv) grupo.addView(rotate);   // TV não tem retrato
         root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
 
         // A barra de cima some/aparece junto com os controles do player (o título e os
@@ -295,6 +313,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // escondem sozinhos com ele).
         view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
             bar.setVisibility(visibility);
+            if (tv && visibility == View.VISIBLE && getCurrentFocus() == null) focarPlayTv();
         });
 
         status = new TextView(this);
@@ -519,9 +538,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // o sistema paginava e o vídeo engasgava. 48 MiB ≈ 80 s de 1080p; acima dos 50 s mínimos para no teto.
         // Começa com 10 s prontos (eram 5): o motor /abyss/ entrega os 1ºs pedaços juntos (pump paralelo) e o
         // filme abre pré-carregado em vez de engasgar logo no início (pedido dele, 25/09/2026).
+        // TV (W4, 26/09/2026): box de 1 GB e Fire TV Stick de ~900 MB → metade: 30–60 s e teto de 24 MiB (≈ 40 s de
+        // 1080p). Na box o sistema matava processos com ele assistindo ("Low on memory", ZRAM trocando = engasgo).
+        final boolean tvBuf = TvMode.isTv(this);
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-            .setBufferDurationsMs(50000, 120000, 10000, 15000)
-            .setTargetBufferBytes(48 * 1024 * 1024)
+            .setBufferDurationsMs(tvBuf ? 30000 : 50000, tvBuf ? 60000 : 120000, 10000, 15000)
+            .setTargetBufferBytes((tvBuf ? 24 : 48) * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build();
 
@@ -2655,6 +2677,94 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     @Override
     public void onBackPressed() { finishWithResult(false, false); }
 
+    // Controle da TV (W4 do app do Fire TV): com os controles escondidos ←/→ voltam/avançam 10 s, OK pausa ou
+    // continua e ↑/↓ mostram os controles com o foco no play. Com os controles na tela o foco anda entre os botões
+    // (Android) e cada tecla segura os controles mais 8 s. ⏪/⏩/⏯ do controle valem sempre.
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        if (tvMode && view != null && player != null && teclaTv(e)) return true;
+        return super.dispatchKeyEvent(e);
+    }
+
+    private boolean teclaTv(KeyEvent e) {
+        final int code = e.getKeyCode();
+        final boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
+        final boolean primeira = down && e.getRepeatCount() == 0;
+        switch (code) {
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: case KeyEvent.KEYCODE_MEDIA_REWIND:
+                if (down) pularTv(code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 10000 : -10000);
+                return true;
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE: case KeyEvent.KEYCODE_MEDIA_PLAY: case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (primeira) alternarTv(code);
+                return true;
+            default:
+        }
+        if (view.isControllerFullyVisible()) {
+            if (down) view.showController();   // renova os 8 s
+            return false;                       // setas e OK seguem pro foco dos botões
+        }
+        switch (code) {
+            case KeyEvent.KEYCODE_DPAD_LEFT: case KeyEvent.KEYCODE_DPAD_RIGHT:
+                if (down) pularTv(code == KeyEvent.KEYCODE_DPAD_RIGHT ? 10000 : -10000);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_CENTER: case KeyEvent.KEYCODE_ENTER: case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                if (primeira) { alternarTv(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE); mostrarControlesTv(); }
+                return true;
+            case KeyEvent.KEYCODE_DPAD_UP: case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (primeira) mostrarControlesTv();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void pularTv(long delta) {
+        long pos = Math.max(0, player.getCurrentPosition() + delta);
+        long dur = player.getDuration();
+        if (dur != C.TIME_UNSET && dur > 0) pos = Math.min(pos, Math.max(0, dur - 1000));
+        player.seekTo(pos);
+        long s = pos / 1000;
+        avisoTv((delta > 0 ? "⏩ +" : "⏪ −") + (Math.abs(delta) / 1000) + " s   "
+            + (s >= 3600 ? (s / 3600) + ":" + String.format(java.util.Locale.ROOT, "%02d", (s / 60) % 60) : String.valueOf((s / 60) % 60))
+            + ":" + String.format(java.util.Locale.ROOT, "%02d", s % 60));
+    }
+
+    private void alternarTv(int code) {
+        boolean tocar = code == KeyEvent.KEYCODE_MEDIA_PLAY || (code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && !player.getPlayWhenReady());
+        if (tocar) player.play(); else player.pause();
+    }
+
+    private void mostrarControlesTv() {
+        view.showController();
+        focarPlayTv();
+    }
+
+    private void focarPlayTv() {
+        View pp = view.findViewById(androidx.media3.ui.R.id.exo_play_pause);
+        if (pp != null) pp.requestFocus();
+    }
+
+    // Aviso curto no alto da tela (±10 s com os controles escondidos): some sozinho em 1,5 s.
+    private TextView avisoTv;
+    private final Runnable esconderAvisoTv = () -> { if (avisoTv != null) avisoTv.setVisibility(View.GONE); };
+
+    private void avisoTv(String texto) {
+        if (avisoTv == null) {
+            avisoTv = new TextView(this);
+            avisoTv.setTextColor(Color.WHITE);
+            avisoTv.setTextSize(22);
+            avisoTv.setPadding(40, 18, 40, 18);
+            avisoTv.setBackground(pillBg());
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            lp.topMargin = 48;
+            ((ViewGroup) view.getParent()).addView(avisoTv, lp);
+        }
+        avisoTv.setText(texto);
+        avisoTv.setVisibility(View.VISIBLE);
+        progressHandler.removeCallbacks(esconderAvisoTv);
+        progressHandler.postDelayed(esconderAvisoTv, 1500);
+    }
+
     @Override
     protected void onPause() {
         saveResume();
@@ -2674,6 +2784,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     @Override
     protected void onDestroy() {
         ResolverPlugin.devolverMotor(this);
+        // Fechou o vídeo sem espelhar → o motor ABYS morre junto (pedido dele 26/09/2026). Antes dependia do JS pedir
+        // o stop: com a MainActivity recriada por falta de memória o JS novo não conhece o motor e ele ficava vivo.
+        if (isFinishing() && !isCasting()) ResolverPlugin.encerrarMotorSemTv();
         if (current == this) current = null;
         MediaNotificationService.clearController(this);
         // Fechou o player COM a TV tocando → o serviço assume sozinho (headless): a
