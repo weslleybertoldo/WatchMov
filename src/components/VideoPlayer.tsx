@@ -458,6 +458,14 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownStream]);
 
+  // TV: a lista de fontes abre com o foco na fonte atual (sem toque, o foco ficava no botão lá embaixo).
+  const sourceListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!sourceOpen || !isTv()) return;
+    const lista = sourceListRef.current;
+    (lista?.querySelector<HTMLElement>('[data-atual]') ?? lista?.querySelector<HTMLElement>('button'))?.focus();
+  }, [sourceOpen]);
+
   // Fechou o título → o motor (WebView oculto do ABYS) morre com ele.
   useEffect(() => { if (!open) { keepEngineRef.current = false; stopResolver(false); } }, [open]);
 
@@ -717,10 +725,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <Layers className="w-5 h-5" />
             </Button>
             {sourceOpen && (
-              <div className="fixed left-1/2 -translate-x-1/2 top-14 z-30 bg-card border border-border rounded-lg py-1 w-56 max-w-[90vw] shadow-xl">
+              <div ref={sourceListRef} className="fixed left-1/2 -translate-x-1/2 top-14 z-30 bg-card border border-border rounded-lg py-1 w-56 max-w-[90vw] shadow-xl">
                 <p className="px-3 py-1 text-[10px] text-muted-foreground">Fontes (troque se estiver em inglês ou não carregar)</p>
                 {available.map(p => (
-                  <button key={p.id} onClick={() => pickSource(p.id)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
+                  <button key={p.id} onClick={() => pickSource(p.id)} data-atual={p.id === providerId ? '1' : undefined} className="w-full flex items-center justify-between px-3 py-2 text-sm text-foreground hover:bg-secondary">
                     {p.name}
                     {p.id === providerId && <Check className="w-4 h-4 text-primary" />}
                   </button>
@@ -807,7 +815,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <div className="flex flex-wrap gap-2 justify-center">
               {/* Escolheu o SERVIDOR → desarma o auto-abrir (regra dele: "não é pra ficar me jogando"). */}
               <Button size="sm" variant="outline" onClick={() => { autoArmedRef.current = false; setResolving(false); stopResolver(); }}>Abrir servidor</Button>
-              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
+              <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setSourceOpen(true)} data-tv-autofocus>Trocar fonte</Button>
             </div>
           </div>
         ) : resolverPaused === 'unavailable' ? (
@@ -815,7 +823,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             <p className="text-white">Não identificou vídeo, troque de fonte</p>
             <p className="text-white/50 text-xs">Tente outra fonte. Se preferir, abra o servidor desta fonte.</p>
             <div className="flex flex-wrap gap-2 justify-center">
-              <Button size="sm" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
+              <Button size="sm" onClick={() => setSourceOpen(true)} data-tv-autofocus>Trocar fonte</Button>
               <Button size="sm" variant="ghost" className="text-white/70" onClick={() => { autoArmedRef.current = false; setResolverPaused(null); }}>Abrir servidor</Button>
             </div>
           </div>

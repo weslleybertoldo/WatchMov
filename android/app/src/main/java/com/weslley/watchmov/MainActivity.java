@@ -87,6 +87,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ResolverPlugin.class);
         registerPlugin(TvMode.class);
         super.onCreate(savedInstanceState);
+        if (TvMode.isTv(this)) tirarBrowserNaTv();
 
         WebView webView = this.bridge.getWebView();
         // UA REAL deste WebView → proxy/sniffer/player reenviam o mesmo (googlevideo/Blogger
@@ -244,6 +245,23 @@ public class MainActivity extends BridgeActivity {
             c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         } else {
             c.show(WindowInsetsCompat.Type.systemBars());
+        }
+    }
+
+    // TV (W4, 26/09/2026): o plugin Browser liga o Chrome por trás a cada volta pro app (bindCustomTabsService +
+    // warmup, pro login do Google abrir rápido). Na TV o login é pelo QR e, na box de 1 GB, o sistema matava e
+    // religava o Chrome em loop com ele assistindo (22 mortes em 8 min) → o plugin sai da ponte e não liga mais
+    // nada. Não dá pra só soltar depois de ligar: o onPause do plugin soltaria de novo e o Android derruba o app
+    // ("Service not registered"). Falhou (Capacitor mudou por dentro) = fica como antes.
+    private void tirarBrowserNaTv() {
+        try {
+            java.lang.reflect.Field f = com.getcapacitor.Bridge.class.getDeclaredField("plugins");
+            f.setAccessible(true);
+            Object mapa = f.get(this.bridge);
+            if (mapa instanceof java.util.Map && ((java.util.Map<?, ?>) mapa).remove("Browser") != null)
+                android.util.Log.i("WatchMov", "TV: plugin Browser fora (Chrome não é ligado por trás)");
+        } catch (Throwable t) {
+            android.util.Log.w("WatchMov", "TV: não deu pra tirar o plugin Browser: " + t);
         }
     }
 }

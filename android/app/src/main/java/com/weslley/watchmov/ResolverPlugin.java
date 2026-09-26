@@ -266,7 +266,28 @@ public class ResolverPlugin extends Plugin {
     public void stop(final PluginCall call) {
         final boolean keep = Boolean.TRUE.equals(call.getBoolean("keep", false));
         // Fechar o título com a TV tocando pelo motor não pode derrubar a fonte dela (quem para é a próxima busca).
-        ui.post(() -> { if ((keep || alimentaTv()) && engine) pauseInternal(); else stopInternal(); call.resolve(); });
+        ui.post(() -> {
+            if ((keep || alimentaTv()) && engine) pauseInternal();
+            else {
+                stopInternal();
+                // Motor de uma MainActivity anterior (recriada por falta de memória): o JS de agora não o conhece.
+                ResolverPlugin dono = motorDono;
+                if (dono != null && dono != this && !dono.alimentaTv()) dono.stopInternal();
+            }
+            call.resolve();
+        });
+    }
+
+    /** Player fechou sem espelhar (W4, 26/09/2026): o motor ABYS não tem mais quem leia — morre aqui, sem depender
+     *  do JS (com a MainActivity recriada o JS novo não conhece o motor e ele seguia vivo gastando memória). */
+    static void encerrarMotorSemTv() {
+        ResolverPlugin p = motorDono;
+        if (p == null) return;
+        p.ui.post(() -> {
+            if (motorDono != p || p.alimentaTv()) return;
+            android.util.Log.i("WatchMov", "motor ABYS encerrado: player fechou sem espelhar");
+            p.stopInternal();
+        });
     }
 
     /** O motor deste plugin é a fonte do espelhamento ativo (o link que a TV puxa é /abyss/<sid desta sessão>/). */
