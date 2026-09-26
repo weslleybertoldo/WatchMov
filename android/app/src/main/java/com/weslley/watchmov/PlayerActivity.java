@@ -203,7 +203,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
         long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
-        final long resolvedStart = savedPos > 3000 ? savedPos : startMs;
+        // Reabriu o título que a TV está tocando: a posição é a DA TV (o serviço seguiu lendo com o player fechado).
+        // A salva é a do fechar — 25/09/2026 a TV voltou de 13:11 pra 6:51 ao reabrir.
+        long tvPos = activeCastMode != CAST_NONE && resumeKey != null && resumeKey.equals(activeCastKey) ? MediaNotificationService.castPosMs() : 0;
+        final long resolvedStart = tvPos > 3000 ? tvPos : savedPos > 3000 ? savedPos : startMs;
         if (resumeKey != null) resizeIdx = resumePrefs.getInt(resumeKey + "_resize", 0);   // modo de tela salvo por título
 
         FrameLayout root = new FrameLayout(this);
@@ -680,7 +683,22 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // segue na TV): reabre o overlay/controles sem re-castar (pausa o local de novo).
         else if (activeCastMode != CAST_NONE && resumeKey != null && resumeKey.equals(activeCastKey)) {
             if (activeCastMode == CAST_DLNA && activeDlnaCtrl != null) {
+                // A fonte que a TV puxa pode ter morrido ao reabrir: o link ABYS é da página oculta, e a volta ao
+                // player resolve de novo e encerra a sessão antiga (18:59 de 25/09/2026: "abyss: sessão encerrada",
+                // a TV tocou o que tinha no buffer e parou) → manda o link novo já.
+                final boolean fonteMorta = activeCastUrl != null && !activeCastUrl.equals(currentUrl) && !ProxyServer.abyssAlive(activeCastUrl);
                 startCasting(CAST_DLNA, activeDlnaCtrl);
+                if (fonteMorta) {
+                    NativePlayerPlugin.reportError(currentUrl, 0, 0, "CAST_FONTE_TROCADA",
+                        "[reaberto] a fonte da TV fechou (" + activeCastUrl + ") → link novo em " + resolvedStart + "ms", mMime, mReferer, mTitle);
+                    recastStopFirst = true;
+                    recastStatusMsg = "Retomando na TV com o link novo…";
+                    recastCurrent(resolvedStart);
+                } else {
+                    // Vigia também aqui (antes só no 1º envio e no recast): TV que já parou ou trava depois é vista.
+                    armCastWatchdog("reaberto", resolvedStart);
+                    castStall.expect(castSentAtMs, resolvedStart, false);
+                }
             } else if (activeCastMode == CAST_CC) {
                 try {
                     com.google.android.gms.cast.framework.CastSession cs = com.google.android.gms.cast.framework.CastContext.getSharedInstance(this).getSessionManager().getCurrentCastSession();
@@ -1293,11 +1311,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private static String activeDlnaCtrl;
     private static String activeCastKey;
     private static String activeCastTitle;     // o que está na TV (pro atalho do topo do app)
+    private static String activeCastUrl;       // fonte que a TV está puxando (a do último envio aceito)
 
     /** Espelhamento ativo? (sobrevive ao fechar o player — os estados são estáticos.) */
     public static boolean isCasting() { return activeCastMode != CAST_NONE; }
     public static String castKey() { return activeCastKey; }
     public static String castTitle() { return activeCastTitle; }
+    public static String castUrl() { return activeCastUrl; }
 
     /**
      * Processo NOVO com a TV ainda tocando (MediaNotificationService.restoreIfAlive): repõe
@@ -1310,12 +1330,13 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         activeDlnaCtrl = s.mode == CAST_DLNA ? s.dlnaCtrl : null;
         activeDlnaRenderCtrl = s.renderCtrl;
         activeCastKey = s.key; activeCastTitle = s.title;
+        activeCastUrl = s.url;
     }
 
     /** "Parar" na notificação com o app fechado / TV parou sozinha: sessão encerrada. */
     static void clearActiveCast() {
         activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeDlnaRenderCtrl = null;
-        activeCastKey = null; activeCastTitle = null;
+        activeCastKey = null; activeCastTitle = null; activeCastUrl = null;
     }
 
     // Grava a sessão de cast em prefs (CastSessionStore): é o que deixa o serviço seguir
@@ -1550,6 +1571,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 final String fe = err, fres = res;
                 runOnUiThread(() -> {
                     if (fe == null) {
+                        activeCastUrl = srcUrl;
                         armCastWatchdog("recast", startFromMs);   // vigia: estado/tráfego/travou
                         NativePlayerPlugin.reportError(srcUrl, 0, 0, "RECAST_ACEITO",
                             "[recast] " + fres + " " + warm, mMime, srcRef, tt);
@@ -1561,6 +1583,11 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                         castMsg("TV recusou o episódio: " + fe + " — toque em Próximo de novo", 8000);
                         NativePlayerPlugin.reportError(srcUrl, 0, 0, "RECAST_DLNA_FALHOU",
                             "[recast] " + fe + " | " + fres + " " + warm, mMime, srcRef, tt);
+                        if (stopFirstNow && castMode == CAST_DLNA) {
+                            new Thread(() -> { try { DlnaCastPlugin.controlSync(ctrl, "Stop"); } catch (Exception ignored) {} }).start();
+                            armCastWatchdog("recast-falhou", startFromMs);
+                            castStall.expect(castSentAtMs, startFromMs, false);
+                        }
                     }
                 });
                 if (err == null && startFromMs > 3000) seekWithRetry(ctrl, startFromMs, "recast");
@@ -1592,7 +1619,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         dlnaRenderCtrl = null; activeDlnaRenderCtrl = null;
         remoteVolTarget = -1; remoteVolAppliedAt = 0; volKnown = false;
         if (volSeek != null) volSeek.setVisibility(View.GONE);
-        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; // sessão encerrada
+        activeCastMode = CAST_NONE; activeDlnaCtrl = null; activeCastKey = null; activeCastTitle = null; activeCastUrl = null; // sessão encerrada
         CastSessionStore.clear(this);             // encerrada de verdade → nada pra restaurar ao reabrir
         updateCastButton(false); // volta o botão pro branco (desconectado)
         progressHandler.removeCallbacks(castPoll);
@@ -1671,7 +1698,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (r != null) r.seek(new com.google.android.gms.cast.MediaSeekOptions.Builder().setPosition(Math.max(0, absMs)).build());
         } else if (castMode == CAST_DLNA && dlnaCtrl != null) {
             final String c = dlnaCtrl; final long t = Math.max(0, absMs);
-            castStall.reset(android.os.SystemClock.elapsedRealtime());   // posição pulou de propósito: não é travamento
+            castStall.expect(android.os.SystemClock.elapsedRealtime(), t, true);   // pulou de propósito: referência = alvo, mesmo 00:00
             new Thread(() -> { try { DlnaCastPlugin.seekSync(c, t); } catch (Exception ignored) {} }).start();
         }
     }
@@ -1796,7 +1823,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         final long wall = System.currentTimeMillis();
         final int upErr = ProxyServer.lastErrorStatus(wall - 90_000, castTvIp);
         final boolean expired = LinkExpiry.isExpired(currentUrl, wall);
-        CastStall.Action act = CastStall.decide(ev, expired, upErr, castLastResendAt < 0 ? -1 : now - castLastResendAt, castResends);
+        CastStall.Action act = CastStall.decide(ev, expired, upErr, castLastResendAt < 0 ? -1 : now - castLastResendAt, castResends, castStall.sinceSeek(now));
         if (act == CastStall.Action.RELINK && (offline || resumeKey == null)) act = CastStall.Action.RESEND;   // arquivo baixado não tem link novo
         NativePlayerPlugin.reportError(currentUrl, 0, upErr, ev == CastStall.Event.FROZEN ? "CAST_TV_CONGELOU" : "CAST_TV_CAIU",
             "[meio] acao=" + act + " pos=" + lastRemotePosMs + "ms dur=" + dur + "ms estado=" + fst + " vencido=" + expired
@@ -2357,7 +2384,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                             + " volume=" + (dev.renderUrl != null ? "sim" : "NAO(sem RenderingControl)")
                             + " posLocal=" + castFromMs + "ms " + fres + " total=" + ms + "ms " + warm + " url=" + castUrl;
                         if (ferr == null) NativePlayerPlugin.reportError(srcUrl, 0, 0, "DLNA_CONECTADO", base, mMime, srcRef, srcTitle);
-                        else NativePlayerPlugin.reportError(srcUrl, 0, 0, "DLNA_FALHOU", "erro=" + ferr + " " + base, mMime, srcRef, srcTitle);
+                        else {
+                            NativePlayerPlugin.reportError(srcUrl, 0, 0, "DLNA_FALHOU", "erro=" + ferr + " " + base, mMime, srcRef, srcTitle);
+                            // A TV já pode ter aceitado a mídia antes do Play estourar: sem Stop ela fica "Conectando
+                            // <título>" com o celular já desconectado (25/09/2026).
+                            try { DlnaCastPlugin.controlSync(dev.controlUrl, "Stop"); } catch (Exception ignored) {}
+                        }
                         // Mostra o overlay JÁ (o seek leva alguns segundos) e SÓ DEPOIS
                         // dispara o seek: o startCasting incrementa o castGen, e o
                         // seekWithRetry usa esse gen como guarda — disparado antes, ele
@@ -2368,6 +2400,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                             if (ferr != null) return;
                             activeDlnaRenderCtrl = dev.renderUrl;      // volume da TV (RenderingControl), se ela expõe
                             startCasting(CAST_DLNA, dev.controlUrl);
+                            activeCastUrl = srcUrl;
                             armCastWatchdog("inicial", castFromMs);   // vigia: estado/tráfego/travou (antes só no recast)
                             // Continua na posição atual do reprodutor (ex.: 30min → abre em
                             // 30min). COM retry+confirmação: o Seek logo após o Play é

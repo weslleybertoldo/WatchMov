@@ -76,28 +76,95 @@ public class CastStallTest {
 
     @Test
     public void decide_linkMortoPegaLinkNovo() {
-        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, true, 0, -1, 0));
-        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.STOPPED, false, 410, -1, 0));
-        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, false, 403, -1, 0));
-        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.STOPPED, false, 404, -1, 0));
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, true, 0, -1, 0, -1));
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.STOPPED, false, 410, -1, 0, -1));
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, false, 403, -1, 0, -1));
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.STOPPED, false, 404, -1, 0, -1));
     }
 
     @Test
     public void decide_travouSemLinkMortoReenviaOMesmo() {
-        assertEquals(CastStall.Action.RESEND, CastStall.decide(CastStall.Event.FROZEN, false, 0, -1, 0));
-        assertEquals(CastStall.Action.RESEND, CastStall.decide(CastStall.Event.STOPPED, false, 504, -1, 0));
-        assertEquals("reenviou faz tempo", CastStall.Action.RESEND, CastStall.decide(CastStall.Event.FROZEN, false, 0, 10 * 60_000, 1));
+        assertEquals(CastStall.Action.RESEND, CastStall.decide(CastStall.Event.FROZEN, false, 0, -1, 0, -1));
+        assertEquals(CastStall.Action.RESEND, CastStall.decide(CastStall.Event.STOPPED, false, 504, -1, 0, -1));
+        assertEquals("reenviou faz tempo", CastStall.Action.RESEND, CastStall.decide(CastStall.Event.FROZEN, false, 0, 10 * 60_000, 1, -1));
     }
 
     @Test
     public void decide_travouDeNovoLogoDepoisDoReenvio_pegaLinkNovo() {
-        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, false, 0, 60_000, 1));
-        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, false, 0, 10 * 60_000, CastStall.MAX_RESENDS));
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, false, 0, 60_000, 1, -1));
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.FROZEN, false, 0, 10 * 60_000, CastStall.MAX_RESENDS, -1));
     }
 
     @Test
     public void decide_parouSemErroNoProxy_foiOControleDaTv() {
-        assertEquals(CastStall.Action.NONE, CastStall.decide(CastStall.Event.STOPPED, false, 0, -1, 0));
-        assertEquals(CastStall.Action.NONE, CastStall.decide(CastStall.Event.NONE, true, 410, -1, 0));
+        assertEquals(CastStall.Action.NONE, CastStall.decide(CastStall.Event.STOPPED, false, 0, -1, 0, -1));
+        assertEquals(CastStall.Action.NONE, CastStall.decide(CastStall.Event.NONE, true, 410, -1, 0, -1));
+    }
+
+    // 25/09/2026 (prova dele): espelhando, arrastou pro 00:00:00 e a TV ficou carregando parada no zero — o
+    // vigia não via nada porque só contava depois de a posição passar de 0.
+    @Test
+    public void puloPro00_tvParadaNoZero_congela() {
+        CastStall c = new CastStall();
+        c.reset(0);
+        c.expect(1_000, 0, true);
+        assertEquals(CastStall.Event.NONE, c.onPoll(2_500, "TRANSITIONING", -1, DUR, false));
+        assertEquals(CastStall.Event.NONE, c.onPoll(20_000, "PLAYING", 0, DUR, false));
+        assertEquals(CastStall.Event.NONE, c.onPoll(30_500, "TRANSITIONING", 0, DUR, false));
+        assertEquals(CastStall.Event.FROZEN, c.onPoll(31_000, "PLAYING", 0, DUR, false));
+    }
+
+    @Test
+    public void puloPro00_tvVoltaAAndar_naoDispara() {
+        CastStall c = new CastStall();
+        c.reset(0);
+        c.expect(0, 0, true);
+        assertEquals(CastStall.Event.NONE, c.onPoll(4_000, "TRANSITIONING", 0, DUR, false));
+        tocando(c, 6_000, 1_500, 30);
+    }
+
+    @Test
+    public void puloPro00_tvParou_contaComoQueda() {
+        CastStall c = new CastStall();
+        c.reset(0);
+        c.expect(0, 0, true);
+        assertEquals(CastStall.Event.NONE, c.onPoll(3_000, "STOPPED", 0, DUR, false));
+        assertEquals(CastStall.Event.STOPPED, c.onPoll(4_500, "STOPPED", 0, DUR, false));
+    }
+
+    // 25/09/2026: saiu do player e voltou espelhando — o player novo não vigiava; com a TV já parada ao
+    // reabrir, a posição salva vira a referência.
+    @Test
+    public void reabertoEspelhando_tvJaParada_contaComoQueda() {
+        CastStall c = new CastStall();
+        c.reset(0);
+        c.expect(0, 434_000, false);
+        assertEquals(CastStall.Event.NONE, c.onPoll(1_500, "NO_MEDIA_PRESENT", -1, DUR, false));
+        assertEquals(CastStall.Event.STOPPED, c.onPoll(3_000, "NO_MEDIA_PRESENT", -1, DUR, false));
+    }
+
+    @Test
+    public void sinceSeek_contaSoDepoisDeUmPulo() {
+        CastStall c = new CastStall();
+        c.reset(0);
+        assertEquals(-1, c.sinceSeek(5_000));
+        c.expect(1_000, 0, true);
+        assertEquals(4_000, c.sinceSeek(5_000));
+        c.expect(6_000, 434_000, false);
+        assertEquals("reabrir não é pulo", -1, c.sinceSeek(7_000));
+        c.reset(8_000);
+        assertEquals(-1, c.sinceSeek(9_000));
+    }
+
+    @Test
+    public void decide_parouLogoDepoisDoPulo_naoEhOControleDaTv() {
+        assertEquals(CastStall.Action.RESEND, CastStall.decide(CastStall.Event.STOPPED, false, 0, -1, 0, 10_000));
+        assertEquals("pulo antigo = controle da TV", CastStall.Action.NONE, CastStall.decide(CastStall.Event.STOPPED, false, 0, -1, 0, CastStall.SEEK_GRACE_MS));
+    }
+
+    @Test
+    public void decide_parouLogoDepoisDoReenvio_pegaLinkNovo() {
+        assertEquals(CastStall.Action.RELINK, CastStall.decide(CastStall.Event.STOPPED, false, 0, 60_000, 1, -1));
+        assertEquals("reenvio antigo = controle da TV", CastStall.Action.NONE, CastStall.decide(CastStall.Event.STOPPED, false, 0, 10 * 60_000, 1, -1));
     }
 }

@@ -14,17 +14,32 @@ final class CastStall {
     static final int MAX_RESENDS = 2;            // reenvios do MESMO link por abertura do player
     static final long WATCHDOG_STOP_MS = 40_000; // STOPPED nos 40 s depois do envio é do vigia do envio (RECAST_TV_PAROU)
     static final long RELINK_VALID_MS = 300_000; // o resolvedor pode levar minutos: a marca do link novo vale 5 min
+    static final long SEEK_GRACE_MS = 60_000;    // parar até 1 min depois de um pulo não é o controle da TV
 
     enum Event { NONE, FROZEN, STOPPED }
     enum Action { NONE, RESEND, RELINK }
 
-    private long lastPos = -1;          // última posição que a TV deu (> 0)
+    private long lastPos = -1;          // última posição que a TV deu (> 0) ou a esperada (expect)
+    private boolean known = false;      // há referência: a TV já andou ou o app sabe onde ela deveria estar
     private long posChangedAt = -1;     // quando a posição andou pela última vez
+    private long seekedAt = -1;         // quando o usuário pulou (-1 = sem pulo desde o último reset)
     private int stopPolls = 0;
     private boolean fired = false;      // 1 evento por envio: só volta a olhar depois do reset
 
     /** Envio novo pra TV (1º cast, reenvio, troca de episódio): começa a olhar do zero. */
-    void reset(long now) { lastPos = -1; posChangedAt = now; stopPolls = 0; fired = false; }
+    void reset(long now) { lastPos = -1; known = false; posChangedAt = now; seekedAt = -1; stopPolls = 0; fired = false; }
+
+    /**
+     * A TV deveria estar em `posMs` (mesmo 0): pulo do usuário (`seek`) ou player reaberto espelhando. Sem isto a
+     * TV parada no 00:00 depois de um pulo — ou já parada quando o player reabre — nunca contava (25/09/2026).
+     */
+    void expect(long now, long posMs, boolean seek) {
+        reset(now);
+        lastPos = Math.max(0, posMs); known = true;
+        if (seek) seekedAt = now;
+    }
+
+    long sinceSeek(long now) { return seekedAt < 0 ? -1 : now - seekedAt; }
 
     /**
      * Uma consulta à TV. `state` = GetTransportInfo (PLAYING/STOPPED/…; null = sem resposta), `posMs` = posição
@@ -37,14 +52,14 @@ final class CastStall {
         String s = state == null ? "" : state;
         if ("STOPPED".equals(s) || "NO_MEDIA_PRESENT".equals(s)) {
             posChangedAt = now;
-            if (++stopPolls < STOP_POLLS || lastPos <= 0 || nearEnd(lastPos, durMs)) return Event.NONE;
+            if (++stopPolls < STOP_POLLS || !known || nearEnd(lastPos, durMs)) return Event.NONE;
             fired = true;
             return Event.STOPPED;
         }
         stopPolls = 0;
         if (!"PLAYING".equals(s) && !"TRANSITIONING".equals(s)) return Event.NONE;
-        if (posMs > 0 && posMs != lastPos) { lastPos = posMs; posChangedAt = now; return Event.NONE; }
-        if (lastPos <= 0 || nearEnd(lastPos, durMs) || now - posChangedAt < FROZEN_MS) return Event.NONE;
+        if (posMs > 0 && posMs != lastPos) { lastPos = posMs; known = true; posChangedAt = now; return Event.NONE; }
+        if (!known || nearEnd(lastPos, durMs) || now - posChangedAt < FROZEN_MS) return Event.NONE;
         fired = true;
         return Event.FROZEN;
     }
@@ -55,13 +70,15 @@ final class CastStall {
      * O que fazer com o evento. Link morto (venceu pelo prazo da URL, ou o proxy devolveu 403/404/410 pra TV) ou
      * travou de novo logo depois de um reenvio → RELINK (pedir link novo ao app). Congelou ou parou com erro
      * passageiro → RESEND (mesmo link, mesma posição). Parou SEM erro no proxy e com o link válido = foi o
-     * controle da TV → NONE (só avisa). `sinceResendMs` < 0 = ainda não reenviou nesta abertura.
+     * controle da TV → NONE (só avisa) — menos logo depois de um pulo ou de um reenvio nosso, quando a parada é
+     * falha. `sinceResendMs`/`sinceSeekMs` < 0 = ainda não reenviou/pulou.
      */
-    static Action decide(Event ev, boolean linkExpired, int lastUpstreamErr, long sinceResendMs, int resends) {
+    static Action decide(Event ev, boolean linkExpired, int lastUpstreamErr, long sinceResendMs, int resends, long sinceSeekMs) {
         if (ev == Event.NONE) return Action.NONE;
         boolean dead = linkExpired || lastUpstreamErr == 403 || lastUpstreamErr == 404 || lastUpstreamErr == 410;
         if (dead) return Action.RELINK;
-        if (ev == Event.STOPPED && lastUpstreamErr <= 0) return Action.NONE;
+        boolean nosso = (sinceSeekMs >= 0 && sinceSeekMs < SEEK_GRACE_MS) || (sinceResendMs >= 0 && sinceResendMs < RESEND_GAP_MS);
+        if (ev == Event.STOPPED && lastUpstreamErr <= 0 && !nosso) return Action.NONE;
         if (resends >= MAX_RESENDS || (sinceResendMs >= 0 && sinceResendMs < RESEND_GAP_MS)) return Action.RELINK;
         return Action.RESEND;
     }

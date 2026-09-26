@@ -1154,6 +1154,15 @@ public class ProxyServer extends NanoHTTPD {
     }
     private static final java.util.Map<String, AbyssSession> ABYSS = new java.util.concurrent.ConcurrentHashMap<>();
     public static String abyssUrl(String sid, int q) { return "http://127.0.0.1:" + PORT + "/abyss/" + sid + "/" + q + "p.mp4"; }
+    private static final java.util.regex.Pattern ABYSS_FONTE = java.util.regex.Pattern.compile("/abyss/([A-Za-z0-9_-]+)/\\d{3,4}p\\.mp4");
+    /** A fonte ainda existe? Link ABYS vive só enquanto a sessão da página oculta viver; o resto o proxy busca na hora. */
+    public static boolean abyssAlive(String url) {
+        if (url == null) return false;
+        java.util.regex.Matcher m = ABYSS_FONTE.matcher(url);
+        if (!m.find()) return true;
+        AbyssSession s = ABYSS.get(m.group(1));
+        return s != null && !s.dead;
+    }
     public static void abyssDrop(String sid) { AbyssSession s = (sid != null && !sid.isEmpty()) ? ABYSS.remove(sid) : null; if (s != null) { s.dead = true; synchronized (s.lock) { s.lock.notifyAll(); } } }
 
     // Progresso: o pump leu as `sources` do JW (ainda medindo os tamanhos). O ResolverPlugin usa pra dar
