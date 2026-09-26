@@ -21,6 +21,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * - exit(): restaura barras + sem cutout + volta pra retrato (evita faixa cinza
  *   lateral residual depois que o vídeo termina).
  * - toggleOrientation(): alterna retrato/paisagem manualmente ("deitar a tela").
+ * Na TV (TvMode) a orientação nunca muda: ela já é deitada e não tem retrato.
  */
 @CapacitorPlugin(name = "Immersive")
 public class ImmersivePlugin extends Plugin {
@@ -32,7 +33,7 @@ public class ImmersivePlugin extends Plugin {
         a.runOnUiThread(() -> {
             Window w = a.getWindow();
             WindowCompat.setDecorFitsSystemWindows(w, false); // edge-to-edge: vídeo ocupa tudo
-            a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            if (!TvMode.isTv(a)) a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
             WindowInsetsControllerCompat c = WindowCompat.getInsetsController(w, w.getDecorView());
             c.hide(WindowInsetsCompat.Type.systemBars());
             c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
@@ -47,7 +48,7 @@ public class ImmersivePlugin extends Plugin {
         a.runOnUiThread(() -> {
             Window w = a.getWindow();
             WindowCompat.setDecorFitsSystemWindows(w, true);
-            a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            if (!TvMode.isTv(a)) a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             WindowInsetsControllerCompat c = WindowCompat.getInsetsController(w, w.getDecorView());
             c.show(WindowInsetsCompat.Type.systemBars());
         });
@@ -58,6 +59,7 @@ public class ImmersivePlugin extends Plugin {
     public void toggleOrientation(final PluginCall call) {
         final Activity a = getActivity();
         if (a == null) { call.reject("no_activity"); return; }
+        if (TvMode.isTv(a)) { call.resolve(); return; }
         a.runOnUiThread(() -> {
             int cur = a.getResources().getConfiguration().orientation;
             a.setRequestedOrientation(cur == Configuration.ORIENTATION_LANDSCAPE

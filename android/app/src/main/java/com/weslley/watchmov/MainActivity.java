@@ -85,6 +85,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DownloaderPlugin.class);
         registerPlugin(Mp4DownloadPlugin.class);
         registerPlugin(ResolverPlugin.class);
+        registerPlugin(TvMode.class);
         super.onCreate(savedInstanceState);
 
         WebView webView = this.bridge.getWebView();
@@ -149,7 +150,7 @@ public class MainActivity extends BridgeActivity {
                 FrameLayout decor = (FrameLayout) getWindow().getDecorView();
                 decor.addView(customView, new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                if (!TvMode.isTv(MainActivity.this)) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                 applyImmersive(true);
             }
 
@@ -160,7 +161,8 @@ public class MainActivity extends BridgeActivity {
                 decor.removeView(customView);
                 customView = null;
                 if (customViewCallback != null) { customViewCallback.onCustomViewHidden(); customViewCallback = null; }
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                // TV não tem retrato: pedir PORTRAIT numa box pode deitar a imagem de lado.
+                if (!TvMode.isTv(MainActivity.this)) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 applyImmersive(false);
             }
         });

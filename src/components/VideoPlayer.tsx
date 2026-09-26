@@ -14,6 +14,7 @@ import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/extern
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { downloadAsMp4, useMp4, removeMp4 } from '@/lib/mp4Download';
 import { setLogProvider, logPlaybackError } from '@/lib/playbackLog';
+import { isTv } from '@/lib/device';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
 // no reprodutor se já tiver link capturado.
@@ -751,9 +752,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                     {fullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                     {fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
                   </button>
-                  <button onClick={() => { setMoreOpen(false); tryCast(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary">
-                    <Tv className="w-4 h-4" /> Espelhar para TV
-                  </button>
+                  {!isTv() && (   // na TV o vídeo já está na tela grande
+                    <button onClick={() => { setMoreOpen(false); tryCast(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-secondary">
+                      <Tv className="w-4 h-4" /> Espelhar para TV
+                    </button>
+                  )}
                 </div>
               </>
             )}
