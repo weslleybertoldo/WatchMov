@@ -1,6 +1,6 @@
 // src/lib/streamCache.test.ts
-import { describe, it, expect } from 'vitest';
-import { linkExpiresAt, isExpiredUrl, canRecaptureAgain, RECAPTURE_MIN_GAP_MS } from './streamCache';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { linkExpiresAt, isExpiredUrl, canRecaptureAgain, RECAPTURE_MIN_GAP_MS, applyTvPosition, getPosition, setStreamPosition } from './streamCache';
 
 describe('streamCache — link novo pedido sozinho (venceu/caiu no meio)', () => {
   it('1º pedido sempre vale', () => {
@@ -46,5 +46,31 @@ describe('streamCache — link com prazo (expires=)', () => {
   it('acha o prazo dentro da URL do proxy (u= codificada)', () => {
     const proxied = 'http://127.0.0.1:8099/s?u=' + encodeURIComponent(F6) + '&r=https%3A%2F%2Fv2.watchplay.shop%2F';
     expect(linkExpiresAt(proxied)).toBe(1790223765000);
+  });
+});
+
+// 25/09/2026: TV tocando A Odisseia com o player fechado até 36:50 → a tela do título seguia em 28:52 (o tempo do
+// fechar): com o player fechado ninguém escuta o progresso, e o tempo da TV vem da consulta do espelhamento.
+describe('streamCache — tempo da TV com o player fechado', () => {
+  const K = '1368337:movie:0:0';
+  beforeEach(() => localStorage.clear());
+
+  it('grava o tempo da TV no "continuar" do título', () => {
+    setStreamPosition(1_732_000, 1368337, 'movie', 0, 0, 10_061_000);   // fechou o player em 28:52
+    expect(applyTvPosition(K, 2_210_000, 10_061_000, Date.now() + 1000)).toBe(true);
+    expect(getPosition(1368337, 'movie', 0, 0)).toEqual({ positionMs: 2_210_000, durationMs: 10_061_000 });
+  });
+
+  it('não volta pra trás o que o celular tocou depois (vale o mais novo)', () => {
+    const antes = Date.now() - 60_000;
+    setStreamPosition(3_000_000, 1368337, 'movie', 0, 0);                 // tocou no celular depois da TV
+    expect(applyTvPosition(K, 2_210_000, undefined, antes)).toBe(false);
+    expect(getPosition(1368337, 'movie', 0, 0)?.positionMs).toBe(3_000_000);
+  });
+
+  it('ignora o comecinho (até 3 s, igual ao player) e chave vazia', () => {
+    expect(applyTvPosition(K, 2_000, undefined, Date.now())).toBe(false);
+    expect(applyTvPosition('', 2_210_000, undefined, Date.now())).toBe(false);
+    expect(getPosition(1368337, 'movie', 0, 0)).toBeNull();
   });
 });

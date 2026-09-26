@@ -22,4 +22,12 @@ final class CastLocal {
         long dur = dlna ? (doCelular > 0 ? doCelular : daTv) : (daTv > 0 ? daTv : doCelular);
         return Math.max(dur, pos);
     }
+
+    /**
+     * Player fechado com a TV tocando: grava a posição da TV no "continuar de onde parou"? Só depois dos 3 s (igual ao
+     * saveResume do player) e quando andou 5 s ou mais desde a última gravação (ou voltou) — o poll é a cada 3 s.
+     */
+    static boolean gravarPosicaoTv(long pos, long ultimaGravada) {
+        return pos > 3000 && Math.abs(pos - ultimaGravada) >= 5000;
+    }
 }

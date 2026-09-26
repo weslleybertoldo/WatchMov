@@ -190,9 +190,16 @@ export default function Index() {
   // O que está espelhando na TV agora (o estado vive no nativo e sobrevive ao
   // fechar o player) → atalho no topo pra voltar pro episódio que está na TV.
   const [castNow, setCastNow] = useState<CastNow | null>(null);
+  const [, setTvProgress] = useState(0);   // tempo da TV gravado no "continuar" → redesenha a tela do título
   useEffect(() => {
     let alive = true;
-    const tick = () => { getCastNow().then(c => { if (alive) setCastNow(c); }).catch(() => {}); };
+    const tick = () => {
+      getCastNow().then(({ now, progressed }) => {
+        if (!alive) return;
+        setCastNow(now);
+        if (progressed) setTvProgress(n => n + 1);
+      }).catch(() => {});
+    };
     tick();
     const id = window.setInterval(tick, 4000);
     return () => { alive = false; window.clearInterval(id); };

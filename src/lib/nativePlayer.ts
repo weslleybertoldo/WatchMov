@@ -1,4 +1,5 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { applyTvPosition } from '@/lib/streamCache';
 
 interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string> }
 // `watchedKey` = de QUAL episódio o `watched` fala (tmdbId:type:season:ep). O player
@@ -10,7 +11,8 @@ interface NativePlayerPlugin {
   play(opts: PlayOpts): Promise<PlayResult>;
   loadNext(opts: Partial<PlayOpts>): Promise<{ ok: boolean }>;
   clearResume(opts: { key: string }): Promise<void>;
-  castStatus(): Promise<{ active: boolean; key?: string | null; title?: string | null }>;
+  castStatus(): Promise<CastStatus>;
+  ackTvProgress(opts: { ts: number }): Promise<void>;
   pendingExits(): Promise<{ exits?: AppExit[] }>;
   ackExits(opts: { ts: number }): Promise<void>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
@@ -107,18 +109,38 @@ export async function clearResumeNative(key: string): Promise<void> {
 // é ela que permite reabrir exatamente o mesmo episódio pelo atalho do topo.
 export interface CastNow { tmdbId: number; type: 'movie' | 'tv'; season: number; episode: number; title?: string }
 
-export async function getCastNow(): Promise<CastNow | null> {
-  if (!Capacitor.isNativePlatform()) return null;
+// `positionMs`/`durationMs` = tempo da TV agora; `lastTv` = o último gravado com o player fechado (a TV parou ou
+// caiu com o app no fundo). APK antigo não manda nenhum dos dois.
+interface TvProgress { key: string; positionMs: number; durationMs?: number; ts: number }
+interface CastStatus { active: boolean; key?: string | null; title?: string | null; positionMs?: number; durationMs?: number; lastTv?: TvProgress | null }
+
+// `progressed` = gravou tempo da TV no "continuar" (a tela do título redesenha com ele).
+export async function getCastNow(): Promise<{ now: CastNow | null; progressed: boolean }> {
+  if (!Capacitor.isNativePlatform()) return { now: null, progressed: false };
   try {
     const s = await NativePlayer.castStatus();
-    if (!s?.active || !s.key) return null;
+    const progressed = syncTvProgress(s);
+    if (!s?.active || !s.key) return { now: null, progressed };
     const [id, type, season, ep] = s.key.split(':');
     const tmdbId = Number(id);
-    if (!tmdbId || (type !== 'movie' && type !== 'tv')) return null;
-    return { tmdbId, type, season: Number(season) || 0, episode: Number(ep) || 0, title: s.title || undefined };
+    if (!tmdbId || (type !== 'movie' && type !== 'tv')) return { now: null, progressed };
+    return { now: { tmdbId, type, season: Number(season) || 0, episode: Number(ep) || 0, title: s.title || undefined }, progressed };
   } catch {
-    return null;
+    return { now: null, progressed: false };
   }
+}
+
+// Tempo da TV no "continuar" do título (25/09/2026: a TV foi até 36:50 com o player fechado e a tela seguia em 28:52).
+// O último gravado com o player fechado é confirmado pro nativo não mandar de novo.
+function syncTvProgress(s: CastStatus): boolean {
+  let ok = false;
+  if (s?.active && s.key && s.positionMs) ok = applyTvPosition(s.key, s.positionMs, s.durationMs, Date.now());
+  const t = s?.lastTv;
+  if (t?.key && t.ts) {
+    ok = applyTvPosition(t.key, t.positionMs, t.durationMs, t.ts) || ok;
+    NativePlayer.ackTvProgress({ ts: t.ts }).catch(() => {});
+  }
+  return ok;
 }
 
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link

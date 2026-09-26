@@ -98,6 +98,7 @@ public class MediaNotificationService extends Service {
     private boolean polling = false;
     private int pollGen = 0;          // invalida ticks em voo quando o poll para/reinicia
     private int pollFails = 0;
+    private long tvPosGravada = 0;   // última posição da TV gravada no "continuar" (headless)
 
     public static void setController(Controller c) {
         controller = c;
@@ -113,6 +114,9 @@ public class MediaNotificationService extends Service {
     public static boolean isHeadless() { return headless != null; }
     /** Última posição da TV (a Activity espelhando ou o poll headless escrevem); 0 = não está espelhando. */
     public static long castPosMs() { return sCast ? sPos : 0; }
+    public static long castDurMs() { return sCast ? sDur : 0; }
+    /** Último tempo da TV com o player fechado (key/pos/dur/ts): o app lê pelo castStatus e confirma com ackTvProgress. */
+    static final String TV_LAST_PREFS = "watchmov_tv_last";
 
     /**
      * Mostra/atualiza a notificação. Na 1ª vez sobe o serviço (precisa do app em
@@ -303,7 +307,7 @@ public class MediaNotificationService extends Service {
         if (headless == null) return;
         acquireLocks();
         if (polling) return;
-        polling = true; pollFails = 0; pollGen++;
+        polling = true; pollFails = 0; pollGen++; tvPosGravada = 0;
         handler.removeCallbacks(pollTick);
         handler.post(pollTick);
     }
@@ -361,6 +365,7 @@ public class MediaNotificationService extends Service {
             pollFails = 0;
             sSub = (sPlaying ? "Reproduzindo " : "Pausado ") + onde(s.mode);
             render();
+            gravarPosicaoTv(s);
         } else if (++pollFails >= HEADLESS_FAILS_TO_END) {
             // TV parou (fim do buffer/episódio, Stop no controle dela) ou sumiu da rede →
             // sessão encerrada: apaga a gravada, zera os estáticos e a notificação some.
@@ -368,6 +373,21 @@ public class MediaNotificationService extends Service {
             return;
         }
         handler.postDelayed(pollTick, HEADLESS_POLL_MS);
+    }
+
+    // Player fechado com a TV tocando (25/09/2026): o "continuar" ficava com a posição do FECHAR — a TV seguiu até 19 min,
+    // caiu, a sessão foi apagada e o título reabriu em 14. Grava a posição da TV onde o player grava (o player reaberto lê
+    // dela) e onde o app lê pra tela do título (com o player fechado ninguém escuta o playerProgress; a TV pode parar
+    // com o app no fundo, então fica guardada até o app confirmar).
+    private void gravarPosicaoTv(CastSessionStore.Session s) {
+        final long pos = sPos;
+        if (s.key == null || !CastLocal.gravarPosicaoTv(pos, tvPosGravada)) return;
+        tvPosGravada = pos;
+        try {
+            getSharedPreferences(PlayerActivity.RESUME_PREFS, MODE_PRIVATE).edit().putLong(s.key, pos).apply();
+            getSharedPreferences(TV_LAST_PREFS, MODE_PRIVATE).edit().putString("key", s.key).putLong("pos", pos)
+                .putLong("dur", sDur).putLong("ts", System.currentTimeMillis()).apply();
+        } catch (Exception ignored) {}
     }
 
     private void headlessToggle() {

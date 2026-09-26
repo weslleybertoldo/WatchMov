@@ -142,7 +142,15 @@ public class ResolverPlugin extends Plugin {
                 this.referer = referer; optMs = optMsArg; optK = Math.max(1, startOptArg); optN = 0; optReports = 0; optTries = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0); StreamSnifferPlugin.currentOption = "";
                 optStages.clear(); mediaSeen = false;
                 // v4.64: a lista de opções da Fonte 1 vem do console (WMOPT), como na Fonte 6 — não é mais fixa (ABYS/Byse).
-                WebView w = new WebView(act);
+                // Motor ABYS com o app no fundo (25/09/2026 22:45): player fechado com a TV tocando e o app atrás → a janela
+                // some, o WebView avisa o Chromium que ficou invisível e o JS do motor para ~1 min depois ("abyss: pedaço
+                // não chegou", o mesmo pedaço 147 s em voo, nem o timeout de 20 s do pump disparou) → a TV gastou o que
+                // tinha, ficou em "Buffering" e caiu. Com o motor ligado ele segue se achando visível.
+                WebView w = new WebView(act) {
+                    @Override protected void onWindowVisibilityChanged(int visibility) {
+                        super.onWindowVisibilityChanged(engine ? View.VISIBLE : visibility);
+                    }
+                };
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
                 s.setDomStorageEnabled(true);
@@ -308,6 +316,7 @@ public class ResolverPlugin extends Plugin {
     private void onAbyssReady(String sid, java.util.List<ProxyServer.AbyssQuality> qs) {
         if (web == null || sid == null || !sid.equals(abyssSid)) return;
         abyssReady = true; engine = true; motorDono = this;
+        web.dispatchWindowVisibilityChanged(View.VISIBLE);   // motor ligado: visível mesmo se a tela já tiver ido pro fundo
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
         if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
         java.util.List<ProxyServer.AbyssQuality> order = new ArrayList<>(qs);
