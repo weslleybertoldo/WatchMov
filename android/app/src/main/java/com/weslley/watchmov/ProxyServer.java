@@ -1163,6 +1163,19 @@ public class ProxyServer extends NanoHTTPD {
         AbyssSession s = ABYSS.get(m.group(1));
         return s != null && !s.dead;
     }
+    /**
+     * O laço do JS desistiu do pedaço `q:off` (erro, vazio ou demorou): volta pra fila na hora. Antes ficava "em voo"
+     * por ABYSS_INFLIGHT_MS (45 s) e o leitor desistia aos 30 s — a TV via o vídeo parar (25/09/2026).
+     */
+    static void abyssRelease(String sid, String rel) {
+        AbyssSession s = (sid != null && rel != null) ? ABYSS.get(sid) : null;
+        int i = rel != null ? rel.indexOf(':') : -1;
+        if (s == null || i <= 0) return;
+        try {
+            int q = Integer.parseInt(rel.substring(0, i)); long off = Long.parseLong(rel.substring(i + 1));
+            synchronized (s.lock) { if (q == s.wantQ) s.inflight.remove(off); s.lock.notifyAll(); }
+        } catch (NumberFormatException ignored) {}
+    }
     public static void abyssDrop(String sid) { AbyssSession s = (sid != null && !sid.isEmpty()) ? ABYSS.remove(sid) : null; if (s != null) { s.dead = true; synchronized (s.lock) { s.lock.notifyAll(); } } }
 
     // Progresso: o pump leu as `sources` do JW (ainda medindo os tamanhos). O ResolverPlugin usa pra dar
@@ -1233,7 +1246,12 @@ public class ProxyServer extends NanoHTTPD {
                     if (s.dead) throw new IOException("abyss: sessão encerrada");
                     if (s.gen != myGen) throw new IOException("abyss: leitor substituído");
                     long left = ABYSS_WAIT_MS - (System.currentTimeMillis() - t0);
-                    if (left <= 0) { lastDiag = "abyss: pedaço não chegou em " + ABYSS_WAIT_MS + " ms q=" + q + " off=" + pos; throw new IOException(lastDiag); }
+                    if (left <= 0) {
+                        Long pego = s.inflight.get(pos);
+                        lastDiag = "abyss: pedaço não chegou em " + ABYSS_WAIT_MS + " ms q=" + q + " off=" + pos
+                            + " emVoo=" + (pego != null ? (System.currentTimeMillis() - pego) + "ms" : "não");
+                        throw new IOException(lastDiag);
+                    }
                     try { s.lock.wait(Math.min(left, 500)); } catch (InterruptedException e) { throw new IOException(e); }
                 }
                 int n = s.readAt(q, pos, out, off, len);
@@ -1260,6 +1278,7 @@ public class ProxyServer extends NanoHTTPD {
             return cors(newFixedLengthResponse(ok ? Response.Status.OK : Response.Status.BAD_REQUEST, "application/json", "{\"ok\":" + ok + "}"));
         }
         if (uri.equals("/abyss/next")) {
+            abyssRelease(p.get("sid"), p.get("rel"));
             long[] nx = abyssNext(p.get("sid"), 8000);
             if (nx != null && nx.length == 1) { rq.note = "next: sessão morta"; return cors(newFixedLengthResponse(statusOf(410), "application/json", "{\"gone\":true}")); }
             rq.note = nx == null ? "next: nada" : "next q=" + nx[0] + " off=" + nx[1] + " len=" + nx[2];

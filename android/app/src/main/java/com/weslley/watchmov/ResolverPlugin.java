@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -86,9 +87,13 @@ public class ResolverPlugin extends Plugin {
     private final java.util.Set<String> optStages = new java.util.HashSet<>();
     private volatile boolean mediaSeen = false;   // a opção atual já mandou um vídeo pela rede (etapa "media", fora do teto)
     private final StringBuilder abysLog = new StringBuilder();
+    private static ResolverPlugin instance;
+    private static ResolverPlugin motorDono;   // plugin com o motor vivo (pode não ser o `instance`: MainActivity recriada)
+    private Activity hostMotor;   // tela onde o WebView do motor está agora (null = a do app)
 
     @Override
     public void load() {
+        instance = this;
         // O proxy avisa quando o JS do frame abysscdn leu as qualidades → emitimos os 3 links ao app.
         ProxyServer.onAbyssReady = (sid, qs) -> ui.post(() -> onAbyssReady(sid, qs));
         // Qualidade que terminou de medir depois (a 1ª pronta já abriu o filme) → menu do player + troca pra maior.
@@ -117,6 +122,8 @@ public class ResolverPlugin extends Plugin {
         ui.post(() -> {
             try {
                 stopInternal();
+                // Motor que ficou com o plugin da MainActivity anterior (recriada por falta de memória): um motor por vez.
+                if (motorDono != null && motorDono != this) motorDono.stopInternal();
                 final int mySession = ++session;
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
@@ -276,7 +283,7 @@ public class ResolverPlugin extends Plugin {
     // auto-avanço do player tenta o mais leve).
     private void onAbyssReady(String sid, java.util.List<ProxyServer.AbyssQuality> qs) {
         if (web == null || sid == null || !sid.equals(abyssSid)) return;
-        abyssReady = true; engine = true;
+        abyssReady = true; engine = true; motorDono = this;
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
         if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
         java.util.List<ProxyServer.AbyssQuality> order = new ArrayList<>(qs);
@@ -591,8 +598,46 @@ public class ResolverPlugin extends Plugin {
         try { NativePlayerPlugin.reportError(currentUrl, 0, 0, name, note, null, null, null); } catch (Throwable ignored) {}
     }
 
+    // Motor ABYS junto do player (25/09/2026): com o PlayerActivity na frente, o MainActivity fica coberto, o WebView
+    // oculto fica invisível e o JS dele PARA — o motor deixava de entregar pedaços ~2 min depois de abrir o player
+    // (filme local e TV travavam; os eventos da aba Bugs só saíram ao fechar o player). No layout do player ele segue vivo.
+    // Quem move é o DONO do motor, não o plugin mais novo: com o player aberto o Android destrói a MainActivity por falta
+    // de memória ("low-mem", 19:46 de 25/09/2026) e a recria ao fechar o player, com outro plugin que não conhece o motor
+    // — ele ficava sem tela, congelava e a TV caía em "Loading". A volta é pra MainActivity de AGORA.
+    static void levarMotorPara(Activity host) {
+        ResolverPlugin p = motorDono;
+        if (p != null && host != null) p.ui.post(() -> p.moverMotor(host, host));
+    }
+    static void devolverMotor(Activity host) {
+        ResolverPlugin p = motorDono;
+        if (p == null || host == null) return;
+        p.ui.post(() -> {
+            if (p.hostMotor != host) return;
+            Activity app = instance != null ? instance.getActivity() : null;
+            p.moverMotor(app != null && !app.isDestroyed() ? app : p.getActivity(), null);
+        });
+    }
+    private void moverMotor(Activity destino, Activity novoHost) {
+        WebView w = web;
+        ViewGroup alvo = destino != null ? destino.findViewById(android.R.id.content) : null;
+        if (w == null || !engine || alvo == null) return;
+        try {
+            if (w.getParent() != alvo) {
+                if (w.getParent() instanceof ViewGroup) ((ViewGroup) w.getParent()).removeView(w);
+                alvo.addView(w, 0, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+            }
+            hostMotor = novoHost;
+            android.util.Log.i("WatchMov", "motor ABYS na tela " + destino.getClass().getSimpleName() + (this == instance ? "" : " (plugin anterior)"));
+        } catch (Throwable t) {
+            report("RESOLVER_MOTOR_MOVER", "falhou: " + t);
+            android.util.Log.w("WatchMov", "motor ABYS não mudou de tela: " + t);
+        }
+    }
+
     private void stopInternal() {
         session++;
+        hostMotor = null;
+        if (motorDono == this) motorDono = null;
         StreamSnifferPlugin.currentOption = "";
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
         if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }

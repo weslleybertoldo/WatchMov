@@ -723,6 +723,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         MediaNotificationService.setController(this);
         ensureNotifPermission();
         refreshMediaNotification();
+        ResolverPlugin.levarMotorPara(this);   // motor ABYS (página oculta) vivo com o player na frente
     }
 
     // ── Abriu OUTRO episódio com a TV espelhando: pergunta antes de trocar ──────────
@@ -2638,6 +2639,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
     @Override
     protected void onDestroy() {
+        ResolverPlugin.devolverMotor(this);
         if (current == this) current = null;
         MediaNotificationService.clearController(this);
         // Fechou o player COM a TV tocando → o serviço assume sozinho (headless): a

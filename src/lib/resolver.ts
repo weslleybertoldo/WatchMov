@@ -170,10 +170,14 @@ export const ABYSS_PUMPS = 3;
 // maior, decisão dele "1"). Antes esperava as 3: no Pecadores a 360p ficou pronta, a 720p/1080p (sem erro, só
 // lentas) seguraram o `ready` e o app desistiu da ABYS.
 export const ABYSS_LATE_MS = 10000;
+// Pedaço que o SW não entregou em 20 s é abortado e SOLTO no proxy (`&rel=q:off` no próximo /abyss/next) pra outro
+// laço buscar na hora (25/09/2026). Antes: busca pendurada prendia o laço pra sempre (3 presos = motor morto) e
+// pedaço com erro ficava "em voo" 45 s enquanto o leitor (a TV) desistia aos 30 s.
+export const ABYSS_PIECE_TIMEOUT_MS = 20000;
 export function buildAbyssScript(sid: string, port = PROXY_PORT): string {
   return `(function(){try{
 if(!/(^|\\.)(abysscdn|abyssplayer)\\.com$/.test(location.hostname)||window.__wmAbys)return;window.__wmAbys=1;
-var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${ABYSS_PUMPS},LATE=${ABYSS_LATE_MS};
+var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${ABYSS_PUMPS},LATE=${ABYSS_LATE_MS},PT=${ABYSS_PIECE_TIMEOUT_MS};
 var log=function(m){try{console.log('WMABYS '+m)}catch(_){}};
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=frame').then(function(r){log('frame '+location.hostname+' progress '+r.status)}).catch(function(e){log('progress-err '+e)});
 var srcs=null,tries=0;
@@ -185,16 +189,18 @@ return out.length?out:null}catch(e){return null}}
 function cancelBody(r){try{r.body&&r.body.cancel()}catch(_){}}
 function firstChunk(r){var rd=r.body&&r.body.getReader?r.body.getReader():null;if(!rd)return r.arrayBuffer().then(function(b){return b.byteLength});return rd.read().then(function(c){try{rd.cancel()}catch(_){}return c.value?c.value.byteLength:0})}
 function meta(s){return fetch(s.u,{headers:{Range:'bytes=0-1023'}}).then(function(r){var cr=r.headers.get('content-range')||'';var m=/\\/(\\d+)\\s*$/.exec(cr);s.total=m?+m[1]:(r.status==200?+(r.headers.get('content-length')||0):0);s.type=r.type;s.status=r.status;return firstChunk(r)}).then(function(n){s.ok=s.total>0&&n>0;log('meta q='+s.q+' status='+s.status+' total='+s.total+' type='+s.type+' first='+n+' ok='+s.ok);return s.ok}).catch(function(e){log('meta-err q='+s.q+' '+e);return false})}
-function pump(){fetch(BASE+'abyss/next?sid='+SID).then(function(r){return r.json()}).then(function(n){
+function pump(rel){fetch(BASE+'abyss/next?sid='+SID+(rel?'&rel='+rel:'')).then(function(r){return r.json()}).then(function(n){
 if(n&&n.gone){log('gone');return}
 if(!n||n.off==null){var now=Date.now();if(now-lastKA>20000){lastKA=now;fetch(srcs[0].u,{headers:{Range:'bytes=0-1023'}}).then(cancelBody).catch(function(){})}return pump()}
 var s=null;for(var i=0;i<srcs.length;i++)if(srcs[i].q==n.q)s=srcs[i];
-if(!s){log('sem fonte q='+n.q);return setTimeout(pump,500)}
-var t0=performance.now();
-return fetch(s.u,{headers:{Range:'bytes='+n.off+'-'+(n.off+n.len-1)}}).then(function(r){return r.arrayBuffer()}).then(function(buf){
+var solta=function(why,ms){log('pump solta q='+n.q+' off='+n.off+' '+why);setTimeout(function(){pump(n.q+':'+n.off)},ms)};
+if(!s)return solta('sem fonte',500);
+var t0=performance.now(),ac=typeof AbortController=='function'?new AbortController():null,to=ac?setTimeout(function(){ac.abort()},PT):0;
+return fetch(s.u,{headers:{Range:'bytes='+n.off+'-'+(n.off+n.len-1)},signal:ac?ac.signal:void 0}).then(function(r){return r.arrayBuffer()}).then(function(buf){clearTimeout(to);
 if(buf.byteLength>n.len)buf=buf.slice(0,n.len);   /* o SW pode devolver mais do que o pedido: corta no tamanho pedido */
-if(!buf.byteLength){log('pump vazio q='+n.q+' off='+n.off);return setTimeout(pump,1000)}
-var t1=performance.now();return fetch(BASE+'abyss/push?sid='+SID+'&q='+n.q+'&off='+n.off,{method:'POST',body:buf}).then(function(r){if(!r.ok)log('push '+r.status);var t2=performance.now();if(n.off%(16*1048576)<n.len)log('pump q='+n.q+' off='+n.off+' '+buf.byteLength+'B sw='+Math.round(t1-t0)+'ms push='+Math.round(t2-t1)+'ms');return pump()})})
+if(!buf.byteLength)return solta('vazio',1000);
+var t1=performance.now();return fetch(BASE+'abyss/push?sid='+SID+'&q='+n.q+'&off='+n.off,{method:'POST',body:buf}).then(function(r){if(!r.ok)log('push '+r.status);var t2=performance.now();if(n.off%(16*1048576)<n.len)log('pump q='+n.q+' off='+n.off+' '+buf.byteLength+'B sw='+Math.round(t1-t0)+'ms push='+Math.round(t2-t1)+'ms');return pump()},function(e){solta('push '+e,1000)})},
+function(e){clearTimeout(to);solta(ac&&ac.signal.aborted?'demorou '+PT+'ms':'erro '+e,300)})
 }).catch(function(e){log('pump-err '+e);setTimeout(pump,1000)})}
 var iv=setInterval(function(){tries++;var s=readSources();if(!s){if(tries>90){clearInterval(iv);log('sem sources')}return}
 clearInterval(iv);log('sources '+s.map(function(x){return x.q}).join(','));
