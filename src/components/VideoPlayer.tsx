@@ -73,6 +73,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const [controlsVisible, setControlsVisible] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // TV (Fire TV): o WebView da Amazon desenha o vídeo numa camada própria e soma a rolagem da página de trás do
+  // player — com o título aberto lá embaixo o vídeo ia parar abaixo da tela (tela preta ao expandir, 26/09/2026).
+  // Com o player aberto a página de trás fica no topo; ao fechar, volta pro mesmo lugar.
+  useEffect(() => {
+    if (!open || !isTv()) return;
+    const y = window.scrollY;
+    window.scrollTo(0, 0);
+    return () => window.scrollTo(0, y);
+  }, [open]);
+
   // Captura passiva (estilo Web Video Cast): o iframe do servidor toca normal e o
   // nativo observa o tráfego, ACUMULANDO todos os vídeos detectados (o usuário
   // escolhe qual — resolve anúncio/servidor interno). O escolhido toca no ExoPlayer
@@ -705,6 +715,31 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     } catch { /* ignore */ }
   };
 
+  // Resolvedor NÃO rodou (pausa da fonte / "Servidor" neste título / desligado / não achou) → diz por quê e deixa
+  // tentar (15/09/2026). Sumia calado e parecia "desativado". Vale também com o Servidor escolhido (26/09/2026).
+  // Celular: logo abaixo da barra do topo (top-14), sem cobrir o título nem os botões. TV: DENTRO da barra, ao lado
+  // dos Links (26/09/2026, pedido dele) — solto por cima, cobria o topo da página do servidor e a setinha não ia lá.
+  const chipResolvedor = !nativeOwn && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && isNative() ? (
+    <div className={`${isTv() ? 'mr-1' : 'absolute left-1/2 -translate-x-1/2 top-14 z-30 shadow-lg'} flex items-center gap-2 rounded-full bg-card/95 border border-border px-3 py-1.5 text-xs animate-fade-in`} data-resolver-paused={resolverPaused}>
+      <span className="text-muted-foreground">
+        {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+          : resolverPaused === 'server-mode' ? 'Abrir sozinho desligado neste título'
+          : resolverPaused === 'off' ? 'Resolvedor desligado (Painel → Servidores)'
+          : resolverPaused === 'unavailable' ? 'Não está disponível nesta fonte. Troque de fonte.'
+          : 'Não achou o vídeo sozinho'}
+      </span>
+      {resolverPaused !== 'off' && (
+        resolverPaused === 'unavailable' ? (
+          <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
+        ) : (
+        <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={retryResolver}>
+          {resolverPaused === 'server-mode' ? 'Ligar' : resolverPaused === 'tried' ? 'Tentar de novo' : 'Tentar agora'}
+        </Button>
+        )
+      )}
+    </div>
+  ) : null;
+
   return (
     <div ref={rootRef} className={`fixed inset-0 z-[60] bg-black animate-fade-in ${fullscreen ? '' : 'flex flex-col'}`}>
       {/* Em tela cheia (paisagem): faixa fina revela os controles ocultos. */}
@@ -718,6 +753,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         : 'relative z-20 shrink-0 flex items-center justify-between px-3 py-2 bg-black/95'}>
         <span className="text-sm text-white/90 truncate flex-1">{title || 'Player'}</span>
         <div className="flex items-center gap-1 shrink-0">
+          {isTv() && chipResolvedor}
           {/* Botão SEMPRE visível: lista de links capturados (escolher / servidor). */}
           <Button variant="ghost" size="icon" className="relative h-9 w-9 text-white/80 hover:text-white hover:bg-white/10"
             title="Links do vídeo" onClick={() => setPickerOpen(true)}>
@@ -838,6 +874,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
             key={src}
             src={src}
             title={title || 'VideoPlayer'}
+            data-tv-setinha   // TV: ↓ num botão da barra de cima liga a setinha (tvNav.ts)
             className="w-full h-full border-0"
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen
@@ -846,29 +883,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         )}
       </div>
 
-      {/* Resolvedor NÃO rodou (pausa da fonte / "Servidor" neste título / desligado / não achou) → diz
-          por quê e deixa tentar (15/09/2026). Sumia calado e parecia "desativado". Fica logo abaixo da
-          barra do topo (top-14) pra não cobrir o título nem os botões. Vale também com o Servidor escolhido (26/09/2026). */}
-      {!nativeOwn && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && isNative() && (
-        <div className="absolute left-1/2 -translate-x-1/2 top-14 z-30 flex items-center gap-2 rounded-full bg-card/95 border border-border px-3 py-1.5 shadow-lg text-xs animate-fade-in" data-resolver-paused={resolverPaused}>
-          <span className="text-muted-foreground">
-            {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-              : resolverPaused === 'server-mode' ? 'Abrir sozinho desligado neste título'
-              : resolverPaused === 'off' ? 'Resolvedor desligado (Painel → Servidores)'
-              : resolverPaused === 'unavailable' ? 'Não está disponível nesta fonte. Troque de fonte.'
-              : 'Não achou o vídeo sozinho'}
-          </span>
-          {resolverPaused !== 'off' && (
-            resolverPaused === 'unavailable' ? (
-              <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={() => setSourceOpen(true)}>Trocar fonte</Button>
-            ) : (
-            <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={retryResolver}>
-              {resolverPaused === 'server-mode' ? 'Ligar' : resolverPaused === 'tried' ? 'Tentar de novo' : 'Tentar agora'}
-            </Button>
-            )
-          )}
-        </div>
-      )}
+      {!isTv() && chipResolvedor}
 
       {/* Banner: vídeo(s) capturado(s) em background enquanto assiste no servidor. */}
       {!nativeOwn && !preferIframe && !resolving && capturedList.length > 0 && (

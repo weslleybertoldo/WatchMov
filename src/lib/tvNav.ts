@@ -3,6 +3,8 @@
 // não serve (Fire TV: não entra nos cartazes; box Android: as setas só rolam a página).
 // Só liga na TV (main.tsx); no celular nada disso roda.
 
+import { aoSairDaSetinha, desligarSetinha, ligarSetinha } from './device';
+
 export type Dir = 'up' | 'down' | 'left' | 'right';
 export interface Box { left: number; top: number; right: number; bottom: number; }
 
@@ -55,6 +57,19 @@ export function pickNext(from: Box, cands: Box[], dir: Dir): number {
     if (melhor >= 0) return melhor;
   }
   return -1;
+}
+
+// Setinha do ▣ Servidor (26/09/2026, pedido dele): a página do servidor é um iframe de outro site e as setas não
+// entram nele. ↓ num botão da barra de cima (sem vizinho embaixo) liga um ponteiro nativo (TvCursor.java): as setas
+// movem, o OK toca. A linha de saída é o TOPO da página — passar dele devolve o foco pro botão (antes era a base
+// do Ligar e o topo da página ficava fora de alcance). A setinha nasce logo abaixo, no meio do botão. Sem espaço
+// da página abaixo do botão = não liga (null).
+export function inicioDaSetinha(from: Box, zona: Box): { x: number; y: number; exitY: number } | null {
+  const ABAIXO = 32;
+  const y = Math.max(from.bottom, zona.top) + ABAIXO;
+  if (y > zona.bottom - 8 || zona.right - zona.left < 40) return null;
+  const x = Math.min(Math.max((from.left + from.right) / 2, zona.left + 8), zona.right - 8);
+  return { x, y, exitY: zona.top };
 }
 
 function visivel(el: HTMLElement): boolean {
@@ -116,6 +131,26 @@ function semFoco(): boolean {
   return r !== document && !(r as HTMLElement).contains(a);   // foco ficou atrás da camada de cima
 }
 
+// Setinha ligada: de qual botão ela saiu (o foco volta pra ele quando ela desliga).
+let setinha: { origem: HTMLElement } | null = null;
+
+// A página do servidor (iframe marcado no VideoPlayer) na tela.
+function zonaDaSetinha(): HTMLElement | null {
+  const z = document.querySelector<HTMLElement>('[data-tv-setinha]');
+  return z && visivel(z) ? z : null;
+}
+
+function tentarSetinha(atual: HTMLElement) {
+  const z = zonaDaSetinha();
+  const ini = z && inicioDaSetinha(atual.getBoundingClientRect(), z.getBoundingClientRect());
+  if (!ini) return;
+  void ligarSetinha({ ...ini, dpr: window.devicePixelRatio || 1 }).then(ok => {
+    if (!ok) return;   // APK sem a setinha: o foco fica no botão, como antes
+    setinha = { origem: atual };
+    atual.blur();      // o destaque sai do botão enquanto a setinha anda
+  });
+}
+
 function mover(dir: Dir): boolean {
   if (semFoco()) {
     const ini = focoInicial();
@@ -126,6 +161,7 @@ function mover(dir: Dir): boolean {
   const todos = candidatos().filter(el => el !== atual && !atual.contains(el) && !el.contains(atual));
   const i = pickNext(atual.getBoundingClientRect(), todos.map(el => el.getBoundingClientRect()), dir);
   if (i >= 0) focar(todos[i]);
+  else if (dir === 'down') tentarSetinha(atual);
   return true;   // sem vizinho o foco fica onde está (e a página não rola sozinha)
 }
 
@@ -165,11 +201,23 @@ export function startTvNav(): () => void {
       if (!a.matches(NATIVO_CLICA)) { a.click(); e.preventDefault(); }
     }
   };
+  // Setinha desligada pelo nativo (subiu acima do botão, app foi pro fundo): o foco volta pro botão de onde saiu.
+  const pararDeOuvir = aoSairDaSetinha(() => {
+    const origem = setinha?.origem;
+    setinha = null;
+    const alvo = origem && origem.isConnected && visivel(origem) ? origem : focoInicial();
+    if (alvo) focar(alvo);
+  });
   // Troca de tela desmonta o item focado: o foco volta pro 1º item da tela nova sozinho.
   let t: ReturnType<typeof setTimeout> | undefined;
   const obs = new MutationObserver(() => {
     clearTimeout(t);
     t = setTimeout(() => {
+      if (setinha) {
+        if (zonaDaSetinha()) return;   // setinha andando na página: o foco fica quieto
+        setinha = null;                // a página do servidor saiu (fechou o título, trocou a fonte…)
+        desligarSetinha();
+      }
       const seguindo = automatico && document.activeElement === automatico;
       if (!semFoco() && !seguindo) return;
       const ini = focoInicial();
@@ -178,5 +226,5 @@ export function startTvNav(): () => void {
   });
   window.addEventListener('keydown', onKey);
   obs.observe(document.body, { childList: true, subtree: true });
-  return () => { window.removeEventListener('keydown', onKey); obs.disconnect(); clearTimeout(t); };
+  return () => { window.removeEventListener('keydown', onKey); obs.disconnect(); clearTimeout(t); pararDeOuvir(); };
 }

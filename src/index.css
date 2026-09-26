@@ -132,7 +132,8 @@
 html.tv :is(button, a[href], input, select, textarea, [tabindex]) {
   scroll-margin: 88px 24px 48px;
 }
-html.tv :is(button, a[href], input, select, textarea, [tabindex]):focus {
+/* :where (especificidade 0): com :is o a[href] ganhava da regra do cartaz e ele ficava com 2 linhas. */
+html.tv :where(button, a[href], input, select, textarea, [tabindex]):focus {
   outline: 3px solid hsl(var(--primary));
   outline-offset: 3px;
 }
