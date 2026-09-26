@@ -125,3 +125,24 @@
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
+
+/* TV (W3 do app do Fire TV): sem mouse nem toque, o item focado pelas setas precisa aparecer
+   de longe. O cartaz ganha o anel no pôster (MediaCard); o resto, contorno na cor do app.
+   scroll-margin: o cabeçalho fixo não cobre o item que acabou de receber o foco. */
+html.tv :is(button, a[href], input, select, textarea, [tabindex]) {
+  scroll-margin: 88px 24px 48px;
+}
+html.tv :is(button, a[href], input, select, textarea, [tabindex]):focus {
+  outline: 3px solid hsl(var(--primary));
+  outline-offset: 3px;
+}
+html.tv [data-tv-card]:focus {
+  outline: none;
+}
+html.tv [data-tv-card]:focus .tv-poster {
+  outline: 4px solid hsl(var(--primary));
+  outline-offset: -4px;
+}
+html.tv [data-row-key="hero"]:focus {
+  outline-offset: -5px;
+}

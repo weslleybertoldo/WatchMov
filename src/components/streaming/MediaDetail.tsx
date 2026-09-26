@@ -546,7 +546,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
         {/* Ações — principal = servidores embed (retoma de onde parou). O botão Torrent
             (Stremio/debrid/WebTorrent) saiu em 09/2026: função descontinuada. */}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button className="flex-1" onClick={playMain}>
+          <Button className="flex-1" onClick={playMain} data-tv-autofocus>
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
           {!isSeries && (

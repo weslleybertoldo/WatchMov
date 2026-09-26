@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { ChevronLeft, ChevronRight, Plus, Loader2 } from 'lucide-react';
+import { isTv } from '@/lib/device';
 
 interface MediaRowProps {
   title: string;
@@ -58,14 +59,15 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
       <div className="flex items-center justify-between px-1">
         <h2 className="text-base sm:text-lg font-bold text-foreground">{title}</h2>
         {onSeeAll && (
-          <button onClick={onSeeAll} className="text-xs text-muted-foreground hover:text-primary">Ver tudo</button>
+          // Na TV o "Ver tudo" sai do caminho das setas: o cartão "Ver mais" no fim da fileira faz o mesmo.
+          <button onClick={onSeeAll} tabIndex={isTv() ? -1 : undefined} className="text-xs text-muted-foreground hover:text-primary">Ver tudo</button>
         )}
       </div>
       <div className="relative group/row">
-        {/* setas desktop */}
-        <button onClick={() => scrollBy(-1)} className="hidden md:flex absolute left-0 top-0 bottom-0 z-20 w-8 items-center justify-center bg-gradient-to-r from-background/90 to-transparent opacity-0 group-hover/row:opacity-100 transition">
+        {/* setas desktop (na TV não: o foco do controle já rola a fileira) */}
+        {!isTv() && <button onClick={() => scrollBy(-1)} className="hidden md:flex absolute left-0 top-0 bottom-0 z-20 w-8 items-center justify-center bg-gradient-to-r from-background/90 to-transparent opacity-0 group-hover/row:opacity-100 transition">
           <ChevronLeft className="w-5 h-5" />
-        </button>
+        </button>}
         <div ref={scrollRef} onScroll={() => { if (scrollRef.current) scrollCache.set(scrollKey, scrollRef.current.scrollLeft); }} className="flex gap-3 overflow-x-auto scroll-smooth snap-x pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {loading ? (
             <div className="flex items-center gap-2 text-muted-foreground py-10 px-2">
@@ -90,9 +92,9 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
             </>
           )}
         </div>
-        <button onClick={() => scrollBy(1)} className="hidden md:flex absolute right-0 top-0 bottom-0 z-20 w-8 items-center justify-center bg-gradient-to-l from-background/90 to-transparent opacity-0 group-hover/row:opacity-100 transition">
+        {!isTv() && <button onClick={() => scrollBy(1)} className="hidden md:flex absolute right-0 top-0 bottom-0 z-20 w-8 items-center justify-center bg-gradient-to-l from-background/90 to-transparent opacity-0 group-hover/row:opacity-100 transition">
           <ChevronRight className="w-5 h-5" />
-        </button>
+        </button>}
       </div>
     </div>
   );

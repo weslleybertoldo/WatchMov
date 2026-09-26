@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { trendingToday, type MediaSummary } from '@/lib/tmdb';
+import { isTv } from '@/lib/device';
 
 // Cache em memória: ao voltar do detalhe o hero remonta JÁ com os itens (mesma altura
 // na hora). Antes nascia vazio (altura 0) e, quando a TMDB respondia, empurrava a
@@ -34,6 +35,7 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
   const idx = i % items.length;
   const m = items[idx];
   const bg = m.backdropUrl || m.posterUrl;
+  const tv = isTv();
 
   return (
     <div
@@ -42,6 +44,14 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
       // Em md+ solta o ratio e fixa a altura: largura total, imagem cobre.
       className="relative -mx-4 md:-mx-6 -mt-2 mb-2 aspect-video max-h-[46vh] md:aspect-auto md:h-[46vh] md:max-h-none overflow-hidden cursor-pointer animate-fade-in"
       data-row-key="hero"
+      {...(tv ? {
+        tabIndex: 0, role: 'button', 'aria-label': m.title,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          e.preventDefault();
+          go(e.key === 'ArrowRight' ? 1 : -1);
+        },
+      } : {})}
       style={{ touchAction: 'pan-y' }}
       onTouchStart={(e) => { startX.current = e.touches[0].clientX; swiped.current = false; }}
       onTouchMove={(e) => { if (startX.current != null && Math.abs(e.touches[0].clientX - startX.current) > 10) swiped.current = true; }}
@@ -65,6 +75,7 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
             <button
               key={k}
               onClick={(e) => { e.stopPropagation(); setI(k); }}
+              tabIndex={tv ? -1 : undefined}
               className={`h-1.5 rounded-full transition-all ${k === idx ? 'w-5 bg-primary' : 'w-1.5 bg-white/40'}`}
               aria-label={`slide ${k + 1}`}
             />
