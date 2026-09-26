@@ -136,19 +136,38 @@ public class NativePlayerPlugin extends Plugin {
             // headless — o atalho "espelhando na TV" volta neste mesmo tick.
             final android.content.Context ctx = getContext();
             if (CastSessionStore.load(ctx) != null) {
-                MediaNotificationService.restoreIfAlive(ctx, ok -> resolveCastStatus(call));
+                MediaNotificationService.restoreIfAlive(ctx, ok -> resolveCastStatus(call, ctx));
                 return;
             }
         }
-        resolveCastStatus(call);
+        resolveCastStatus(call, getContext());
     }
 
-    private static void resolveCastStatus(PluginCall call) {
+    private static void resolveCastStatus(PluginCall call, android.content.Context ctx) {
         JSObject r = new JSObject();
         r.put("active", PlayerActivity.isCasting());
         r.put("key", PlayerActivity.castKey());
         r.put("title", PlayerActivity.castTitle());
+        // Tempo da TV pro "continuar" da tela do título: o da sessão ativa e o último gravado com o player fechado
+        // (a TV parou ou caiu com o app no fundo) — esse o JS confirma com ackTvProgress.
+        r.put("positionMs", MediaNotificationService.castPosMs());
+        r.put("durationMs", MediaNotificationService.castDurMs());
+        android.content.SharedPreferences p = ctx.getSharedPreferences(MediaNotificationService.TV_LAST_PREFS, android.content.Context.MODE_PRIVATE);
+        String k = p.getString("key", null);
+        if (k != null) r.put("lastTv", new JSObject().put("key", k).put("positionMs", p.getLong("pos", 0))
+            .put("durationMs", p.getLong("dur", 0)).put("ts", p.getLong("ts", 0)));
         call.resolve(r);
+    }
+
+    // O JS gravou o último tempo da TV no "continuar" → não manda de novo (a TV pode ter gravado outro depois: fica).
+    @PluginMethod
+    public void ackTvProgress(PluginCall call) {
+        Long ts = call.getLong("ts");
+        if (ts != null) {
+            android.content.SharedPreferences p = getContext().getSharedPreferences(MediaNotificationService.TV_LAST_PREFS, android.content.Context.MODE_PRIVATE);
+            if (p.getLong("ts", 0) <= ts) p.edit().clear().apply();
+        }
+        call.resolve();
     }
 
     // Resolução real que o ExoPlayer decodificou → rotula o link na lista.

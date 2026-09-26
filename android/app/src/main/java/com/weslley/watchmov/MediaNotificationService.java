@@ -114,6 +114,9 @@ public class MediaNotificationService extends Service {
     public static boolean isHeadless() { return headless != null; }
     /** Última posição da TV (a Activity espelhando ou o poll headless escrevem); 0 = não está espelhando. */
     public static long castPosMs() { return sCast ? sPos : 0; }
+    public static long castDurMs() { return sCast ? sDur : 0; }
+    /** Último tempo da TV com o player fechado (key/pos/dur/ts): o app lê pelo castStatus e confirma com ackTvProgress. */
+    static final String TV_LAST_PREFS = "watchmov_tv_last";
 
     /**
      * Mostra/atualiza a notificação. Na 1ª vez sobe o serviço (precisa do app em
@@ -374,13 +377,17 @@ public class MediaNotificationService extends Service {
 
     // Player fechado com a TV tocando (25/09/2026): o "continuar" ficava com a posição do FECHAR — a TV seguiu até 19 min,
     // caiu, a sessão foi apagada e o título reabriu em 14. Grava a posição da TV onde o player grava (o player reaberto lê
-    // dela) e avisa o app, que salva o progresso se o título ainda estiver aberto nele.
+    // dela) e onde o app lê pra tela do título (com o player fechado ninguém escuta o playerProgress; a TV pode parar
+    // com o app no fundo, então fica guardada até o app confirmar).
     private void gravarPosicaoTv(CastSessionStore.Session s) {
         final long pos = sPos;
         if (s.key == null || !CastLocal.gravarPosicaoTv(pos, tvPosGravada)) return;
         tvPosGravada = pos;
-        try { getSharedPreferences(PlayerActivity.RESUME_PREFS, MODE_PRIVATE).edit().putLong(s.key, pos).apply(); } catch (Exception ignored) {}
-        NativePlayerPlugin.reportProgress(s.url, pos, sDur);
+        try {
+            getSharedPreferences(PlayerActivity.RESUME_PREFS, MODE_PRIVATE).edit().putLong(s.key, pos).apply();
+            getSharedPreferences(TV_LAST_PREFS, MODE_PRIVATE).edit().putString("key", s.key).putLong("pos", pos)
+                .putLong("dur", sDur).putLong("ts", System.currentTimeMillis()).apply();
+        } catch (Exception ignored) {}
     }
 
     private void headlessToggle() {

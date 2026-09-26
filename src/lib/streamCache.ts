@@ -174,3 +174,17 @@ export function setStreamPosition(positionMs: number, tmdbId?: number, type?: st
   e.ts = Date.now();          // renova: enquanto assiste, a entrada não expira
   if (e) { e.positionMs = positionMs; if (durationMs && durationMs > 0) e.durationMs = durationMs; write(d); }
 }
+
+// Tempo da TV com o player fechado: ninguém escuta o progresso do player, então ele vem da consulta do espelhamento
+// (a cada 4 s) pela chave `tmdbId:type:season:ep`. Só vale se for mais novo que o que já está no título — tocou no
+// celular depois? fica o do celular. Até 3 s não conta, igual ao player.
+export function applyTvPosition(key: string, positionMs: number, durationMs: number | undefined, ts: number): boolean {
+  if (!key || !(positionMs > 3000)) return false;
+  const d = read();
+  const e = d[key] ?? { streams: [], ts: 0 };
+  if (e.ts >= ts) return false;
+  e.ts = ts; e.positionMs = positionMs;
+  if (durationMs && durationMs > 0) e.durationMs = durationMs;
+  d[key] = e; write(d);
+  return true;
+}
