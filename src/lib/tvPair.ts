@@ -80,10 +80,15 @@ export async function approveTvCode(code: string, accessToken: string): Promise<
 
 export interface TvDevice { session_id: string; name: string; model: string | null; created_at: string; last_seen_at: string; }
 
+// Erro da edge com o código dela (ex. 'session_gone' = esta TV foi removida no celular).
+export class TvPairError extends Error {
+  constructor(message: string, readonly code: string | null) { super(message); }
+}
+
 // A TV logada se anota (abrir o app de novo só atualiza "usada por último").
 export async function registerTvDevice(accessToken: string, info: { name: string; model: string }): Promise<void> {
   const { status, data } = await call({ action: 'register', ...info }, accessToken);
-  if (status !== 200) throw new Error(data?.error?.message || `tv-pair register ${status}`);
+  if (status !== 200) throw new TvPairError(data?.error?.message || `tv-pair register ${status}`, data?.error?.code ?? null);
 }
 
 // Celular: TVs conectadas nesta conta (só as que ainda estão logadas).
@@ -91,6 +96,21 @@ export async function listTvDevices(accessToken: string): Promise<TvDevice[]> {
   const { status, data } = await call({ action: 'devices' }, accessToken);
   if (status !== 200) throw new Error(data?.error?.message || `tv-pair devices ${status}`);
   return Array.isArray(data.devices) ? data.devices : [];
+}
+
+export const TV_NAME_MAX = 40;
+
+// Celular: nome da TV na lista (a TV não sobrescreve ao se anotar de novo).
+export async function renameTvDevice(accessToken: string, sessionId: string, name: string): Promise<string> {
+  const { status, data } = await call({ action: 'rename', session_id: sessionId, name }, accessToken);
+  if (status !== 200) throw new TvPairError(data?.error?.message || 'Não deu pra renomear. Tente de novo.', data?.error?.code ?? null);
+  return data.name;
+}
+
+// Celular: tira a TV da conta (a sessão dela cai e ela volta pra tela do código).
+export async function removeTvDevice(accessToken: string, sessionId: string): Promise<void> {
+  const { status, data } = await call({ action: 'remove', session_id: sessionId }, accessToken);
+  if (status !== 200) throw new TvPairError(data?.error?.message || 'Não deu pra remover. Tente de novo.', data?.error?.code ?? null);
 }
 
 // Aprovou no celular → a lista de TVs recarrega (a TV se anota uns segundos depois de entrar).

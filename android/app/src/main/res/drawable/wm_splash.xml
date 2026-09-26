@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Abertura do app: fundo escuro com a logo no meio (no lugar da tela branca do Capacitor). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/wm_fundo" />
+    <item android:width="160dp" android:height="160dp" android:gravity="center" android:drawable="@drawable/wm_logo" />
+</layer-list>

@@ -8,7 +8,10 @@ import {
   MOVIE_GENRES, TV_GENRES, ANIME_ROWS, belongsToAnimeRow, type TmdbMediaType,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
-import { getCastNow, type CastNow } from '@/lib/nativePlayer';
+import { getCastNow, closeNativePlayer, type CastNow } from '@/lib/nativePlayer';
+import { App as CapApp } from '@capacitor/app';
+import { appNaFrente, isTv } from '@/lib/device';
+import { listenAsTv, sessionIdOf } from '@/lib/tvRemote';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
@@ -34,6 +37,9 @@ import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched
 import UpdateChecker from '@/components/UpdateChecker';
 import { fillRow, isPrimaryGenre } from '@/lib/rowFill';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Home, Film, Tv, Sparkles, RadioTower, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'procurar';
@@ -81,7 +87,7 @@ const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
 ];
 
 export default function Index() {
-  const { signOut, user } = useAuth();
+  const { signOut, user, session } = useAuth();
   const store = useWatchStore(user?.id);
   // Episódio BAIXADO abre o player por downloads.ts, fora do VideoPlayer — lá não há
   // store, então o "assistido" que o player devolvia era descartado. Aqui o store fica
@@ -149,6 +155,7 @@ export default function Index() {
   const [bugsOpen, setBugsOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);          // Minha Lista (agora dentro do Painel)
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null); // canal ao vivo tocando
+  const [exitAsk, setExitAsk] = useState(false);            // "Deseja sair?" do Voltar na aba Início
 
   // Push: registra o device e carrega os sinos; tocar na notificação abre o título.
   useEffect(() => {
@@ -272,6 +279,7 @@ export default function Index() {
     openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
   const handleBack = useCallback(async (): Promise<boolean> => {
+    if (exitAsk) { setExitAsk(false); return true; }
     if (liveChannel) { setLiveChannel(null); return true; }
     if (selected) { closeDetail(); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
@@ -287,9 +295,40 @@ export default function Index() {
     if (continueFilter) { setContinueFilter(null); return true; }
     if (category) { setCategory(null); return true; }
     if (tab !== 'inicio') { setTab('inicio'); return true; }
-    return false;
-  }, [liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
+    // Aba Início sem nada aberto: antes saía direto (pedido dele 26/09/2026: perguntar "Deseja sair?").
+    setExitAsk(true);
+    return true;
+  }, [exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
   useAndroidBackButton(handleBack);
+
+  // TV: o celular mandou abrir um título (enviar pra TV). Fecha o que estiver por cima e mostra a página dele.
+  const openFromRemote = useCallback((m: MediaSummary) => {
+    homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
+    setExitAsk(false); setLiveChannel(null); setSettingsOpen(false); setNoticesOpen(false); setHistoryOpen(false);
+    setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListOpen(false);
+    setListFilter(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setCategory(null);
+    setAutoPlay(null);
+    setSelected(m);
+    window.scrollTo(0, 0);
+  }, []);
+  const openFromRemoteRef = useRef(openFromRemote);
+  openFromRemoteRef.current = openFromRemote;
+  const signOutRef = useRef(signOut);
+  signOutRef.current = signOut;
+  // Pedidos do celular pelo canal da conta. Só atende com o app na frente (senão o celular avisa que a TV está
+  // desligada); com o player nativo tocando, fecha ele antes (salva a posição, como o Voltar).
+  const tvSid = isTv() ? sessionIdOf(session?.access_token) : null;
+  const uid = user?.id;
+  useEffect(() => {
+    if (!tvSid || !uid) return;
+    return listenAsTv(uid, tvSid, async (cmd) => {
+      if (cmd.action === 'logout') { void signOutRef.current(); return true; }
+      if (!(await appNaFrente())) return false;
+      if (await closeNativePlayer()) await new Promise(r => setTimeout(r, 600));
+      openFromRemoteRef.current(cmd.media);
+      return true;
+    });
+  }, [tvSid, uid]);
 
   if (store.loading) {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
@@ -505,6 +544,18 @@ export default function Index() {
           <LiveTvView onPlay={setLiveChannel} />
         )}
       </main>
+
+      <AlertDialog open={exitAsk} onOpenChange={setExitAsk}>
+        <AlertDialogContent className="max-w-xs">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deseja sair?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row gap-2 sm:justify-center">
+            <AlertDialogCancel className="flex-1 mt-0" data-tv-autofocus>Não</AlertDialogCancel>
+            <AlertDialogAction className="flex-1" onClick={() => { CapApp.exitApp().catch(() => undefined); }}>Sim</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Bottom nav (mobile) */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 backdrop-blur border-t border-border flex">

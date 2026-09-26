@@ -15,6 +15,7 @@ interface NativePlayerPlugin {
   ackTvProgress(opts: { ts: number }): Promise<void>;
   pendingExits(): Promise<{ exits?: AppExit[] }>;
   ackExits(opts: { ts: number }): Promise<void>;
+  closePlayer(): Promise<{ closed: boolean }>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
@@ -103,6 +104,12 @@ export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> 
 export async function clearResumeNative(key: string): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   try { await NativePlayer.clearResume({ key }); } catch { /* ignore */ }
+}
+
+// Enviar pra TV: fecha o player nativo aberto (como o Voltar, salvando a posição). true = havia player.
+export async function closeNativePlayer(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try { return (await NativePlayer.closePlayer()).closed === true; } catch { return false; }
 }
 
 // O que está espelhando na TV agora (ou null). A key é `tmdbId:type:season:ep` —

@@ -85,4 +85,45 @@ public class TvMode extends Plugin {
     public void cursorStop(PluginCall call) {
         getActivity().runOnUiThread(() -> { TvCursor.desligar(null); call.resolve(); });
     }
+
+    /**
+     * O app está na tela (alguma Activity dele visível, inclusive o player nativo)? É o "aberto" do enviar pra TV:
+     * com o WatchMov no fundo a TV não responde e o celular avisa que ela está desligada. Serviço em primeiro
+     * plano (download, notificação do espelhamento) não conta: ele fica em IMPORTANCE_FOREGROUND_SERVICE.
+     */
+    @PluginMethod
+    public void foreground(PluginCall call) {
+        android.app.ActivityManager.RunningAppProcessInfo info = new android.app.ActivityManager.RunningAppProcessInfo();
+        android.app.ActivityManager.getMyMemoryState(info);
+        JSObject r = new JSObject();
+        r.put("foreground", info.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND);
+        call.resolve(r);
+    }
+
+    /**
+     * Fire TV: o campo focado pelo controle não abre o teclado sozinho; o OK no campo pede aqui. Abre 350 ms depois:
+     * aberto na hora, o teclado da Amazon pegava o fim do OK e digitava a letra em que nasce o foco ("a").
+     */
+    @PluginMethod
+    public void showKeyboard(PluginCall call) {
+        final android.webkit.WebView wv = getBridge().getWebView();
+        wv.postDelayed(() -> {
+            android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(wv, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        }, 350);
+        call.resolve();
+    }
+
+    /** Pesquisou na TV: o teclado da Amazon não fecha sozinho no "Avançar" → fecha aqui. */
+    @PluginMethod
+    public void hideKeyboard(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            android.webkit.WebView wv = getBridge().getWebView();
+            android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(wv.getWindowToken(), 0);
+            call.resolve();
+        });
+    }
 }

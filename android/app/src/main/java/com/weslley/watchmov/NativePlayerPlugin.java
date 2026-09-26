@@ -179,6 +179,15 @@ public class NativePlayerPlugin extends Plugin {
         instance.notifyListeners("playerQuality", d);
     }
 
+    // Enviar pra TV: fecha o player aberto (se houver) do mesmo jeito que o Voltar, pra TV mostrar a página do
+    // título que chegou do celular. Devolve se havia player.
+    @PluginMethod
+    public void closePlayer(final PluginCall call) {
+        final PlayerActivity cur = PlayerActivity.current();
+        if (cur == null || cur.isFinishing()) { call.resolve(new JSObject().put("closed", false)); return; }
+        cur.runOnUiThread(() -> { cur.fecharPorFora(); call.resolve(new JSObject().put("closed", true)); });
+    }
+
     @PluginMethod
     public void play(final PluginCall call) {
         final String url = call.getString("url");

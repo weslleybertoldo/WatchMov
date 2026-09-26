@@ -13,10 +13,16 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Enquanto o WebView carrega aparece a abertura escura com a logo, não o branco do tema claro. -->
+        <item name="android:windowBackground">@drawable/wm_splash</item>
     </style>
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:background">@drawable/wm_splash</item>
+        <item name="android:windowBackground">@drawable/wm_splash</item>
+        <!-- Android 12+: a abertura do sistema usa o ícone do app sobre este fundo. -->
+        <item name="windowSplashScreenBackground">@color/wm_fundo</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

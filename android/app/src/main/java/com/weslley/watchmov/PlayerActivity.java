@@ -2738,6 +2738,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     @Override
     public void onBackPressed() { finishWithResult(false, false); }
 
+    // Enviar pra TV: chegou outro título do celular com o vídeo tocando → fecha como no Voltar (salva a posição).
+    void fecharPorFora() { finishWithResult(false, false); }
+
     // Controle da TV (W4 do app do Fire TV): com os controles escondidos ←/→ voltam/avançam 10 s, OK pausa ou
     // continua e ↑/↓ mostram os controles com o foco no play. Com os controles na tela o foco anda entre os botões
     // (Android) e cada tecla segura os controles mais 8 s. ⏪/⏩/⏯ do controle valem sempre.

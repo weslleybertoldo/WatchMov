@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MediaSummary, searchMulti } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { Input } from '@/components/ui/input';
 import { Search, Loader2, Clock, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { esconderTeclado, isTv, mostrarTeclado } from '@/lib/device';
 
 interface SearchViewProps {
   onOpen: (media: MediaSummary) => void;
@@ -32,6 +34,12 @@ export default function SearchView({ onOpen }: SearchViewProps) {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(searchCache?.searched ?? false);
   const [history, setHistory] = useState<string[]>(loadHistory);
+  // TV (pedido dele 26/09/2026): o campo focado pelo controle não abria o teclado e o OK buscava vazio.
+  // Agora o OK no campo vazio (ou com o texto já pesquisado) abre o teclado; com texto novo, o "Avançar" do teclado
+  // da Amazon (sai do campo) ou o OK pesquisam. O botão Buscar ao lado também.
+  const tv = isTv();
+  const abrirTeclado = useRef(false);
+  const ultimaBusca = useRef<string | null>(searchCache?.searched ? searchCache.query : null);
 
   const pushHistory = (term: string) => {
     const t = term.trim();
@@ -57,6 +65,9 @@ export default function SearchView({ onOpen }: SearchViewProps) {
   const run = async (term = query) => {
     const t = term.trim();
     if (!t) return;
+    ultimaBusca.current = t;
+    // TV: pesquisou → o teclado fecha e o campo solta o foco (o tvNav leva o foco pro 1º resultado).
+    if (tv) { (document.activeElement as HTMLElement | null)?.blur?.(); esconderTeclado(); }
     if (t !== query) setQuery(t);
     setLoading(true);
     setSearched(true);
@@ -75,21 +86,46 @@ export default function SearchView({ onOpen }: SearchViewProps) {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          autoFocus
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); run(); } }}
-          placeholder="Buscar filmes, séries e animes..."
-          className="pl-9 pr-9 bg-muted/50 border-border h-11"
-        />
-        {(query || searched) && (
-          <button onClick={clearSearch} title="Limpar"
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
-            <X className="w-4 h-4" />
-          </button>
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              const t = query.trim();
+              if (tv && (!t || t === ultimaBusca.current)) { abrirTeclado.current = true; return; }
+              run();
+            }}
+            // O teclado da TV abre no SOLTAR do OK.
+            onKeyUp={e => {
+              if (e.key !== 'Enter' || !abrirTeclado.current) return;
+              abrirTeclado.current = false;
+              mostrarTeclado();
+            }}
+            // O "Avançar" do teclado da Amazon não manda Enter: ele tira o foco do campo. Na TV, sair do campo com
+            // texto novo já pesquisa.
+            onBlur={() => { const t = query.trim(); if (tv && t && t !== ultimaBusca.current) run(); }}
+            // type=search: o campo diz ao teclado que é uma busca (ação "pesquisar").
+            type="search"
+            enterKeyHint="search"
+            placeholder="Buscar filmes, séries e animes..."
+            className="pl-9 pr-9 bg-muted/50 border-border h-11 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {(query || searched) && (
+            <button onClick={clearSearch} title="Limpar"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        {tv && (
+          <Button className="h-11 shrink-0" onClick={() => run()} disabled={!query.trim()}>
+            <Search className="w-4 h-4 mr-1" /> Buscar
+          </Button>
         )}
       </div>
 

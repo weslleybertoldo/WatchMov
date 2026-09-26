@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   normalizeCode, formatCode, tvLinkFor, codeFromUrl, createTvCode, pollTvCode, approveTvCode,
-  registerTvDevice, listTvDevices,
+  registerTvDevice, listTvDevices, renameTvDevice, removeTvDevice, TvPairError,
   capturePendingTvCode, takePendingTvCode,
 } from "./tvPair";
 
@@ -89,6 +89,29 @@ describe("TVs conectadas", () => {
   it("register recusado vira erro (o app tenta na próxima abertura)", async () => {
     fetchMock.mockReturnValueOnce(resp(401, { error: { code: "unauthorized", message: "Sem login" } }));
     await expect(registerTvDevice("jwt", { name: "TV", model: "" })).rejects.toThrow("Sem login");
+  });
+
+  it("TV removida no celular: o register devolve o código session_gone (a TV sai)", async () => {
+    fetchMock.mockReturnValueOnce(resp(401, { error: { code: "session_gone", message: "Esta TV foi removida da conta" } }));
+    const e = await registerTvDevice("jwt", { name: "TV", model: "" }).catch((x) => x);
+    expect(e).toBeInstanceOf(TvPairError);
+    expect(e.code).toBe("session_gone");
+  });
+
+  it("renomear manda a TV e o nome com o JWT do celular", async () => {
+    fetchMock.mockReturnValueOnce(resp(200, { ok: true, name: "Sala" }));
+    await expect(renameTvDevice("jwt-do-celular", "s1", "Sala")).resolves.toBe("Sala");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers.Authorization).toBe("Bearer jwt-do-celular");
+    expect(JSON.parse(init.body)).toEqual({ action: "rename", session_id: "s1", name: "Sala" });
+  });
+
+  it("remover manda a TV; recusa vira erro com a mensagem da edge", async () => {
+    fetchMock.mockReturnValueOnce(resp(200, { ok: true }));
+    await removeTvDevice("jwt", "s1");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ action: "remove", session_id: "s1" });
+    fetchMock.mockReturnValueOnce(resp(404, { error: { code: "not_found", message: "TV não encontrada" } }));
+    await expect(removeTvDevice("jwt", "s9")).rejects.toThrow("TV não encontrada");
   });
 
   it("o celular lista as TVs da conta", async () => {

@@ -7,9 +7,28 @@ interface TvModePlugin {
   get(): Promise<{ tv: boolean; brand?: string; model?: string }>;
   cursorStart(o: { x: number; y: number; exitY: number; dpr: number }): Promise<void>;
   cursorStop(): Promise<void>;
+  foreground(): Promise<{ foreground: boolean }>;
+  showKeyboard(): Promise<void>;
+  hideKeyboard(): Promise<void>;
   addListener(ev: 'cursorExit', cb: (d: { motivo: string }) => void): Promise<PluginListenerHandle>;
 }
 const TvMode = registerPlugin<TvModePlugin>('TvMode');
+
+// O WatchMov está na tela agora (qualquer tela dele, inclusive o player nativo)? É o "aberto" do enviar pra TV:
+// com o app no fundo a TV não responde. Sem o nativo (navegador/APK antigo) vale a página visível.
+export async function appNaFrente(): Promise<boolean> {
+  try { return (await TvMode.foreground()).foreground === true; }
+  catch { return document.visibilityState === 'visible'; }
+}
+
+// Fire TV: o WebView não abre o teclado sozinho quando o campo ganha foco pelo controle (pedido dele 26/09/2026).
+export function mostrarTeclado(): void {
+  TvMode.showKeyboard().catch(() => undefined);
+}
+
+export function esconderTeclado(): void {
+  TvMode.hideKeyboard().catch(() => undefined);
+}
 
 // Setinha do ▣ Servidor na TV (TvCursor.java). APK antigo não tem o método: false e nada muda.
 export async function ligarSetinha(o: { x: number; y: number; exitY: number; dpr: number }): Promise<boolean> {

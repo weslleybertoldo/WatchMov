@@ -3,8 +3,11 @@
 //   create  (sem login)          → { code, secret, expires_at }: a TV mostra o código/QR e guarda o segredo
 //   approve (JWT do celular)     → gera um link mágico da conta de quem aprovou e guarda o token
 //   poll    (código + segredo)   → { status: 'pending' } ou { status: 'approved', token_hash } (1× só)
-//   register (JWT da TV)         → a TV logada se anota em wm_tv_devices (chave = sessão dela)
+//   register (JWT da TV)         → a TV logada se anota em wm_tv_devices (chave = sessão dela);
+//                                  sessão apagada (TV removida) → 401 session_gone e a TV sai
 //   devices  (JWT do celular)    → TVs conectadas da conta (só as com sessão viva)
+//   rename   (JWT do celular)    → nome da TV dado no celular (custom_name; a TV não sobrescreve)
+//   remove   (JWT do celular)    → tira a TV da conta: apaga o registro e a sessão dela
 // A TV entra com supabase.auth.verifyOtp({ token_hash, type: 'magiclink' }).
 // Deploy com verify_jwt=false (create/poll são sem login; o approve confere o JWT aqui dentro).
 // Secrets: SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (injetados pela plataforma).
@@ -79,6 +82,16 @@ function sessaoDoJwt(jwt: string): string | null {
     return null;
   }
 }
+// O supabase-js troca o 403 `session_not_found` do GoTrue por um AuthSessionMissingError genérico (o mesmo de
+// "sem JWT"), então a pergunta vai direto pro GoTrue.
+async function sessaoApagada(jwt: string): Promise<boolean> {
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/auth/v1/user`, {
+    headers: { apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, Authorization: `Bearer ${jwt}` },
+  });
+  if (r.status !== 403) return false;
+  const b = await r.json().catch(() => ({}));
+  return b?.error_code === 'session_not_found';
+}
 function texto(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null;
 }
@@ -87,6 +100,8 @@ async function registrar(req: Request, body: Record<string, unknown>): Promise<R
   const jwt = jwtDe(req);
   const { data: u, error: ue } = await admin.auth.getUser(jwt);
   const session_id = sessaoDoJwt(jwt);
+  // TV removida no celular: a sessão sumiu mas o JWT ainda não venceu → a TV sai e volta pro QR.
+  if (ue && jwt && session_id && await sessaoApagada(jwt)) return erro(401, 'session_gone', 'Esta TV foi removida da conta');
   if (ue || !u?.user || !session_id) return erro(401, 'unauthorized', 'Sem login');
   const { error } = await admin.from('wm_tv_devices').upsert({
     session_id, user_id: u.user.id,
@@ -103,6 +118,32 @@ async function listar(req: Request): Promise<Response> {
   const { data, error } = await admin.rpc('wm_tv_devices_live', { uid: u.user.id });
   if (error) throw error;
   return json(200, { devices: data ?? [] });
+}
+
+const UUID_OK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function renomear(req: Request, body: Record<string, unknown>): Promise<Response> {
+  const { data: u, error: ue } = await admin.auth.getUser(jwtDe(req));
+  if (ue || !u?.user) return erro(401, 'unauthorized', 'Entre no app do celular primeiro');
+  const sid = typeof body.session_id === 'string' && UUID_OK.test(body.session_id) ? body.session_id : null;
+  const nome = texto(body.name, 40);
+  if (!sid || !nome) return erro(400, 'bad_request', 'Faltou a TV ou o nome');
+  const { data, error } = await admin.from('wm_tv_devices')
+    .update({ custom_name: nome }).eq('session_id', sid).eq('user_id', u.user.id).select('session_id');
+  if (error) throw error;
+  if (!data?.length) return erro(404, 'not_found', 'TV não encontrada');
+  return json(200, { ok: true, name: nome });
+}
+
+async function remover(req: Request, body: Record<string, unknown>): Promise<Response> {
+  const { data: u, error: ue } = await admin.auth.getUser(jwtDe(req));
+  if (ue || !u?.user) return erro(401, 'unauthorized', 'Entre no app do celular primeiro');
+  const sid = typeof body.session_id === 'string' && UUID_OK.test(body.session_id) ? body.session_id : null;
+  if (!sid) return erro(400, 'bad_request', 'Faltou a TV');
+  const { data, error } = await admin.rpc('wm_tv_device_remove', { uid: u.user.id, sid });
+  if (error) throw error;
+  if (data !== true) return erro(404, 'not_found', 'TV não encontrada');
+  return json(200, { ok: true });
 }
 
 async function aprovar(req: Request, body: Record<string, unknown>): Promise<Response> {
@@ -165,6 +206,8 @@ Deno.serve(async (req) => {
     if (action === 'poll') return await consultar(body);
     if (action === 'register') return await registrar(req, body);
     if (action === 'devices') return await listar(req);
+    if (action === 'rename') return await renomear(req, body);
+    if (action === 'remove') return await remover(req, body);
     return erro(400, 'bad_action', 'Ação desconhecida');
   } catch (e) {
     console.error(JSON.stringify({ fn: 'tv-pair', action, error: String((e as Error)?.message ?? e) }));
