@@ -57,6 +57,10 @@ const STEPS_PLAY = ['.captcha-gate__play', '#player-button'];
 const PLAYER_MARKERS = '.video-page__player,.captcha-gate,#player-button';
 // Texto da UPNS quando o vídeo foi apagado (/api/v1/video → 404): opção morta, o nativo pula na hora.
 export const DEAD_TEXTS = ['Video not found or deleted'];
+// Busca: play MUDO em todo <video> a cada tick (muitos players só pedem o vídeo depois do play). Com o motor ABYS
+// pronto (window.__wmNoPlay, 26/09/2026) não dá mais: o pump pausava o JW no ready, o tick dava play de novo e o
+// 360p escondido tocava o filme inteiro (~1,2 Mbps de internet + decodificação no motor da box).
+const PLAY_MUTED = "if(!window.__wmNoPlay)document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});";
 
 // Script injetado no document-start em TODOS os frames (androidx.webkit, origins '*'): cada frame
 // roda seu próprio loop clicando opção/gate/play e dando play mudo nos vídeos. Resolve o gate da
@@ -69,7 +73,7 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
     + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
     + 'var tick=function(){try{'
-    + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+    + PLAY_MUTED
     + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];if(done[st])continue;var el=null;'
     + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
     + 'if(el){done[st]=1;fire(el);try{console.log("WMINJ click "+st+" @ "+location.href.slice(0,55))}catch(_){}return;}}}catch(_){}};'
@@ -136,7 +140,7 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     // nome curto da opcao da embedplay.one: "Opção 1 (ABYS)" → "ABYS"
     + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
     + 'var tick=function(){try{upns();'
-    + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+    + PLAY_MUTED
     + "if(!done['__pp__']&&document.querySelector(" + JSON.stringify(PLAYER_MARKERS) + ")){done['__pp__']=1;prog('player');}"
     // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
     + "if(done['__pp__']&&!done['__dead__']&&document.body){var bt=document.body.innerText||document.body.textContent||'';for(var di=0;di<DEAD.length;di++){if(bt.indexOf(DEAD[di])>=0){done['__dead__']=1;try{console.log('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}break;}}}"
@@ -190,9 +194,12 @@ return out.length?out:null}catch(e){return null}}
 /* Mede o MP4 virtual: Range de 1 KiB (NUNCA 'bytes=0-0' — o SW do Abyss trata fim 0 como aberto e devolve o
    arquivo inteiro, 1,4 GB; provado no emulador 15/09), lê SÓ o 1º pedaço do corpo e cancela o stream. */
 function cancelBody(r){try{r.body&&r.body.cancel()}catch(_){}}
+/* Motor pronto (26/09/2026): os pedaços saem pelo SW com o vídeo do JW PARADO. Pausa o <video> que estiver tocando a
+   cada volta do pump — o player do Abyss (ou o play da busca) não deixa o 360p escondido tocar o filme inteiro. */
+function hush(){document.querySelectorAll('video').forEach(function(v){try{if(!v.paused)v.pause()}catch(_){}})}
 function firstChunk(r){var rd=r.body&&r.body.getReader?r.body.getReader():null;if(!rd)return r.arrayBuffer().then(function(b){return b.byteLength});return rd.read().then(function(c){try{rd.cancel()}catch(_){}return c.value?c.value.byteLength:0})}
 function meta(s){return fetch(s.u,{headers:{Range:'bytes=0-1023'}}).then(function(r){var cr=r.headers.get('content-range')||'';var m=/\\/(\\d+)\\s*$/.exec(cr);s.total=m?+m[1]:(r.status==200?+(r.headers.get('content-length')||0):0);s.type=r.type;s.status=r.status;return firstChunk(r)}).then(function(n){s.ok=s.total>0&&n>0;log('meta q='+s.q+' status='+s.status+' total='+s.total+' type='+s.type+' first='+n+' ok='+s.ok);return s.ok}).catch(function(e){log('meta-err q='+s.q+' '+e);return false})}
-function pump(rel){fetch(BASE+'abyss/next?sid='+SID+(rel?'&rel='+rel:'')).then(function(r){return r.json()}).then(function(n){
+function pump(rel){hush();fetch(BASE+'abyss/next?sid='+SID+(rel?'&rel='+rel:'')).then(function(r){return r.json()}).then(function(n){
 if(n&&n.gone){log('gone');return}
 if(!n||n.off==null){var now=Date.now();if(now-lastKA>20000){lastKA=now;fetch(srcs[0].u,{headers:{Range:'bytes=0-1023'}}).then(cancelBody).catch(function(){})}return pump()}
 var s=null;for(var i=0;i<srcs.length;i++)if(srcs[i].q==n.q)s=srcs[i];
@@ -211,7 +218,7 @@ fetch(BASE+'abyss/progress?sid='+SID+'&stage=sources').catch(function(){});
 var okq=[],sent=false,pend=s.length,lt=null;srcs=[];
 var lst=function(l){return encodeURIComponent(JSON.stringify(l.map(function(x){return{q:x.q,total:x.total}})))};
 var send=function(){if(sent)return;sent=true;if(lt)clearTimeout(lt);if(!okq.length){log('sem meta');return}
-for(var i=0;i<okq.length;i++)srcs.push(okq[i]);try{var p=jwplayer();p.pause&&p.pause();document.querySelectorAll('video').forEach(function(v){try{v.pause()}catch(_){}})}catch(_){}
+for(var i=0;i<okq.length;i++)srcs.push(okq[i]);window.__wmNoPlay=1;try{var p=jwplayer();p.pause&&p.pause()}catch(_){}hush();
 fetch(BASE+'abyss/ready?sid='+SID+'&list='+lst(okq)).then(function(r){log('ready '+r.status+' q='+okq.map(function(x){return x.q}).join(','));for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})};
 s.forEach(function(x){meta(x).then(function(ok){pend--;
 if(ok){if(!sent){okq.push(x);if(okq.length===1)lt=setTimeout(send,LATE)}
@@ -286,7 +293,7 @@ export function buildClickScript(steps: string[] = CLICK_STEPS): string {
     + "for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();"
     + 'if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};'
     + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:W}));});}catch(_){}try{e.click();}catch(_){}};"
-    + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+    + PLAY_MUTED
     + 'var steps=' + list + ';for(var i=0;i<steps.length;i++){var st=steps[i];if(W.__wmDone[st])continue;var el=null;'
     + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"
     + "if(el){W.__wmDone[st]=true;fire(el);return 'clicked:'+st;}}return 'none';}catch(e){return 'err:'+e;}})();";

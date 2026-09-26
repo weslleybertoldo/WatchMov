@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, ABYSS_PIECE_TIMEOUT_MS, STEPS_REPEAT, DEAD_TEXTS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
-  beforeEach(() => { localStorage.clear(); });
+  // __wmNoPlay: o motor ABYS marca o frame no ready — não pode vazar de um teste pro outro.
+  beforeEach(() => { localStorage.clear(); delete (window as unknown as Record<string, unknown>).__wmNoPlay; });
 
   it('ABYS: pump só no frame abysscdn, fala com o proxy local, lê sources e faz fallback pra Byse', () => {
     const s = buildAbyssScript('abc123');
@@ -568,5 +569,62 @@ describe('resolver oculto (regras puras)', () => {
       vi.useRealTimers(); console.log = origLog; w.__wmInj = prevInj; w.__wmUpns = prevUp; document.body.innerHTML = '';
     }
     expect(pedidos.length).toBe(0);
+  });
+
+  // <video> falso (no jsdom o play/pause não existem de verdade): conta os play()/pause(). `teimoso` = segue tocando.
+  const fakeVideo = (tocando: boolean, teimoso = false) => {
+    document.body.innerHTML = '<video></video>';
+    const v = document.querySelector('video') as HTMLVideoElement;
+    const st = { paused: !tocando, plays: 0, pauses: 0 };
+    Object.defineProperty(v, 'paused', { configurable: true, get: () => (teimoso ? false : st.paused) });
+    v.play = () => { st.plays++; st.paused = false; return Promise.resolve(); };
+    v.pause = () => { st.pauses++; st.paused = true; };
+    return st;
+  };
+
+  it('26/09: a busca dá play mudo nos vídeos; com o motor pronto (window.__wmNoPlay) nenhum tick dá mais play', () => {
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    const origLog = console.log; console.log = () => {};
+    const tickInject = () => {
+      w.__wmInj = undefined;
+      vi.useFakeTimers();
+      try { new Function(buildInjectScript(CLICK_STEPS_ABYS))(); vi.advanceTimersByTime(650 * 5); } finally { vi.useRealTimers(); }
+    };
+    try {
+      const semMarca = fakeVideo(false);
+      new Function(buildClickScript())();
+      expect(semMarca.plays).toBe(1);
+      const semMarcaInj = fakeVideo(false);
+      tickInject();
+      expect(semMarcaInj.plays).toBeGreaterThanOrEqual(1);
+
+      w.__wmNoPlay = 1;
+      const click = fakeVideo(false);
+      new Function(buildClickScript())();
+      expect(click.plays).toBe(0);
+      const inj = fakeVideo(false);
+      tickInject();
+      expect(inj.plays).toBe(0);
+      const ciclo = fakeVideo(false);
+      w.__wmInj = undefined;
+      vi.useFakeTimers();
+      try { new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))(); vi.advanceTimersByTime(650 * 5); } finally { vi.useRealTimers(); }
+      expect(ciclo.plays).toBe(0);
+    } finally {
+      delete w.__wmNoPlay; w.__wmInj = prevInj; console.log = origLog; document.body.innerHTML = '';
+    }
+  });
+
+  it('26/09: ABYS — no ready o motor marca window.__wmNoPlay e pausa o vídeo escondido de novo a cada volta do pump', async () => {
+    const w = window as unknown as Record<string, unknown>;
+    const v = fakeVideo(true, true);   // player teimoso: segue "tocando" mesmo depois do pause
+    try {
+      await runPump(() => Promise.resolve({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(2097152)) }), 5000);
+      expect(w.__wmNoPlay).toBe(1);
+      expect(v.pauses).toBeGreaterThanOrEqual(3);   // no ready + a cada volta do pump (os laços e a volta depois do pedaço)
+    } finally {
+      delete w.__wmNoPlay; document.body.innerHTML = '';
+    }
   });
 });
