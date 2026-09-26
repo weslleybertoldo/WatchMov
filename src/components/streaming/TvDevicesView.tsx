@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Loader2, Plus, Tv } from 'lucide-react';
+import { ArrowLeft, Loader2, Pencil, Plus, Trash2, Tv } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { supabase } from '@/lib/supabase';
-import { listTvDevices, requestTvApprove, TV_APPROVED_EVENT, type TvDevice } from '@/lib/tvPair';
+import {
+  listTvDevices, removeTvDevice, renameTvDevice, requestTvApprove, TV_APPROVED_EVENT, TV_NAME_MAX, type TvDevice,
+} from '@/lib/tvPair';
+import { newCmdId, sendToTv } from '@/lib/tvRemote';
 
 // Painel → Entrar na TV (pedido dele 26/09/2026): as TVs conectadas nesta conta e o "Conectar +",
-// que abre o campo do código que a TV mostra.
+// que abre o campo do código que a TV mostra. Cada TV dá pra renomear e remover.
 function quando(iso: string): string {
   const d = new Date(iso);
   const hoje = new Date().toDateString() === d.toDateString();
@@ -13,13 +23,21 @@ function quando(iso: string): string {
   return hoje ? `hoje ${hora}` : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${hora}`;
 }
 
+async function sessao() {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+}
+
 export default function TvDevicesView({ onBack }: { onBack: () => void }) {
   const [devices, setDevices] = useState<TvDevice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<TvDevice | null>(null);
+  const [newName, setNewName] = useState('');
+  const [removing, setRemoving] = useState<TvDevice | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = (await sessao())?.access_token;
     if (!token) return;
     try {
       setDevices(await listTvDevices(token));
@@ -39,6 +57,44 @@ export default function TvDevicesView({ onBack }: { onBack: () => void }) {
     return () => { window.removeEventListener(TV_APPROVED_EVENT, onApproved); timers.forEach(clearTimeout); };
   }, [load]);
 
+  const nomeOk = newName.trim().length > 0;
+
+  const confirmRename = async () => {
+    const tv = renaming;
+    const s = await sessao();
+    if (!tv || !s || !nomeOk) return;
+    setBusy(true);
+    try {
+      const name = await renameTvDevice(s.access_token, tv.session_id, newName.trim());
+      setDevices((list) => list?.map((d) => (d.session_id === tv.session_id ? { ...d, name } : d)) ?? list);
+      setRenaming(null);
+      toast.success('TV renomeada', { description: name });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmRemove = async () => {
+    const tv = removing;
+    const s = await sessao();
+    if (!tv || !s) return;
+    setBusy(true);
+    try {
+      await removeTvDevice(s.access_token, tv.session_id);
+      // A sessão da TV já caiu; o aviso pelo canal só faz ela voltar pra tela do código na hora (ligada e aberta).
+      void sendToTv(s.user.id, { id: newCmdId(), to: tv.session_id, action: 'logout' }, 3000).catch(() => undefined);
+      setDevices((list) => list?.filter((d) => d.session_id !== tv.session_id) ?? list);
+      setRemoving(null);
+      toast.success('TV removida', { description: tv.name });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -54,12 +110,20 @@ export default function TvDevicesView({ onBack }: { onBack: () => void }) {
           <p className="text-sm text-muted-foreground py-4">Nenhuma TV conectada ainda.</p>
         ) : (
           devices.map((d) => (
-            <div key={d.session_id} className="bg-card border border-border/60 rounded-xl p-4 flex items-center gap-3">
+            <div key={d.session_id} className="bg-card border border-border/60 rounded-xl p-4 flex items-center gap-3" data-tv-device={d.session_id}>
               <Tv className="w-6 h-6 text-primary shrink-0" />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="font-medium text-foreground truncate">{d.name}{d.model ? <span className="text-muted-foreground font-normal"> · {d.model}</span> : null}</p>
                 <p className="text-xs text-muted-foreground">Conectada {quando(d.created_at)} · usada {quando(d.last_seen_at)}</p>
               </div>
+              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" title="Renomear" aria-label={`Renomear ${d.name}`}
+                onClick={() => { setNewName(d.name); setRenaming(d); }}>
+                <Pencil className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-destructive hover:text-destructive" title="Remover" aria-label={`Remover ${d.name}`}
+                onClick={() => setRemoving(d)}>
+                <Trash2 className="w-4 h-4" />
+              </Button>
             </div>
           ))
         )}
@@ -70,6 +134,39 @@ export default function TvDevicesView({ onBack }: { onBack: () => void }) {
         Conectar <Plus className="w-4 h-4" />
       </Button>
       <p className="text-xs text-muted-foreground text-center">Abra o WatchMov na TV e digite o código que aparece nela (ou aponte a câmera pro QR).</p>
+
+      <Dialog open={!!renaming} onOpenChange={(o) => { if (!o && !busy) setRenaming(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Renomear TV</DialogTitle>
+          </DialogHeader>
+          <Input value={newName} maxLength={TV_NAME_MAX} autoFocus placeholder="Ex.: TV da sala"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void confirmRename(); } }} />
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setRenaming(null)} disabled={busy}>Cancelar</Button>
+            <Button onClick={confirmRename} disabled={busy || !nomeOk}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Salvar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!removing} onOpenChange={(o) => { if (!o && !busy) setRemoving(null); }}>
+        <AlertDialogContent className="max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover {removing?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>A TV sai da sua conta e volta pra tela do código.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={busy}
+              onClick={(e) => { e.preventDefault(); void confirmRemove(); }}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Remover'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

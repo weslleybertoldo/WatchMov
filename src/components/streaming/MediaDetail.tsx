@@ -7,16 +7,17 @@ import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpi
 import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, Download, DownloadCloud, AlertCircle, X as XIcon, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
-import { useDownloads, useDownloadList, setDownloaded, enqueueDownload, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
+import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
-import { getEntry, streamKey, isExpiredUrl } from '@/lib/streamCache';
 import type { DownloadItem } from '@/lib/downloader';
 import { toast } from 'sonner';
 import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
 import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
 import type { CastNow } from '@/lib/nativePlayer';
+import { isTv } from '@/lib/device';
+import SendToTvDialog from '@/components/streaming/SendToTvDialog';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -30,8 +31,7 @@ interface StoreLike {
   setEpisodeWatched: (itemId: string, seasonNumber: number, episode: number, watched: boolean) => void;
 }
 
-// Anel de progresso do download (amarelo). Sem % conhecido — fila — gira devagar.
-// Usado no card do episódio e no botão "Baixar" do filme.
+// Anel de progresso do download (amarelo), no card do episódio. Sem % conhecido — fila — gira devagar.
 function ProgressRing({ percent, inline }: { percent: number | null; inline?: boolean }) {
   const R = 9, C = 2 * Math.PI * R;
   return (
@@ -117,8 +117,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     return undefined;
   };
   const notifyOn = useNotify(media.tmdbId);
-  const [selecting, setSelecting] = useState(false);   // modo seleção de eps p/ baixar
-  const [selEps, setSelEps] = useState<Set<number>>(new Set());
+  const [sendOpen, setSendOpen] = useState(false);     // escolher a TV que abre este título
   // Datas de exibição da temporada aberta → tags "Em breve"/"Novo" por episódio.
   const [seasonEps, setSeasonEps] = useState<TmdbEpisodeInfo[]>([]);
   const [related, setRelated] = useState<MediaSummary[]>([]);
@@ -391,50 +390,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
 
   const movieWatched = !isSeries && !!liveItem?.completed;
 
-  // ── Download offline (Media3): usa a MASTER que o player capturou/escolheu (só dá
-  // pra baixar o que já foi aberto uma vez — não há resolve headless). ──
-  const movieDownloaded = !isSeries && dls.has(movieKey(media.tmdbId));
-  const movieDl = !isSeries ? dlItems.get(movieKey(media.tmdbId)) : undefined;
-  const movieBaixando = !movieDownloaded && (movieDl?.state === 'downloading' || movieDl?.state === 'queued' || movieDl?.state === 'restarting');
-  const movieFalhou = !movieDownloaded && (movieDl?.state === 'failed' || movieDl?.state === 'stopped');
-  const streamFor = (s: number | undefined, ep: number | undefined) => {
-    const e = getEntry(media.tmdbId, media.type, s, ep);
-    // Link com prazo vencido (Fonte 6 vence em ~10 min) começava um download que morria em 410 no 0%.
-    if (!e?.chosenUrl || isExpiredUrl(e.chosenUrl)) return null;
-    const st = (e.streams ?? []).find(x => streamKey(x.url) === streamKey(e.chosenUrl!));
-    return { url: e.chosenUrl, referer: st?.referer, mime: st?.mime };
-  };
-  const toggleMovieDownload = async () => {
-    await ensureLib();
-    if (movieBaixando) { toast.info('Baixando…', { description: 'Acompanhe aqui ou na aba Download.' }); return; }
-    if (movieDownloaded) { setDownloaded([movieKey(media.tmdbId)], false); return; }
-    const s = streamFor(undefined, undefined);
-    if (!s && isExpiredUrl(getEntry(media.tmdbId, media.type)?.chosenUrl)) { toast.error('O link desta fonte venceu', { description: 'Toque em Assistir (ele pega um link novo) e baixe pelo ⤓ do player.' }); return; }
-    if (!s) { toast.error('Abra o filme uma vez pra baixar', { description: 'O download usa o link que o player captura ao reproduzir.' }); return; }
-    enqueueDownload(movieKey(media.tmdbId), { ...s, title: media.title, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl });
-    toast.success('Baixando…', { description: 'Acompanhe na aba Download ou na notificação.' });
-  };
-  const startSelecting = () => { setSelEps(new Set()); setSelecting(true); };
-  const cancelSelecting = () => { setSelecting(false); setSelEps(new Set()); };
-  const toggleSelEp = (ep: number) => setSelEps(prev => {
-    const next = new Set(prev);
-    if (next.has(ep)) next.delete(ep); else next.add(ep);
-    return next;
-  });
-  const confirmDownload = async () => {
-    if (selEps.size === 0) { cancelSelecting(); return; }
-    await ensureLib();
-    let ok = 0, miss = 0;
-    [...selEps].forEach(ep => {
-      const s = streamFor(selSeason, ep);
-      if (s) { enqueueDownload(epKey(media.tmdbId, selSeason, ep), { ...s, title: `${media.title} T${selSeason}E${ep}`, tmdbId: media.tmdbId, type: media.type, posterUrl: media.posterUrl, season: selSeason, ep, stillUrl: seasonEps.find(x => x.number === ep)?.stillUrl }); ok++; }
-      else miss++;
-    });
-    cancelSelecting();
-    if (ok) toast.success(`Baixando ${ok} episódio(s)…`, { description: 'Acompanhe na aba Download.' });
-    if (miss) toast.error(`${miss} episódio(s) sem link`, { description: 'Abra cada um uma vez pra baixar.' });
-  };
-
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
   // Lançamento MM/AAAA (ex 05/2026) a partir da data completa do TMDB; cai no ano.
   const releaseLabel = (() => {
@@ -556,25 +511,12 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
               {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
             </Button>
           )}
-          {isSeries ? (
-            <Button variant={selecting ? 'default' : 'outline'} onClick={selecting ? cancelSelecting : startSelecting} title="Baixar episódios">
-              <Download className="w-4 h-4 mr-1" /> {selecting ? 'Cancelar' : 'Baixar eps'}
-            </Button>
-          ) : (
-            // O botão É o indicador: baixando mostra o anel amarelo com o %, falha
-            // mostra a exclamação vermelha piscando (tocar tenta de novo).
-            <Button variant={movieDownloaded ? 'default' : 'outline'} onClick={toggleMovieDownload}
-              title={movieFalhou ? (movieDl?.reason || 'Falhou — toque pra tentar de novo') : movieBaixando ? 'Baixando' : movieDownloaded ? 'Baixado' : 'Baixar filme'}>
-              {movieBaixando ? (
-                <><ProgressRing percent={movieDl && movieDl.percent >= 0 ? movieDl.percent : null} />
-                  {movieDl && movieDl.percent >= 0 ? `Baixando ${movieDl.percent}%` : 'Na fila…'}</>
-              ) : movieFalhou ? (
-                <><AlertCircle className="w-4 h-4 mr-1 text-red-500 animate-pulse" /> Falhou</>
-              ) : movieDownloaded ? (
-                <><DownloadCloud className="w-4 h-4 mr-1" /> Baixado</>
-              ) : (
-                <><Download className="w-4 h-4 mr-1" /> Baixar</>
-              )}
+          {/* Abrir na TV (pedido dele 26/09/2026): no lugar do "Baixar eps"/"Baixar" — baixar ficou só no player.
+              Na TV não aparece: ela é o destino. */}
+          {!isTv() && (
+            <Button variant="outline" size="icon" className="shrink-0" onClick={() => setSendOpen(true)}
+              title="Abrir na TV" aria-label="Abrir na TV">
+              <Cast className="w-5 h-5" />
             </Button>
           )}
         </div>
@@ -666,52 +608,46 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                       const prog = watchProgressOf(epKey(media.tmdbId, s.number, ep));
                       const downloaded = dls.has(epKey(media.tmdbId, s.number, ep));
                       const dlItem = dlItems.get(epKey(media.tmdbId, s.number, ep)) ?? mp4Como(epKey(media.tmdbId, s.number, ep));
-                      const picked = selEps.has(ep);
                       return (
                         <button
                           key={ep}
-                          onClick={() => (selecting ? (downloaded ? undefined : toggleSelEp(ep)) : playEpisode(s.number, ep))}
-                          className={`relative aspect-video overflow-hidden rounded-lg flex items-center justify-center text-sm font-medium border transition ${selecting && downloaded ? 'border-green-400/40 bg-green-400/5 text-muted-foreground opacity-70' : selecting && picked ? 'border-primary bg-primary/20 text-primary' : seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
+                          onClick={() => playEpisode(s.number, ep)}
+                          className={`relative aspect-video overflow-hidden rounded-lg flex items-center justify-center text-sm font-medium border transition ${seen ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-muted/50 hover:border-primary text-foreground'}`}
                         >
                           {still && (
                             <img src={still} alt={`Episódio ${ep}`} loading="lazy"
                               className={`absolute inset-0 w-full h-full object-cover ${emBreve ? 'opacity-40' : seen ? 'opacity-35 grayscale' : 'opacity-70'}`} />
                           )}
                           <span className={`relative z-10 ${still ? 'px-1.5 rounded bg-black/60 text-white' : ''}`}>{ep}</span>
-                          {!selecting && espelhado && (
+                          {espelhado && (
                             <span className="absolute top-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-t bg-primary text-primary-foreground">Espelhado</span>
                           )}
                           {/* Ainda não saiu: "Em breve 12/09" (data da TMDB). */}
-                          {!selecting && emBreve && (
+                          {emBreve && (
                             <span className="absolute bottom-0 inset-x-0 z-10 flex items-center justify-center gap-1 text-[9px] font-semibold py-0.5 rounded-b bg-black/75 text-white/90">
                               <CalendarClock className="w-2.5 h-2.5 shrink-0" /> {upcomingLabel(air)}
                             </span>
                           )}
-                          {!selecting && novo && (
+                          {novo && (
                             <span className="absolute bottom-0 inset-x-0 text-[8px] font-semibold py-0.5 rounded-b bg-primary text-primary-foreground">Novo</span>
                           )}
                           {/* Assistido: badge com fundo — o check "chapado" sumia em
                               cima da imagem do episódio. */}
-                          {seen && !selecting && (
+                          {seen && (
                             <span className="absolute top-1 right-1 z-10 w-5 h-5 rounded-full bg-green-500 flex items-center justify-center shadow">
                               <Check className="w-3.5 h-3.5 text-white" />
                             </span>
                           )}
                           {/* Barra de progresso (sem tempo), como na aba Download. */}
-                          {!selecting && prog && !prog.watched && prog.percent > 0 && (
+                          {prog && !prog.watched && prog.percent > 0 && (
                             <span className="absolute bottom-0 inset-x-0 z-10 h-1 bg-white/25">
                               <span className="block h-full bg-primary" style={{ width: `${prog.percent}%` }} />
-                            </span>
-                          )}
-                          {selecting && !downloaded && (
-                            <span className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-sm border flex items-center justify-center ${picked ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
-                              {picked && <Check className="w-3 h-3 text-primary-foreground" />}
                             </span>
                           )}
                           {/* Duração DESTE episódio (varia dentro da temporada) —
                               canto inferior esquerdo, acima da barra de progresso e
                               longe do ícone de download, que fica na direita. */}
-                          {!selecting && !emBreve && (info?.runtime || s.episodeDuration) > 0 && (
+                          {!emBreve && (info?.runtime || s.episodeDuration) > 0 && (
                             <span className="absolute bottom-1.5 left-1 z-10 rounded bg-black/70 px-1 py-0.5 text-[9px] leading-none text-white/90">
                               {info?.runtime || s.episodeDuration}min
                             </span>
@@ -721,14 +657,6 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
                       );
                     })}
                   </div>
-                  {selecting && (
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button size="sm" className="flex-1" onClick={confirmDownload} disabled={selEps.size === 0}>
-                        <Download className="w-4 h-4 mr-1" /> Baixar{selEps.size > 0 ? ` (${selEps.size})` : ''}
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={cancelSelecting}><XIcon className="w-4 h-4" /></Button>
-                    </div>
-                  )}
                 </>
               );
             })()}
@@ -749,6 +677,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           </div>
         )}
       </div>
+
+      <SendToTvDialog media={media} open={sendOpen} onOpenChange={setSendOpen} />
 
       {player && (
         <VideoPlayer

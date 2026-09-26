@@ -2,6 +2,7 @@ package com.weslley.watchmov;
 
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
+import androidx.core.content.ContextCompat;
 import android.os.Message;
 import android.view.KeyEvent;
 import android.view.View;
@@ -91,7 +92,18 @@ public class MainActivity extends BridgeActivity {
         if (TvMode.isTv(this)) tirarBrowserNaTv();
 
         WebView webView = this.bridge.getWebView();
-        if (TvMode.isTv(this)) margemSeguraTv(webView);
+        // Até a página pintar, o WebView fica da cor do app (era branco: "tela branca genérica", 26/09/2026).
+        webView.setBackgroundColor(ContextCompat.getColor(this, R.color.wm_fundo));
+        if (TvMode.isTv(this)) {
+            margemSeguraTv(webView);
+            // O "Avançar" do teclado da Amazon tira o foco do WebView: vinha uma borda amarela em volta do app e as
+            // setas paravam até aparecer um diálogo (26/09/2026). O app inteiro vive no WebView → o foco volta pra
+            // ele na hora. Tela cheia do vídeo da página (customView) fica de fora: lá o foco é dela.
+            webView.setOnFocusChangeListener((v, temFoco) -> {
+                if (temFoco || customView != null) return;
+                v.post(() -> { if (customView == null && !v.hasFocus()) v.requestFocus(); });
+            });
+        }
         // Setinha do Servidor na TV: o toque vai pra tela cheia do player da página quando ela está aberta.
         TvCursor.alvo(() -> customView != null ? customView : webView);
         // UA REAL deste WebView → proxy/sniffer/player reenviam o mesmo (googlevideo/Blogger

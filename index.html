@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" style="background:#0e1115">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -13,8 +13,13 @@
     <meta property="og:description" content="WatchMov - Controle de filmes e series" />
     <meta property="og:type" content="website" />
   </head>
-  <body>
-    <div id="root"></div>
+  <body style="margin:0;background:#0e1115">
+    <!-- Abertura com a logo até o React desenhar (o render troca o conteúdo do #root). -->
+    <div id="root">
+      <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0e1115">
+        <img src="/logo-splash.png" alt="WatchMov" width="160" height="160" />
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
