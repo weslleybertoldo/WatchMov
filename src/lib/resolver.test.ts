@@ -59,11 +59,12 @@ describe('resolver oculto (regras puras)', () => {
     expect(logs).toContain('WMOPT|click|k=1|name=Abyss');
   });
 
-  it('ABYS: o pump roda vários laços em paralelo (1080p engasgava com 1 só)', () => {
+  it('ABYS: 1 fluxo aberto (bytes=N-); os laços paralelos de pedaço fechado ficam de reserva', () => {
     const s = buildAbyssScript('abc123');
     expect(ABYSS_PUMPS).toBeGreaterThanOrEqual(2);
     expect(s).toContain('PUMPS=' + ABYSS_PUMPS);
-    expect(s).toContain('for(var w=0;w<PUMPS;w++)pump()');
+    expect(s).toContain("Range:'bytes='+off+'-'");
+    expect(s).toContain('if(FLOW)flow();else for(var w=0;w<PUMPS;w++)pump()');
   });
 
   it('clickScript é JS válido, leva os passos na ordem e muta os vídeos', () => {
@@ -533,6 +534,88 @@ describe('resolver oculto (regras puras)', () => {
     expect(antes.some(u => u.includes('&rel='))).toBe(false);
     const depois = await runPump(pendura, ABYSS_PIECE_TIMEOUT_MS + 3000);
     expect(depois.some(u => u.includes('&rel=1080:0'))).toBe(true);
+  });
+
+  // Fluxo único (26/09/2026): o proxy responde os /abyss/next da lista `nexts` (depois fica parado) e `sw` decide o que
+  // o Service Worker devolve pra cada pedido de dado (Range). Guarda os Ranges pedidos e o que foi pro /abyss/push.
+  const MiB = 1048576, TOTAL = 200 * MiB;
+  const leitor = (ini: number, pedaco = MiB, ate = TOTAL) => {
+    let pos = ini;
+    const r = { cancelado: false,
+      read: () => {
+        if (r.cancelado || pos >= ate) return Promise.resolve({ done: true, value: undefined });
+        const v = new Uint8Array(Math.min(pedaco, ate - pos)).fill(Math.floor(pos / MiB) % 256); pos += v.length;
+        return Promise.resolve({ done: false, value: v });
+      },
+      cancel: () => { r.cancelado = true; return Promise.resolve(); } };
+    return r;
+  };
+  const aberto = (off: number, r: ReturnType<typeof leitor>, status = 206) => ({ status, type: 'basic',
+    headers: { get: (h: string) => (h === 'content-range' ? `bytes ${off}-${TOTAL - 1}/${TOTAL}` : null) },
+    body: { getReader: () => r, cancel: () => {} } });
+  const runFlow = async (nexts: object[], sw: (range: string) => unknown, ms = 5000) => {
+    const ranges: string[] = [], rels: string[] = [], pushes: { off: number; len: number; b: number }[] = [];
+    const w = window as unknown as Record<string, unknown>;
+    const prev = w.__wmAbys; w.__wmAbys = undefined;
+    const origLog = console.log; console.log = () => {};
+    const jw = () => ({ pause: () => {}, getPlaylistItem: () => ({ sources: [{ file: 'https://cdn.teste/1080p/v.mp4', label: '1080p' }] }) });
+    const meta = { status: 206, type: 'basic', body: null, headers: { get: (h: string) => (h === 'content-range' ? `bytes 0-1023/${TOTAL}` : null) }, arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)) };
+    let i = 0;
+    const fakeFetch = (u: string, o?: { headers?: Record<string, string>; body?: Uint8Array }) => {
+      if (u.startsWith('http://127.0.0.1:8099/abyss/next')) {
+        const m = /&rel=([^&]+)/.exec(u); if (m) rels.push(decodeURIComponent(m[1]));
+        const n = nexts[i++];
+        return n ? Promise.resolve({ json: () => Promise.resolve(n) }) : new Promise(() => {});
+      }
+      if (u.startsWith('http://127.0.0.1:8099/abyss/push')) {
+        pushes.push({ off: Number(/&off=(\d+)/.exec(u)![1]), len: o!.body!.byteLength, b: o!.body![0] });
+        return Promise.resolve({ status: 200, ok: true });
+      }
+      if (u.startsWith('http://127.0.0.1:8099/')) return Promise.resolve({ status: 200, ok: true });
+      const range = o?.headers?.Range ?? '';
+      if (range === 'bytes=0-1023') return Promise.resolve(meta);
+      ranges.push(range);
+      return Promise.resolve(sw(range));
+    };
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'jwplayer', 'fetch', 'ReadableStream', buildAbyssScript('sid1'))({ hostname: 'abysscdn.com' }, jw, fakeFetch, function () {});
+      await vi.advanceTimersByTimeAsync(ms);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmAbys = prev;
+    }
+    return { ranges, rels, pushes };
+  };
+  const P = (off: number) => ({ q: 1080, off, len: 2 * MiB });
+
+  it('26/09: ABYS — fluxo único: 1 pedido aberto entrega os pedaços seguidos de 2 MiB (o SW não recomeça o download)', async () => {
+    const r = leitor(0);
+    const { ranges, pushes } = await runFlow([P(0), P(2 * MiB), P(4 * MiB)], range => aberto(0, r));
+    expect(ranges).toEqual(['bytes=0-']);
+    expect(pushes.map(p => [p.off, p.len])).toEqual([[0, 2 * MiB], [2 * MiB, 2 * MiB], [4 * MiB, 2 * MiB]]);
+    expect(pushes.map(p => p.b)).toEqual([0, 2, 4]);   // cada pedaço tem os bytes do próprio offset
+    expect(r.cancelado).toBe(false);
+  });
+
+  it('26/09: ABYS — seek do leitor (o proxy pede outro offset): cancela o fluxo e abre outro no offset novo', async () => {
+    const r0 = leitor(0), r1 = leitor(100 * MiB);
+    const { ranges, pushes } = await runFlow([P(0), P(100 * MiB)], range => (range === 'bytes=0-' ? aberto(0, r0) : aberto(100 * MiB, r1)));
+    expect(ranges).toEqual(['bytes=0-', `bytes=${100 * MiB}-`]);
+    expect(r0.cancelado).toBe(true);
+    expect(pushes.map(p => [p.off, p.b])).toEqual([[0, 0], [100 * MiB, 100]]);
+  });
+
+  it('26/09: ABYS — o SW fechou o fluxo parado: entrega o que leu e reabre de onde parou', async () => {
+    const r0 = leitor(0, MiB, 3 * MiB), r1 = leitor(3 * MiB);
+    const { ranges, pushes } = await runFlow([P(0), P(2 * MiB), P(3 * MiB)], range => (range === 'bytes=0-' ? aberto(0, r0) : aberto(3 * MiB, r1)));
+    expect(ranges).toEqual(['bytes=0-', `bytes=${3 * MiB}-`]);
+    expect(pushes.map(p => [p.off, p.len])).toEqual([[0, 2 * MiB], [2 * MiB, MiB], [3 * MiB, 2 * MiB]]);
+  });
+
+  it('26/09: ABYS — SW que não devolve 206 no pedido aberto: solta o pedaço e volta pros pedaços fechados', async () => {
+    const { ranges, rels } = await runFlow([P(0), P(0)], range => (range === 'bytes=0-' ? aberto(0, leitor(0), 200) : { arrayBuffer: () => Promise.resolve(new ArrayBuffer(2 * MiB)) }));
+    expect(ranges).toEqual(['bytes=0-', `bytes=0-${2 * MiB - 1}`]);
+    expect(rels).toEqual(['1080:0']);
   });
 
   it('25/09: UPNS — pergunta à API se o vídeo existe; 404 = opção morta sem precisar do play', async () => {

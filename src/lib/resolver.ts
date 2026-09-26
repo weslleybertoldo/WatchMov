@@ -169,6 +169,8 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
 // o proxy pede. Logs `WMABYS …` no console (logcat I/chromium) são o diagnóstico do emulador.
 // Laços do pump em paralelo (24/09/2026): o proxy marca cada pedaço como "em voo" e não repete. Com 1 laço só,
 // o 1080p engasgava — cada busca de 2 MiB no SW do Abyss tinha que sair em < 5 s pra acompanhar ~3,3 Mbps.
+// 26/09/2026: o motor lê 1 fluxo ABERTO (flow, abaixo); os laços ficam só de reserva (WebView sem stream, SW que
+// não devolve 206 no pedido aberto ou 3 falhas seguidas do fluxo).
 export const ABYSS_PUMPS = 3;
 // TV (W4, 26/09/2026): box de 1 GB / Fire TV Stick — 2 laços (cada pedaço de 2 MiB em voo pesa no WebView do motor).
 export function abyssPumps(): number { return isTv() ? 2 : ABYSS_PUMPS; }
@@ -212,6 +214,41 @@ if(!buf.byteLength)return solta('vazio',1000);
 var t1=performance.now();return fetch(BASE+'abyss/push?sid='+SID+'&q='+n.q+'&off='+n.off,{method:'POST',body:buf}).then(function(r){if(!r.ok)log('push '+r.status);var t2=performance.now();if(n.off%(16*1048576)<n.len)log('pump q='+n.q+' off='+n.off+' '+buf.byteLength+'B sw='+Math.round(t1-t0)+'ms push='+Math.round(t2-t1)+'ms');return pump()},function(e){solta('push '+e,1000)})},
 function(e){clearTimeout(to);solta(ac&&ac.signal.aborted?'demorou '+PT+'ms':'erro '+e,300)})
 }).catch(function(e){log('pump-err '+e);setTimeout(pump,1000)})}
+/* Fluxo único (26/09/2026): o SW do Abyss baixa a CDN em pedaços de 5 MiB e foi feito pro <video> (1 pedido ABERTO
+   lido aos poucos). Cada pedido FECHADO de 2 MiB recomeça o download do pedaço de 5 MiB que ele toca: os laços acima
+   gastavam 2,45× a internet do vídeo; 1 pedido aberto (bytes=N-) lido em stream = 1,00× (medido no emulador). O fluxo
+   lê 2 MiB por vez e manda pro proxy como antes; o /abyss/next diz se segue (mesmo offset), espera (janela cheia: para
+   de ler e o SW para de baixar) ou reabre (seek, troca de qualidade, fluxo que o SW fechou depois de ~30 s parado). */
+var FLOW=typeof ReadableStream=='function'&&typeof AbortController=='function',fl=null,flErr=0;
+function flowStop(){var f=fl;fl=null;if(!f)return;try{f.ac.abort()}catch(_){}try{f.rd.cancel()}catch(_){}}
+function flowOpen(s,off){var ac=new AbortController(),to=setTimeout(function(){ac.abort()},PT);
+return fetch(s.u,{headers:{Range:'bytes='+off+'-'},signal:ac.signal}).then(function(r){clearTimeout(to);var cr=r.headers.get('content-range')||'';
+if(r.status!=206||!r.body||!r.body.getReader||cr.indexOf('bytes '+off+'-')!==0){try{ac.abort()}catch(_){}var e=new Error('sem fluxo status='+r.status+' cr='+cr);e.fatal=1;throw e}
+return fl={q:s.q,pos:off,rd:r.body.getReader(),ac:ac,left:null,done:false}},function(e){clearTimeout(to);throw ac.signal.aborted?new Error('demorou '+PT+'ms'):e})}
+/* Lê len bytes do fluxo (ou até o SW fechar); PT sem dado nenhum = travou. Sobra do último pedaço lido fica pro próximo. */
+function flowRead(f,len){var buf=new Uint8Array(len),n=0,to=0,fim=false;return new Promise(function(ok,no){
+var sai=function(fn,v){if(fim)return;fim=true;clearTimeout(to);fn(v)};
+var puxa=function(){if(fim)return;if(f.left){var k=Math.min(f.left.length,len-n);buf.set(f.left.subarray(0,k),n);n+=k;f.left=k<f.left.length?f.left.subarray(k):null}
+if(n>=len)return sai(ok,buf);clearTimeout(to);to=setTimeout(function(){sai(no,new Error('demorou '+PT+'ms'))},PT);
+f.rd.read().then(function(c){if(c.done){f.done=true;return sai(ok,buf.slice(0,n))}f.left=c.value;puxa()},function(e){sai(no,e)})};puxa()})}
+function flow(rel){hush();fetch(BASE+'abyss/next?sid='+SID+(rel?'&rel='+rel:'')).then(function(r){return r.json()}).then(function(n){
+if(n&&n.gone){flowStop();log('gone');return}
+if(!n||n.off==null){var now=Date.now();if(now-lastKA>20000){lastKA=now;fetch(srcs[0].u,{headers:{Range:'bytes=0-1023'}}).then(cancelBody).catch(function(){})}return flow()}
+var s=null;for(var i=0;i<srcs.length;i++)if(srcs[i].q==n.q)s=srcs[i];
+if(!s){log('flow sem fonte q='+n.q);return setTimeout(function(){flow(n.q+':'+n.off)},500)}
+var t0=performance.now(),segue=!!fl&&fl.q==n.q&&fl.pos==n.off&&!fl.done;
+if(!segue)flowStop();
+return (segue?Promise.resolve(fl):flowOpen(s,n.off)).then(function(f){if(!segue)log('flow abre q='+n.q+' off='+n.off);
+return flowRead(f,n.len).then(function(buf){
+if(!buf.byteLength){flowStop();return flow(n.q+':'+n.off)}   /* o SW fechou sem dado: solta o pedaço e reabre */
+f.pos=n.off+buf.byteLength;if(f.done&&fl===f)flowStop();
+var t1=performance.now();return fetch(BASE+'abyss/push?sid='+SID+'&q='+n.q+'&off='+n.off,{method:'POST',body:buf}).then(function(r){if(!r.ok)log('push '+r.status);flErr=0;
+if(n.off%(16*1048576)<n.len)log('flow q='+n.q+' off='+n.off+' '+buf.byteLength+'B leu='+Math.round(t1-t0)+'ms push='+Math.round(performance.now()-t1)+'ms');return flow()},
+function(e){flowStop();log('flow push '+e);setTimeout(function(){flow(n.q+':'+n.off)},1000)})})
+}).catch(function(e){flowStop();flErr++;log('flow solta q='+n.q+' off='+n.off+' '+e+' falhas='+flErr);
+if(e&&e.fatal||flErr>=3){FLOW=false;log('flow → pedaços');pump(n.q+':'+n.off);for(var w=1;w<PUMPS;w++)pump();return}
+setTimeout(function(){flow(n.q+':'+n.off)},300)})
+}).catch(function(e){log('flow-err '+e);setTimeout(flow,1000)})}
 var iv=setInterval(function(){tries++;var s=readSources();if(!s){if(tries>90){clearInterval(iv);log('sem sources')}return}
 clearInterval(iv);log('sources '+s.map(function(x){return x.q}).join(','));
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=sources').catch(function(){});
@@ -219,7 +256,7 @@ var okq=[],sent=false,pend=s.length,lt=null;srcs=[];
 var lst=function(l){return encodeURIComponent(JSON.stringify(l.map(function(x){return{q:x.q,total:x.total}})))};
 var send=function(){if(sent)return;sent=true;if(lt)clearTimeout(lt);if(!okq.length){log('sem meta');return}
 for(var i=0;i<okq.length;i++)srcs.push(okq[i]);window.__wmNoPlay=1;try{var p=jwplayer();p.pause&&p.pause()}catch(_){}hush();
-fetch(BASE+'abyss/ready?sid='+SID+'&list='+lst(okq)).then(function(r){log('ready '+r.status+' q='+okq.map(function(x){return x.q}).join(','));for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})};
+fetch(BASE+'abyss/ready?sid='+SID+'&list='+lst(okq)).then(function(r){log('ready '+r.status+' q='+okq.map(function(x){return x.q}).join(',')+(FLOW?' fluxo':' pedaços'));if(FLOW)flow();else for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})};
 s.forEach(function(x){meta(x).then(function(ok){pend--;
 if(ok){if(!sent){okq.push(x);if(okq.length===1)lt=setTimeout(send,LATE)}
 else{srcs.push(x);fetch(BASE+'abyss/add?sid='+SID+'&list='+lst([x])).then(function(r){log('add q='+x.q+' '+r.status)}).catch(function(e){log('add-err '+e)})}}
