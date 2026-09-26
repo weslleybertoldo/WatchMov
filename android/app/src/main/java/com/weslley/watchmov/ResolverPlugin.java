@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -86,9 +87,13 @@ public class ResolverPlugin extends Plugin {
     private final java.util.Set<String> optStages = new java.util.HashSet<>();
     private volatile boolean mediaSeen = false;   // a opção atual já mandou um vídeo pela rede (etapa "media", fora do teto)
     private final StringBuilder abysLog = new StringBuilder();
+    private static ResolverPlugin instance;
+    private static ResolverPlugin motorDono;   // plugin com o motor vivo (pode não ser o `instance`: MainActivity recriada)
+    private Activity hostMotor;   // tela onde o WebView do motor está agora (null = a do app)
 
     @Override
     public void load() {
+        instance = this;
         // O proxy avisa quando o JS do frame abysscdn leu as qualidades → emitimos os 3 links ao app.
         ProxyServer.onAbyssReady = (sid, qs) -> ui.post(() -> onAbyssReady(sid, qs));
         // Qualidade que terminou de medir depois (a 1ª pronta já abriu o filme) → menu do player + troca pra maior.
@@ -104,6 +109,7 @@ public class ResolverPlugin extends Plugin {
         final String inject = call.getString("injectScript", "");
         final String injectAltScript = call.getString("injectScriptAlt", "");
         final String sid = call.getString("abyssSid", "");
+        final String key = call.getString("key", "");
         final int fallbackMs = call.getInt("fallbackMs", 0);
         final int optMsArg = call.getInt("optMs", 30000);
         final int startOptArg = call.getInt("startOpt", 1);
@@ -116,7 +122,20 @@ public class ResolverPlugin extends Plugin {
         if (url == null || url.isEmpty() || act == null) { call.reject("url/activity"); return; }
         ui.post(() -> {
             try {
+                // A TV já toca ESTE título pelo motor ABYS vivo ("Continuar"/atalho do topo espelhando): devolve o link
+                // dela em vez de buscar de novo — a busca nova derrubava a fonte da TV e o filme recarregava (25/09/2026).
+                final ResolverPlugin dono = motorDono;
+                final String linkTv = PlayerActivity.castUrl();
+                if (dono != null && dono.alimentaTv() && key.equals(PlayerActivity.castKey())) {
+                    report("RESOLVER_LINK_DA_TV", "a TV já toca este título → reabre no link dela: " + linkTv);
+                    // Pequena folga: o ouvinte do streamFound (JS) se registra junto com este start.
+                    ui.postDelayed(() -> StreamSnifferPlugin.emitDirect(linkTv, "video/mp4", qualidadeDoLink(linkTv), dono.currentUrl, true), 400);
+                    call.resolve();
+                    return;
+                }
                 stopInternal();
+                // Motor que ficou com o plugin da MainActivity anterior (recriada por falta de memória): um motor por vez.
+                if (motorDono != null && motorDono != this) motorDono.stopInternal();
                 final int mySession = ++session;
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
@@ -238,7 +257,19 @@ public class ResolverPlugin extends Plugin {
     @PluginMethod
     public void stop(final PluginCall call) {
         final boolean keep = Boolean.TRUE.equals(call.getBoolean("keep", false));
-        ui.post(() -> { if (keep && engine) pauseInternal(); else stopInternal(); call.resolve(); });
+        // Fechar o título com a TV tocando pelo motor não pode derrubar a fonte dela (quem para é a próxima busca).
+        ui.post(() -> { if ((keep || alimentaTv()) && engine) pauseInternal(); else stopInternal(); call.resolve(); });
+    }
+
+    /** O motor deste plugin é a fonte do espelhamento ativo (o link que a TV puxa é /abyss/<sid desta sessão>/). */
+    private boolean alimentaTv() {
+        String u = PlayerActivity.isCasting() ? PlayerActivity.castUrl() : null;
+        return engine && !abyssSid.isEmpty() && u != null && u.contains("/abyss/" + abyssSid + "/") && ProxyServer.abyssAlive(u);
+    }
+
+    private static String qualidadeDoLink(String url) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("/(\\d{3,4})p\\.mp4").matcher(url);
+        return m.find() ? m.group(1) + "p" : "";
     }
 
     // v4.61: escolha manual de opcao (tap na lista da tela "Procurando") — reinjeta/recarrega naquele k.
@@ -276,7 +307,7 @@ public class ResolverPlugin extends Plugin {
     // auto-avanço do player tenta o mais leve).
     private void onAbyssReady(String sid, java.util.List<ProxyServer.AbyssQuality> qs) {
         if (web == null || sid == null || !sid.equals(abyssSid)) return;
-        abyssReady = true; engine = true;
+        abyssReady = true; engine = true; motorDono = this;
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
         if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }
         java.util.List<ProxyServer.AbyssQuality> order = new ArrayList<>(qs);
@@ -591,8 +622,46 @@ public class ResolverPlugin extends Plugin {
         try { NativePlayerPlugin.reportError(currentUrl, 0, 0, name, note, null, null, null); } catch (Throwable ignored) {}
     }
 
+    // Motor ABYS junto do player (25/09/2026): com o PlayerActivity na frente, o MainActivity fica coberto, o WebView
+    // oculto fica invisível e o JS dele PARA — o motor deixava de entregar pedaços ~2 min depois de abrir o player
+    // (filme local e TV travavam; os eventos da aba Bugs só saíram ao fechar o player). No layout do player ele segue vivo.
+    // Quem move é o DONO do motor, não o plugin mais novo: com o player aberto o Android destrói a MainActivity por falta
+    // de memória ("low-mem", 19:46 de 25/09/2026) e a recria ao fechar o player, com outro plugin que não conhece o motor
+    // — ele ficava sem tela, congelava e a TV caía em "Loading". A volta é pra MainActivity de AGORA.
+    static void levarMotorPara(Activity host) {
+        ResolverPlugin p = motorDono;
+        if (p != null && host != null) p.ui.post(() -> p.moverMotor(host, host));
+    }
+    static void devolverMotor(Activity host) {
+        ResolverPlugin p = motorDono;
+        if (p == null || host == null) return;
+        p.ui.post(() -> {
+            if (p.hostMotor != host) return;
+            Activity app = instance != null ? instance.getActivity() : null;
+            p.moverMotor(app != null && !app.isDestroyed() ? app : p.getActivity(), null);
+        });
+    }
+    private void moverMotor(Activity destino, Activity novoHost) {
+        WebView w = web;
+        ViewGroup alvo = destino != null ? destino.findViewById(android.R.id.content) : null;
+        if (w == null || !engine || alvo == null) return;
+        try {
+            if (w.getParent() != alvo) {
+                if (w.getParent() instanceof ViewGroup) ((ViewGroup) w.getParent()).removeView(w);
+                alvo.addView(w, 0, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+            }
+            hostMotor = novoHost;
+            android.util.Log.i("WatchMov", "motor ABYS na tela " + destino.getClass().getSimpleName() + (this == instance ? "" : " (plugin anterior)"));
+        } catch (Throwable t) {
+            report("RESOLVER_MOTOR_MOVER", "falhou: " + t);
+            android.util.Log.w("WatchMov", "motor ABYS não mudou de tela: " + t);
+        }
+    }
+
     private void stopInternal() {
         session++;
+        hostMotor = null;
+        if (motorDono == this) motorDono = null;
         StreamSnifferPlugin.currentOption = "";
         if (abyssFallback != null) { ui.removeCallbacks(abyssFallback); abyssFallback = null; }
         if (optTimer != null) { ui.removeCallbacks(optTimer); optTimer = null; }

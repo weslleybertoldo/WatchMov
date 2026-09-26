@@ -111,6 +111,8 @@ public class MediaNotificationService extends Service {
     }
     public static void clearController(Controller c) { if (controller == c) controller = null; }
     public static boolean isHeadless() { return headless != null; }
+    /** Última posição da TV (a Activity espelhando ou o poll headless escrevem); 0 = não está espelhando. */
+    public static long castPosMs() { return sCast ? sPos : 0; }
 
     /**
      * Mostra/atualiza a notificação. Na 1ª vez sobe o serviço (precisa do app em

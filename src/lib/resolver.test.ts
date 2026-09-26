@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, STEPS_REPEAT, DEAD_TEXTS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, ABYSS_PIECE_TIMEOUT_MS, STEPS_REPEAT, DEAD_TEXTS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   beforeEach(() => { localStorage.clear(); });
@@ -482,6 +482,50 @@ describe('resolver oculto (regras puras)', () => {
     for (const q of [360, 720, 1080]) expect(ready[0]).toContain(`"q":${q}`);
     expect(add.length).toBe(0);
   });
+  // Motor ABYS: 1 qualidade, o proxy pede o pedaço 0 no 1º /abyss/next; `piece` decide o que o SW faz com ele.
+  const runPump = async (piece: (signal?: AbortSignal) => Promise<unknown>, ms: number) => {
+    const nexts: string[] = [];
+    const w = window as unknown as Record<string, unknown>;
+    const prev = w.__wmAbys; w.__wmAbys = undefined;
+    const origLog = console.log; console.log = () => {};
+    const jw = () => ({ pause: () => {}, getPlaylistItem: () => ({ sources: [{ file: 'https://cdn.teste/1080p/v.mp4', label: '1080p' }] }) });
+    const meta = { status: 206, type: 'basic', body: null, headers: { get: (h: string) => (h === 'content-range' ? 'bytes 0-1023/9999999' : null) }, arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)) };
+    let deu = false;
+    const fakeFetch = (u: string, o?: { headers?: Record<string, string>; signal?: AbortSignal }) => {
+      if (u.startsWith('http://127.0.0.1:8099/abyss/next')) {
+        nexts.push(u);
+        if (deu) return new Promise(() => {});
+        deu = true;
+        return Promise.resolve({ json: () => Promise.resolve({ q: 1080, off: 0, len: 2097152 }) });
+      }
+      if (u.startsWith('http://127.0.0.1:8099/')) return Promise.resolve({ status: 200, ok: true });
+      if (o?.headers?.Range === 'bytes=0-1023') return Promise.resolve(meta);
+      return piece(o?.signal);
+    };
+    vi.useFakeTimers();
+    try {
+      new Function('location', 'jwplayer', 'fetch', buildAbyssScript('sid1'))({ hostname: 'abysscdn.com' }, jw, fakeFetch);
+      await vi.advanceTimersByTimeAsync(ms);
+    } finally {
+      vi.useRealTimers(); console.log = origLog; w.__wmAbys = prev;
+    }
+    return nexts;
+  };
+
+  it('25/09: ABYS — pedaço com erro no SW volta pro proxy na hora (rel=q:off), não fica 45 s "em voo"', async () => {
+    const nexts = await runPump(() => Promise.reject(new TypeError('Failed to fetch')), 3000);
+    expect(nexts.some(u => u.includes('&rel=1080:0'))).toBe(true);
+  });
+
+  it('25/09: ABYS — pedaço pendurado é abortado no tempo e solto (o laço não fica preso pra sempre)', async () => {
+    expect(ABYSS_PIECE_TIMEOUT_MS).toBeLessThan(30000);   // o leitor (TV/ExoPlayer) desiste aos 30 s no proxy
+    const pendura = (signal?: AbortSignal) => new Promise((_, rej) => { signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))); });
+    const antes = await runPump(pendura, ABYSS_PIECE_TIMEOUT_MS - 2000);
+    expect(antes.some(u => u.includes('&rel='))).toBe(false);
+    const depois = await runPump(pendura, ABYSS_PIECE_TIMEOUT_MS + 3000);
+    expect(depois.some(u => u.includes('&rel=1080:0'))).toBe(true);
+  });
+
   it('25/09: UPNS — pergunta à API se o vídeo existe; 404 = opção morta sem precisar do play', async () => {
     const logs: string[] = [];
     const origLog = console.log; console.log = (...a: unknown[]) => { logs.push(String(a[0])); };

@@ -1,6 +1,22 @@
 // src/lib/streamCache.test.ts
 import { describe, it, expect } from 'vitest';
-import { linkExpiresAt, isExpiredUrl } from './streamCache';
+import { linkExpiresAt, isExpiredUrl, canRecaptureAgain, RECAPTURE_MIN_GAP_MS } from './streamCache';
+
+describe('streamCache — link novo pedido sozinho (venceu/caiu no meio)', () => {
+  it('1º pedido sempre vale', () => {
+    expect(canRecaptureAgain(0, 1_000)).toBe(true);
+  });
+  it('outro pedido em menos de 3 min = o link novo nem tocou → não', () => {
+    const t = 1_790_000_000_000;
+    expect(canRecaptureAgain(t, t + 60_000)).toBe(false);
+    expect(canRecaptureAgain(t, t + RECAPTURE_MIN_GAP_MS - 1)).toBe(false);
+  });
+  it('3 min ou mais depois = o link novo tocou e venceu de novo (filme longo) → vale', () => {
+    const t = 1_790_000_000_000;
+    expect(canRecaptureAgain(t, t + RECAPTURE_MIN_GAP_MS)).toBe(true);
+    expect(canRecaptureAgain(t, t + 12 * 60_000)).toBe(true);
+  });
+});
 
 // Link real da Fonte 6 (A Hipótese do Amor, 24/09/2026): vence em ~10 min.
 const F6 = 'https://vid7102402.hclod.qzz.io/st/_s3_/v14/1032863/playlist.m3u8?md5=WbC2m_gT-K5Jptmb_lu9TQ&expires=1790223765';
