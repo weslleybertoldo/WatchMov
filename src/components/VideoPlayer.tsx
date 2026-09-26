@@ -413,7 +413,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
     setResolving(true); setOptProgress(null);
-    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, startOpt: (() => { try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; } })() }).catch(() => setResolving(false));
+    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, startOpt: (() => { try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; } })() }).catch(() => setResolving(false));
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);

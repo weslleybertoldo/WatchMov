@@ -11,7 +11,7 @@ import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor
 
 export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option'; url: string; hops?: number; k?: number; n?: number; name?: string; names?: string[] }
 interface ResolverPlugin {
-  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; fallbackMs?: number; optMs?: number; startOpt?: number; budgetMs: number }): Promise<void>;
+  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; key?: string; fallbackMs?: number; optMs?: number; startOpt?: number; budgetMs: number }): Promise<void>;
   stop(o?: { keep?: boolean }): Promise<void>;
   pickOption(o: { k: number }): Promise<void>;
   addListener(event: 'resolverEvent', cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle>;
@@ -360,7 +360,8 @@ export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; ar
 }
 
 // ── plugin ─────────────────────────────────────────────────────────────────────
-export async function startResolver(o: { url: string; referer?: string; providerId?: string; startOpt?: number; budgetMs?: number }): Promise<void> {
+// key = título/ep (`tmdbId:type:season:ep`): com a TV já tocando ele pelo motor, o nativo devolve o link dela sem buscar.
+export async function startResolver(o: { url: string; referer?: string; providerId?: string; startOpt?: number; budgetMs?: number; key?: string }): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   const abys = usesAbys(o.providerId);
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
@@ -370,7 +371,7 @@ export async function startResolver(o: { url: string; referer?: string; provider
     // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
     injectScript: abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript() + buildBloggerScript(),
     injectScriptAlt: '',
-    abyssSid: sid, fallbackMs: 0,
+    abyssSid: sid, key: o.key ?? '', fallbackMs: 0,
     optMs: RESOLVER_OPT_MS,
     startOpt: o.startOpt ?? 1,
     budgetMs: o.budgetMs ?? budgetFor(o.providerId ?? ''),

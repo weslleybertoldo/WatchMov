@@ -109,6 +109,7 @@ public class ResolverPlugin extends Plugin {
         final String inject = call.getString("injectScript", "");
         final String injectAltScript = call.getString("injectScriptAlt", "");
         final String sid = call.getString("abyssSid", "");
+        final String key = call.getString("key", "");
         final int fallbackMs = call.getInt("fallbackMs", 0);
         final int optMsArg = call.getInt("optMs", 30000);
         final int startOptArg = call.getInt("startOpt", 1);
@@ -121,6 +122,17 @@ public class ResolverPlugin extends Plugin {
         if (url == null || url.isEmpty() || act == null) { call.reject("url/activity"); return; }
         ui.post(() -> {
             try {
+                // A TV já toca ESTE título pelo motor ABYS vivo ("Continuar"/atalho do topo espelhando): devolve o link
+                // dela em vez de buscar de novo — a busca nova derrubava a fonte da TV e o filme recarregava (25/09/2026).
+                final ResolverPlugin dono = motorDono;
+                final String linkTv = PlayerActivity.castUrl();
+                if (dono != null && dono.alimentaTv() && key.equals(PlayerActivity.castKey())) {
+                    report("RESOLVER_LINK_DA_TV", "a TV já toca este título → reabre no link dela: " + linkTv);
+                    // Pequena folga: o ouvinte do streamFound (JS) se registra junto com este start.
+                    ui.postDelayed(() -> StreamSnifferPlugin.emitDirect(linkTv, "video/mp4", qualidadeDoLink(linkTv), dono.currentUrl, true), 400);
+                    call.resolve();
+                    return;
+                }
                 stopInternal();
                 // Motor que ficou com o plugin da MainActivity anterior (recriada por falta de memória): um motor por vez.
                 if (motorDono != null && motorDono != this) motorDono.stopInternal();
@@ -245,7 +257,19 @@ public class ResolverPlugin extends Plugin {
     @PluginMethod
     public void stop(final PluginCall call) {
         final boolean keep = Boolean.TRUE.equals(call.getBoolean("keep", false));
-        ui.post(() -> { if (keep && engine) pauseInternal(); else stopInternal(); call.resolve(); });
+        // Fechar o título com a TV tocando pelo motor não pode derrubar a fonte dela (quem para é a próxima busca).
+        ui.post(() -> { if ((keep || alimentaTv()) && engine) pauseInternal(); else stopInternal(); call.resolve(); });
+    }
+
+    /** O motor deste plugin é a fonte do espelhamento ativo (o link que a TV puxa é /abyss/<sid desta sessão>/). */
+    private boolean alimentaTv() {
+        String u = PlayerActivity.isCasting() ? PlayerActivity.castUrl() : null;
+        return engine && !abyssSid.isEmpty() && u != null && u.contains("/abyss/" + abyssSid + "/") && ProxyServer.abyssAlive(u);
+    }
+
+    private static String qualidadeDoLink(String url) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("/(\\d{3,4})p\\.mp4").matcher(url);
+        return m.find() ? m.group(1) + "p" : "";
     }
 
     // v4.61: escolha manual de opcao (tap na lista da tela "Procurando") — reinjeta/recarrega naquele k.
