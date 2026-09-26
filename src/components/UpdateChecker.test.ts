@@ -49,3 +49,19 @@ describe("checkErrorMessage — verificação falhou (nunca vira 'está atualiza
     expect(checkErrorMessage()).toMatch(/conex/i);
   });
 });
+
+import { permissionHint } from "./UpdateChecker";
+
+describe("permissionHint — o que fazer depois de abrir as configurações", () => {
+  it("Fire TV: aponta o item da tela que abre (Opções para desenvolvimento)", () => {
+    expect(permissionHint(true, true)).toMatch(/Instalar aplicativos desconhecidos/);
+    expect(permissionHint(true, true)).toMatch(/Tentar novamente/);
+  });
+  it("TV sem ser Fire TV: fala de apertar, não de tocar", () => {
+    expect(permissionHint(true, false)).toMatch(/aperte/i);
+    expect(permissionHint(true, false)).not.toMatch(/toque/i);
+  });
+  it("celular: texto de sempre", () => {
+    expect(permissionHint(false, false)).toMatch(/toque em baixar novamente/);
+  });
+});

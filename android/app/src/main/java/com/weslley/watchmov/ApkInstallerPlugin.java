@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.util.Log;
 
 import androidx.core.content.FileProvider;
 
@@ -18,6 +19,8 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Atualização in-app: baixa o APK da release dentro do próprio app (com
@@ -120,14 +123,31 @@ public class ApkInstallerPlugin extends Plugin {
         call.resolve(ret);
     }
 
-    /** Abre as configurações pra liberar instalação de fontes desconhecidas. */
+    /**
+     * Abre as configurações pra liberar instalação de fontes desconhecidas, da tela mais certa
+     * pra mais genérica. TV Android pode não ter a tela do app: startActivity sem ninguém pra
+     * atender lança ActivityNotFoundException, e a ponte do Capacitor transforma isso em crash.
+     * No Fire TV a primeira abre "Opções para desenvolvimento" → "Instalar aplicativos desconhecidos".
+     */
     @PluginMethod()
     public void openInstallSettings(PluginCall call) {
+        List<Intent> telas = new ArrayList<>();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
-            i.setData(Uri.parse("package:" + getContext().getPackageName()));
+            telas.add(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getContext().getPackageName())));
+            telas.add(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES));
+        }
+        telas.add(new Intent(Settings.ACTION_SECURITY_SETTINGS));
+        telas.add(new Intent(Settings.ACTION_SETTINGS));
+        for (Intent i : telas) {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(i);
+            try {
+                getContext().startActivity(i);
+                Log.i("WatchMov", "fontes desconhecidas: abriu " + i.getAction() + (i.getData() != null ? " do app" : ""));
+                break;
+            } catch (Exception e) {
+                Log.w("WatchMov", "fontes desconhecidas: sem " + i.getAction() + ": " + e);
+            }
         }
         call.resolve();
     }
