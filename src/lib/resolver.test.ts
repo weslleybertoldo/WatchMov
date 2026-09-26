@@ -146,6 +146,14 @@ describe('resolver oculto (regras puras)', () => {
     expect(resolverSkipReason({ ...base, tried: true })).toBe('tried');
   });
 
+  it('servidor escolhido (▣ Servidor do reprodutor) = "server-mode" mesmo vindo do cache: o chip mostra o Ligar', () => {
+    const base = { enabled: true, cacheOpen: false, armed: true, cooldown: false, tried: false };
+    expect(resolverSkipReason({ ...base, serverChosen: true })).toBe('server-mode');
+    expect(resolverSkipReason({ ...base, serverChosen: true, cacheOpen: true, cooldown: true, tried: true })).toBe('server-mode');
+    expect(resolverSkipReason({ ...base, serverChosen: true, enabled: false })).toBe('off');
+    expect(resolverSkipReason({ ...base, serverChosen: false })).toBeNull();
+  });
+
   it('v4.57: buildOptionCycleScript cicla #optionList por indice K, loga WMOPT e cai no generico sem opcoes', () => {
     const s = buildOptionCycleScript();
     expect(s).toContain('__OPT_K__');
