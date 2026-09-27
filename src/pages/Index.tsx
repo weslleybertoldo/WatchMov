@@ -33,7 +33,7 @@ import ServersView from '@/components/streaming/ServersView';
 import BugsView from '@/components/streaming/BugsView';
 import LiveTvView from '@/components/streaming/LiveTvView';
 import type { Channel } from '@/lib/liveTv';
-import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched } from '@/lib/watchProgress';
+import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched, sortByLastWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { fillRow, isPrimaryGenre } from '@/lib/rowFill';
 import { Button } from '@/components/ui/button';
@@ -356,9 +356,9 @@ export default function Index() {
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
   // ── Assistidos (painel + histórico) ──
-  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado.
-  const watchedItems = store.data.items.filter(i => i.tmdbId &&
-    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0));
+  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado. O último assistido primeiro.
+  const watchedItems = sortByLastWatched(store.data.items.filter(i => i.tmdbId &&
+    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0)));
   const watchedMovies = watchedItems.filter(i => i.type === 'movie');
   const watchedAnimes = watchedItems.filter(isAnime);
   const watchedSeries = watchedItems.filter(i => i.type === 'series' && !isAnime(i));
@@ -375,6 +375,21 @@ export default function Index() {
   const histAnimes = watchedAnimes.map(itemToSummary);
 
   const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
+
+  // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
+  // eram interruptores e a lupa nem aparecia com um título, os avisos ou o Painel por cima. A engrenagem sempre cai
+  // na tela principal do Painel (não no Histórico/Downloads onde ele parou).
+  const abrirDoTopo = (alvo: 'busca' | 'avisos' | 'painel') => {
+    homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
+    closeDetail(); setCategory(null);
+    setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
+    setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListOpen(false); setListFilter(null);
+  };
+  // Busca já na tela: a lupa leva pro campo (na TV o OK solto nele abre o teclado do Fire TV).
+  const abrirBusca = () => {
+    if (searchOpen && !selected && !noticesOpen && !settingsOpen) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+    else abrirDoTopo('busca');
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -398,11 +413,12 @@ export default function Index() {
             ))}
           </nav>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`}
+              onClick={abrirBusca} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setNoticesOpen(o => !o); setSettingsOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Notificações">
+              onClick={() => abrirDoTopo('avisos')} title="Notificações">
               <Bell className="w-4 h-4" />
               {badgeNotices > 0 && (
                 <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
@@ -410,7 +426,7 @@ export default function Index() {
                 </span>
               )}
             </Button>
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Painel">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => abrirDoTopo('painel')} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
           </div>

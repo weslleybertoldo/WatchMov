@@ -59,6 +59,21 @@ export function pickNext(from: Box, cands: Box[], dir: Dir): number {
   return -1;
 }
 
+// A barra de cima é fixa (sticky). Pra achar o vizinho ela conta onde fica no topo da PÁGINA, não onde aparece
+// na tela: com a página rolada, ↑ pulava a fileira escondida atrás da barra e ia direto pra ela (print dele,
+// 27/09/2026).
+export function noTopoDaPagina(b: Box, scrollY: number): Box {
+  return { left: b.left, right: b.right, top: b.top - scrollY, bottom: b.bottom - scrollY };
+}
+
+// Topo cortado na TV (prints dele, 27/09/2026): a página rolava só o necessário pro item focado e o que vinha antes
+// dele (abas Filmes/Séries/Animes do Procurar, a 1ª fileira) ficava atrás da barra. Foco na barra, ou num item que
+// cabe inteiro na tela com a página no topo, leva a página pro topo.
+const FOLGA_BAIXO = 48;   // = scroll-margin de baixo do index.css
+export function voltaProTopo(naBarra: boolean, fundoNaPagina: number, alturaTela: number): boolean {
+  return naBarra || fundoNaPagina + FOLGA_BAIXO <= alturaTela;
+}
+
 // Setinha do ▣ Servidor (26/09/2026, pedido dele): a página do servidor é um iframe de outro site e as setas não
 // entram nele. ↓ num botão da barra de cima (sem vizinho embaixo) liga um ponteiro nativo (TvCursor.java): as setas
 // movem, o OK toca. A linha de saída é o TOPO da página — passar dele devolve o foco pro botão (antes era a base
@@ -104,6 +119,9 @@ function candidatos(): HTMLElement[] {
 function focar(el: HTMLElement) {
   el.focus({ preventScroll: true });
   el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (window.scrollY === 0 || raiz() !== document) return;   // diálogo ou camada por cima: a página de trás fica
+  const fundo = el.getBoundingClientRect().bottom + window.scrollY;
+  if (voltaProTopo(!!el.closest('header'), fundo, window.innerHeight)) window.scrollTo({ top: 0 });
 }
 
 // Cartaz aberto por último (data-tv-key): ao voltar do detalhe o foco volta nele.
@@ -159,7 +177,10 @@ function mover(dir: Dir): boolean {
   }
   const atual = document.activeElement as HTMLElement;
   const todos = candidatos().filter(el => el !== atual && !atual.contains(el) && !el.contains(atual));
-  const i = pickNext(atual.getBoundingClientRect(), todos.map(el => el.getBoundingClientRect()), dir);
+  const rolagem = raiz() === document ? window.scrollY : 0;
+  const caixa = (el: HTMLElement): Box =>
+    el.closest('header') ? noTopoDaPagina(el.getBoundingClientRect(), rolagem) : el.getBoundingClientRect();
+  const i = pickNext(caixa(atual), todos.map(caixa), dir);
   if (i >= 0) focar(todos[i]);
   else if (dir === 'down') tentarSetinha(atual);
   return true;   // sem vizinho o foco fica onde está (e a página não rola sozinha)

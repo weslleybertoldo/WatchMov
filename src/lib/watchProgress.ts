@@ -26,6 +26,13 @@ export function totalEpisodesWatched(item: WatchItem): number {
   return (item.seasons || []).reduce((sum, s) => sum + episodesWatched(s).length, 0);
 }
 
+// Histórico (pedido dele 27/09/2026): o último assistido primeiro. Antes saía na ordem em que o título entrou no
+// app (created_at do banco). Item sem data de assistido (anterior ao campo) usa a data em que entrou.
+export function sortByLastWatched(items: WatchItem[]): WatchItem[] {
+  const quando = (i: WatchItem) => new Date(i.lastWatchedAt ?? i.createdAt).getTime() || 0;
+  return [...items].sort((a, b) => quando(b) - quando(a));
+}
+
 // Série TERMINADA pro app: todas as temporadas conhecidas com todos os episódios
 // marcados. Sai do "Continuar assistindo" (não há o que continuar — Solo Leveling
 // 25/25 ficava lá pra sempre porque `completed` só existe pra filme). Se a TMDB trouxer
