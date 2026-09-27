@@ -376,6 +376,21 @@ export default function Index() {
 
   const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
 
+  // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
+  // eram interruptores e a lupa nem aparecia com um título, os avisos ou o Painel por cima. A engrenagem sempre cai
+  // na tela principal do Painel (não no Histórico/Downloads onde ele parou).
+  const abrirDoTopo = (alvo: 'busca' | 'avisos' | 'painel') => {
+    homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
+    closeDetail(); setCategory(null);
+    setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
+    setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListOpen(false); setListFilter(null);
+  };
+  // Busca já na tela: a lupa leva pro campo (na TV o OK solto nele abre o teclado do Fire TV).
+  const abrirBusca = () => {
+    if (searchOpen && !selected && !noticesOpen && !settingsOpen) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+    else abrirDoTopo('busca');
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
@@ -398,24 +413,12 @@ export default function Index() {
             ))}
           </nav>
           <div className="flex items-center gap-1">
-            {/* "Às vezes a lupa não abre a caixa de texto" (27/09/2026, provado no Fire TV): com a busca na tela o
-                OK nela FECHAVA a busca, e com um título, os avisos ou o Painel abertos ela abria por baixo e nada
-                aparecia. Agora: busca na tela → na TV leva pro campo (o OK solto nele abre o teclado do Fire TV), no
-                celular fecha como antes; qualquer outra tela → fecha o que está por cima e abre a busca. */}
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => {
-                if (searchOpen && !selected && !noticesOpen && !settingsOpen) {
-                  if (isTv()) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
-                  else { setSearchOpen(false); clearSearchCache(); }
-                  return;
-                }
-                homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
-                closeDetail(); setNoticesOpen(false); setSettingsOpen(false); setHistoryOpen(false); setSearchOpen(true);
-              }} title="Buscar">
+              onClick={abrirBusca} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setNoticesOpen(o => !o); setSettingsOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Notificações">
+              onClick={() => abrirDoTopo('avisos')} title="Notificações">
               <Bell className="w-4 h-4" />
               {badgeNotices > 0 && (
                 <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
@@ -423,7 +426,7 @@ export default function Index() {
                 </span>
               )}
             </Button>
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setSettingsOpen(o => !o); setNoticesOpen(false); setHistoryOpen(false); closeDetail(); setCategory(null); setSearchOpen(false); }} title="Painel">
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => abrirDoTopo('painel')} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
           </div>
