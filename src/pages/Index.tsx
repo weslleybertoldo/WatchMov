@@ -33,7 +33,7 @@ import ServersView from '@/components/streaming/ServersView';
 import BugsView from '@/components/streaming/BugsView';
 import LiveTvView from '@/components/streaming/LiveTvView';
 import type { Channel } from '@/lib/liveTv';
-import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched } from '@/lib/watchProgress';
+import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched, sortByLastWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { fillRow, isPrimaryGenre } from '@/lib/rowFill';
 import { Button } from '@/components/ui/button';
@@ -356,9 +356,9 @@ export default function Index() {
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
   // ── Assistidos (painel + histórico) ──
-  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado.
-  const watchedItems = store.data.items.filter(i => i.tmdbId &&
-    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0));
+  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado. O último assistido primeiro.
+  const watchedItems = sortByLastWatched(store.data.items.filter(i => i.tmdbId &&
+    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0)));
   const watchedMovies = watchedItems.filter(i => i.type === 'movie');
   const watchedAnimes = watchedItems.filter(isAnime);
   const watchedSeries = watchedItems.filter(i => i.type === 'series' && !isAnime(i));
