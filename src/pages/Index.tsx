@@ -398,7 +398,20 @@ export default function Index() {
             ))}
           </nav>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => setSearchOpen(o => { if (o) clearSearchCache(); return !o; })} title="Buscar">
+            {/* "Às vezes a lupa não abre a caixa de texto" (27/09/2026, provado no Fire TV): com a busca na tela o
+                OK nela FECHAVA a busca, e com um título, os avisos ou o Painel abertos ela abria por baixo e nada
+                aparecia. Agora: busca na tela → na TV leva pro campo (o OK solto nele abre o teclado do Fire TV), no
+                celular fecha como antes; qualquer outra tela → fecha o que está por cima e abre a busca. */}
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${searchOpen ? 'text-primary' : 'text-muted-foreground'}`}
+              onClick={() => {
+                if (searchOpen && !selected && !noticesOpen && !settingsOpen) {
+                  if (isTv()) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+                  else { setSearchOpen(false); clearSearchCache(); }
+                  return;
+                }
+                homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
+                closeDetail(); setNoticesOpen(false); setSettingsOpen(false); setHistoryOpen(false); setSearchOpen(true);
+              }} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
