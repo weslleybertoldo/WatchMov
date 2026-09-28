@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
+import { isTv } from '@/lib/device';
 import { Star, Film, Tv } from 'lucide-react';
 
 interface MediaCardProps {
@@ -26,9 +27,14 @@ export function isNew(date?: string): boolean {
   return date >= limite;
 }
 
+// "A tela pisca" no Fire TV (27/09/2026): a cada troca de tela todo cartaz remontava cinza e só aparecia no
+// onLoad, com fade de 0,5 s; com a memória apertada do Fire TV ficavam ~1 s cinza. Cartaz que já carregou
+// nesta abertura do app aparece direto; na TV, sem o fade. Guarda só o endereço (quase nada de memória).
+const carregados = new Set<string>();
+
 export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => !!media.posterUrl && carregados.has(media.posterUrl));
   const upcoming = isUpcoming(media.date);
   const fresh = isNew(media.date);
   return (
@@ -58,8 +64,8 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
             src={media.posterUrl}
             alt={media.title}
             loading="lazy"
-            onLoad={() => setLoaded(true)}
-            className={`w-full h-full object-cover transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+            onLoad={() => { if (media.posterUrl) carregados.add(media.posterUrl); setLoaded(true); }}
+            className={`w-full h-full object-cover ${isTv() ? '' : 'transition-opacity duration-500'} ${loaded ? 'opacity-100' : 'opacity-0'}`}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-muted-foreground">
