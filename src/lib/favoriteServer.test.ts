@@ -8,18 +8,18 @@ import { PROVIDERS } from './players';
 const ALL = PROVIDERS.map(p => ({ id: p.id }));
 
 describe('pickDefaultServer — fonte padrão do Assistir', () => {
-  it('sem favorito abre a Fonte 6 (EmbedMovies), o padrão antigo', () => {
+  it('sem favorito abre a Fonte 1 (EmbedMovies), o padrão antigo', () => {
     expect(pickDefaultServer(ALL, null)).toBe('embedmovies');
   });
   it('favorito marcado vira o padrão quando existe pro título', () => {
     expect(pickDefaultServer(ALL, 'superflix')).toBe('superflix');
     expect(pickDefaultServer(ALL, 'embedplayapi')).toBe('embedplayapi');
   });
-  it('favorito que não monta URL pro título cai na Fonte 6', () => {
+  it('favorito que não monta URL pro título cai na Fonte 1', () => {
     const semFshd = ALL.filter(p => p.id !== 'fshd');   // fshd exige imdbId
     expect(pickDefaultServer(semFshd, 'fshd')).toBe('embedmovies');
   });
-  it('sem Fonte 6 cai na SuperFlix; sem as duas, na 1ª disponível', () => {
+  it('sem Fonte 1 cai na SuperFlix; sem as duas, na 1ª disponível', () => {
     const semEmbed = ALL.filter(p => p.id !== 'embedmovies');
     expect(pickDefaultServer(semEmbed, null)).toBe('superflix');
     expect(pickDefaultServer([{ id: 'fembed' }, { id: 'warezcdn' }], 'xyz')).toBe('fembed');
@@ -48,9 +48,9 @@ describe('favorito em localStorage', () => {
 });
 
 describe('serverLabel — nome curto do popup', () => {
-  it('"Fonte 6 (EmbedMovies PT-BR)" vira "Fonte 6 (EmbedMovies)"', () => {
+  it('"Fonte 1 (EmbedMovies PT-BR)" vira "Fonte 1 (EmbedMovies)"', () => {
     const p = PROVIDERS.find(x => x.id === 'embedmovies')!;
-    expect(serverLabel(p)).toBe('Fonte 6 (EmbedMovies)');
+    expect(serverLabel(p)).toBe('Fonte 1 (EmbedMovies)');
   });
   it('todas as fontes têm rótulo "Fonte N (tag)"', () => {
     for (const p of PROVIDERS) expect(serverLabel(p)).toMatch(/^Fonte \d+ \(.+\)$/);

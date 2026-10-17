@@ -56,3 +56,11 @@ export function upcomingLabel(date?: string, today: Date = new Date()): string {
   const d = formatAirDate(date, today);
   return d ? `Em breve ${d}` : 'Em breve';
 }
+
+// Posição do vídeo pro aviso "Continua de onde parou": 754000 ms → "12:34"; 3 h → "3:00:00".
+export function formatPosicao(ms: number): string {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const mm = String(m).padStart(h ? 2 : 1, '0'), ss = String(s).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}

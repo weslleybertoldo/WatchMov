@@ -96,7 +96,7 @@ public class NativePlayerPlugin extends Plugin {
             call.getLong("startMs", 0L),
             Boolean.TRUE.equals(call.getBoolean("offline", false)),
             Boolean.TRUE.equals(call.getBoolean("watched", false)),
-            Boolean.TRUE.equals(call.getBoolean("downloaded", false)));
+            Boolean.TRUE.equals(call.getBoolean("downloaded", false)), call.getString("fonte"));
         call.resolve(new JSObject().put("ok", true));
     }
 
@@ -205,6 +205,9 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_WATCHED, Boolean.TRUE.equals(call.getBoolean("watched", false)));
         intent.putExtra(PlayerActivity.EXTRA_OFFLINE, Boolean.TRUE.equals(call.getBoolean("offline", false)));
         intent.putExtra(PlayerActivity.EXTRA_DOWNLOADED, Boolean.TRUE.equals(call.getBoolean("downloaded", false)));
+        intent.putExtra(PlayerActivity.EXTRA_FONTE, call.getString("fonte"));
+        intent.putExtra(PlayerActivity.EXTRA_SERVIDORES, toArray(call.getArray("servidores", null)));
+        intent.putExtra(PlayerActivity.EXTRA_SERVIDOR_ATUAL, call.getString("servidorAtual"));
         intent.putExtra(PlayerActivity.EXTRA_URLS, toArray(call.getArray("urls", null)));
         intent.putExtra(PlayerActivity.EXTRA_MIMES, toArray(call.getArray("mimes", null)));
         intent.putExtra(PlayerActivity.EXTRA_QUALITIES, toArray(call.getArray("qualities", null)));
@@ -246,6 +249,8 @@ public class NativePlayerPlugin extends Plugin {
             res.put("next", result.getData().getBooleanExtra(PlayerActivity.RESULT_NEXT, false));
             res.put("server", result.getData().getBooleanExtra(PlayerActivity.RESULT_SERVER, false));
             res.put("recapture", result.getData().getBooleanExtra(PlayerActivity.RESULT_RECAPTURE, false));
+            String serverId = result.getData().getStringExtra(PlayerActivity.RESULT_SERVER_ID);
+            if (serverId != null) res.put("serverId", serverId);
             if (result.getData().hasExtra(PlayerActivity.RESULT_WATCHED)) {
                 res.put("watched", result.getData().getBooleanExtra(PlayerActivity.RESULT_WATCHED, false));
                 // A qual episódio o "watched" acima pertence — pode NÃO ser o que abriu

@@ -33,11 +33,14 @@ final class LinkExpiry {
 
     /**
      * Acabaram os links da lista e o atual morreu: vale pedir link NOVO ao app (resolvedor) em vez de parar?
-     * Sim quando o link venceu (403/410 ou prazo da URL) ou quando ele JÁ estava tocando (caiu no meio do
-     * filme: 5xx, rede, motor /abyss/ parado). Link que nunca tocou por outro motivo (404, formato) = não.
+     * Sim quando o link morreu (403/404/410 ou prazo da URL) ou quando ele JÁ estava tocando (caiu no meio do
+     * filme: 5xx, rede, motor /abyss/ parado). Link que nunca tocou por outro motivo (formato, 5xx logo de cara) = não.
+     * 404 entrou em 17/10/2026: link salvo sem prazo na URL que já reabre morto (ex.: voltou no dia seguinte) parava em
+     * "Nenhum link tocou" (caso real 11/10, Daemons E14). A trava de 3 min do app (canRecaptureAgain) impede laço:
+     * o 2º pedido seguido vai pro servidor.
      */
     static boolean shouldRecapture(int httpCode, boolean currentExpired, boolean everPlayed) {
-        if (currentExpired || httpCode == 403 || httpCode == 410) return true;
+        if (currentExpired || httpCode == 403 || httpCode == 404 || httpCode == 410) return true;
         if (!everPlayed) return false;
         return httpCode <= 0 || httpCode >= 500 || httpCode == 408 || httpCode == 429;
     }

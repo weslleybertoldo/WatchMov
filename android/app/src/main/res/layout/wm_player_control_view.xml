@@ -1,35 +1,76 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Controller customizado do PlayerView (Media3): igual ao padrão, mas com o
-     título logo acima da barra e os botões "espelhar"/"assistido" DENTRO da
-     barra de baixo, ao lado de legenda/config (antes ficavam flutuando por cima). -->
+<!-- Controller do PlayerView (Media3) — PLAYER NOVO (17/10/2026, pedido dele: "muito mais limpo e fluido … Parece
+     igual da Netflix … hoje está muito bagunçado os botões").
+     Em cima: voltar, título, servidor · player (à direita) e espelhar (só celular). No meio: −10 s, play, +10 s.
+     Embaixo: tempo + barra e, à direita, +1 min, assistido, próximo episódio (série), qualidade, legendas, servidor e ⚙
+     (painel com o resto: velocidade, tela, áudio, links, baixar, enviar, girar). Antes eram 10 pílulas de texto em
+     cima + 7 ícones embaixo.
+     A barra de cima fica DENTRO do controller pra sumir junto (o alfa dela segue o do exo_controls_background). -->
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
   <View android:id="@id/exo_controls_background"
       android:layout_width="0dp"
       android:layout_height="0dp"
-      android:background="@color/exo_black_opacity_60"/>
+      android:background="@drawable/wm_controls_bg"/>
 
-  <!-- Título + temporada/ep: logo acima da barra de progresso, parte do controller. -->
-  <TextView android:id="@+id/wm_title"
-      android:layout_width="wrap_content"
+  <LinearLayout android:id="@+id/wm_top_bar"
+      android:layout_width="match_parent"
       android:layout_height="wrap_content"
-      android:layout_gravity="bottom|start"
-      android:layout_marginStart="16dp"
-      android:layout_marginEnd="16dp"
-      android:layout_marginBottom="72dp"
-      android:singleLine="true"
-      android:ellipsize="end"
-      android:textColor="#FFFFFF"
-      android:textSize="14sp"
-      android:shadowColor="#000000"
-      android:shadowRadius="6"/>
+      android:layout_gravity="top"
+      android:orientation="horizontal"
+      android:gravity="center_vertical"
+      android:paddingStart="12dp"
+      android:paddingEnd="12dp"
+      android:paddingTop="10dp"
+      android:layoutDirection="ltr">
+
+    <ImageButton android:id="@+id/wm_back"
+        style="@style/ExoStyledControls.Button.Bottom"
+        android:src="@drawable/ic_arrow_back"
+        android:contentDescription="Voltar"/>
+
+    <TextView android:id="@+id/wm_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:shadowColor="#000000"
+        android:shadowRadius="6"/>
+
+    <!-- Servidor e player de onde o vídeo vem, na ponta direita (pedido dele 17/10/2026: "no topo … lado oposto do
+         botão de voltar … 6 - nome do servidor - nome do player escolhido"). Tocando do aparelho: "Baixado no aparelho". -->
+    <TextView android:id="@+id/wm_fonte"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:maxWidth="460dp"
+        android:layout_marginEnd="8dp"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="#E6FFFFFF"
+        android:textSize="15sp"
+        android:shadowColor="#000000"
+        android:shadowRadius="6"
+        android:visibility="gone"/>
+
+    <ImageButton android:id="@+id/wm_cast"
+        style="@style/ExoStyledControls.Button.Bottom"
+        android:src="@drawable/ic_cast"
+        android:contentDescription="Espelhar na TV"/>
+
+  </LinearLayout>
 
   <FrameLayout android:id="@id/exo_bottom_bar"
       android:layout_width="match_parent"
       android:layout_height="@dimen/exo_styled_bottom_bar_height"
       android:layout_marginTop="@dimen/exo_styled_bottom_bar_margin_top"
       android:layout_gravity="bottom"
-      android:background="@color/exo_bottom_bar_background"
+      android:background="@android:color/transparent"
       android:layoutDirection="ltr">
 
     <LinearLayout android:id="@id/exo_time"
@@ -57,43 +98,98 @@
         android:layout_gravity="center_vertical|end"
         android:layoutDirection="ltr">
 
-      <!-- De onde o vídeo está vindo AGORA: arquivo baixado ou link do servidor. -->
-      <TextView android:id="@+id/wm_source"
+      <!-- +1 min e o assistido na barra, pedido dele 17/10/2026: "Não assistido" (sem ✓) ou "✓ Assistido" verde. -->
+      <TextView android:id="@+id/wm_fwd60"
           android:layout_width="wrap_content"
-          android:layout_height="wrap_content"
+          android:layout_height="40dp"
           android:layout_gravity="center_vertical"
-          android:layout_marginEnd="6dp"
-          android:textSize="12sp"
-          android:textColor="#B0FFFFFF"/>
+          android:gravity="center"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp"
+          android:background="?android:attr/selectableItemBackground"
+          android:focusable="true"
+          android:clickable="true"
+          android:text="+1 min"
+          android:textColor="#FFFFFF"
+          android:textSize="15sp"
+          android:textStyle="bold"
+          android:contentDescription="Avançar 1 minuto"/>
 
-      <!-- Botões próprios: assistido + espelhar, na mesma barra da legenda/config. -->
-      <ImageButton android:id="@+id/wm_watched"
-          style="@style/ExoStyledControls.Button.Bottom"
-          android:src="@drawable/ic_check_circle"
+      <TextView android:id="@+id/wm_assistido"
+          android:layout_width="wrap_content"
+          android:layout_height="40dp"
+          android:layout_gravity="center_vertical"
+          android:gravity="center"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp"
+          android:background="?android:attr/selectableItemBackground"
+          android:focusable="true"
+          android:clickable="true"
+          android:text="Não assistido"
+          android:textColor="#B3FFFFFF"
+          android:textSize="15sp"
+          android:textStyle="bold"
           android:contentDescription="Assistido"/>
 
-      <ImageButton android:id="@+id/wm_cast"
+      <ImageButton android:id="@+id/wm_next"
           style="@style/ExoStyledControls.Button.Bottom"
-          android:src="@drawable/ic_cast"
-          android:contentDescription="Espelhar na TV"/>
+          android:src="@drawable/ic_skip_next"
+          android:visibility="gone"
+          android:contentDescription="Próximo episódio"/>
+
+      <!-- Qualidade que está tocando ("720p"); toque = lista só com as que o vídeo tem. Pedido dele 17/10/2026. -->
+      <TextView android:id="@+id/wm_quality"
+          android:layout_width="wrap_content"
+          android:layout_height="40dp"
+          android:layout_gravity="center_vertical"
+          android:gravity="center"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp"
+          android:background="?android:attr/selectableItemBackground"
+          android:focusable="true"
+          android:clickable="true"
+          android:text="Auto"
+          android:textColor="#FFFFFF"
+          android:textSize="15sp"
+          android:textStyle="bold"
+          android:contentDescription="Qualidade"/>
 
       <ImageButton android:id="@id/exo_subtitle"
           style="@style/ExoStyledControls.Button.Bottom.CC"/>
 
-      <!-- Baixar o link atual (mesma escolha Media3/.exo x MP4 do "Links do vídeo"). -->
+      <ImageButton android:id="@+id/wm_server"
+          style="@style/ExoStyledControls.Button.Bottom"
+          android:src="@drawable/ic_dns"
+          android:contentDescription="Servidor"/>
+
+      <ImageButton android:id="@+id/wm_more"
+          style="@style/ExoStyledControls.Button.Bottom.Settings"
+          android:contentDescription="Ajustes"/>
+
+      <!-- Saíram da barra (vão pelo ⚙): continuam aqui ESCONDIDOS porque o player guarda neles o estado
+           (cor do assistido/baixado/enviar) e os mesmos cliques; o painel chama as mesmas ações. -->
+      <TextView android:id="@+id/wm_source"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:visibility="gone"/>
+
+      <ImageButton android:id="@+id/wm_watched"
+          style="@style/ExoStyledControls.Button.Bottom"
+          android:src="@drawable/ic_check_circle"
+          android:visibility="gone"
+          android:contentDescription="Assistido"/>
+
       <ImageButton android:id="@+id/wm_download"
           style="@style/ExoStyledControls.Button.Bottom"
           android:src="@drawable/ic_download"
+          android:visibility="gone"
           android:contentDescription="Baixar"/>
 
-      <!-- Exporta o baixado pra MP4 em Movies/WatchMov e abre no Web Video Cast/VLC. -->
       <ImageButton android:id="@+id/wm_share"
           style="@style/ExoStyledControls.Button.Bottom"
           android:src="@drawable/ic_share"
+          android:visibility="gone"
           android:contentDescription="Enviar o vídeo pra outro app"/>
-
-      <ImageButton android:id="@id/exo_settings"
-          style="@style/ExoStyledControls.Button.Bottom.Settings"/>
 
     </LinearLayout>
 

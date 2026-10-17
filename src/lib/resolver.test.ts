@@ -18,7 +18,7 @@ describe('resolver oculto (regras puras)', () => {
     expect(budgetFor('embedplayapi')).toBe(90000); expect(budgetFor('embedmovies')).toBe(45000);
   });
 
-  it('Fonte 5 (FS/HD): escolhe "Dublado", clica o 1º servidor e roda no motor Abyss (abyssplayer.com)', () => {
+  it('Fonte 3 (FS/HD): escolhe "Dublado", clica o 1º servidor e roda no motor Abyss (abyssplayer.com)', () => {
     expect(usesAbys('fshd')).toBe(true); expect(usesAbys('embedplayapi')).toBe(true); expect(usesAbys('embedmovies')).toBe(false);
     expect(budgetFor('fshd')).toBe(budgetFor('embedplayapi'));
     expect(buildAbyssScript('x')).toContain('abyssplayer');
@@ -295,10 +295,45 @@ describe('resolver oculto (regras puras)', () => {
       w.__wmInj = prevInj;
       document.body.innerHTML = '';
     }
-    expect(logs).toContain('WMOPT|n=3|names=ABYS»BYSE»UPNS');
+    // 17/10/2026: a BYSE vai pro topo (pedido dele) — a ordem vira BYSE»ABYS»UPNS e o K=2 é a ABYS
+    expect(logs).toContain('WMOPT|n=3|names=BYSE»ABYS»UPNS');
     expect(logs).toContain('WMOPT|filtered|nao-dublado=1|restou=3');
-    expect(logs).toContain('WMOPT|click|k=2|name=BYSE');
-    expect(clicked).toEqual(['274868']);   // K=2 = BYSE; o vidsrc legendado nunca e clicado
+    expect(logs).toContain('WMOPT|click|k=2|name=ABYS');
+    expect(clicked).toEqual(['274867']);   // K=2 = ABYS; o vidsrc legendado nunca e clicado
+  });
+
+  it('17/10/2026: Fonte EmbedPlay — BYSE sempre pré-selecionada (K=1 = BYSE); sem BYSE fica como antes', () => {
+    const rodar = (html: string) => {
+      document.body.innerHTML = html;
+      const clicked: string[] = [];
+      document.querySelectorAll('.player_select_item').forEach(o => o.addEventListener('click', () => clicked.push(o.getAttribute('data-id') || '')));
+      const logs: string[] = [];
+      const origLog = console.log;
+      console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+      const w = window as unknown as Record<string, unknown>;
+      const prevInj = w.__wmInj;
+      w.__wmInj = undefined;
+      vi.useFakeTimers();
+      try {
+        new Function(buildOptionCycleScript(CLICK_STEPS_F1).replace(/__OPT_K__/g, '1'))();
+      } finally {
+        vi.useRealTimers();
+        console.log = origLog;
+        w.__wmInj = prevInj;
+        document.body.innerHTML = '';
+      }
+      return { logs, clicked };
+    };
+    const item = (id: string, nome: string) => `<div class="player_select_item" data-id="${id}"><div class="player_select_name">${nome}</div></div>`;
+    const lista = (itens: string) => `<div class="select_language active" data-target="1">Dublado</div><div class="players_select_items visible" data-target="1">${itens}</div>`;
+    const comByse = rodar(lista(item('1', 'Opção 1 (ABYS)') + item('2', 'Opção 2 (BYSE)') + item('3', 'Opção 3 (UPNS)')));
+    expect(comByse.logs).toContain('WMOPT|n=3|names=BYSE»ABYS»UPNS');
+    expect(comByse.logs).toContain('WMOPT|click|k=1|name=BYSE');
+    expect(comByse.clicked).toEqual(['2']);
+    const semByse = rodar(lista(item('1', 'Opção 1 (ABYS)') + item('3', 'Opção 2 (UPNS)')));
+    expect(semByse.logs).toContain('WMOPT|n=2|names=ABYS»UPNS');
+    expect(semByse.logs).toContain('WMOPT|click|k=1|name=ABYS');
+    expect(semByse.clicked).toEqual(['1']);
   });
 
   it('v4.64: Fonte 1 com UMA opcao dublada (Dois Homens e Meio T3E20) mostra n=1 — nao inventa Byse', () => {

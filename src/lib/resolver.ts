@@ -145,6 +145,9 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
     + "if(done['__pp__']&&!done['__dead__']&&document.body){var bt=document.body.innerText||document.body.textContent||'';for(var di=0;di<DEAD.length;di++){if(bt.indexOf(DEAD[di])>=0){done['__dead__']=1;try{console.log('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}break;}}}"
     + "var f=findPF()||findEP()||findFS();var os=f?f.os:[],out=f?f.out:0;"
+    // 17/10/2026 (pedido dele: "Deixa sempre pré selecionado a opção BYSE, se não tiver nas opções aí pode manter como
+    // hoje"): na embedplay.one a BYSE vai pro topo da lista — K=1 passa a ser ela; as outras seguem na ordem de antes.
+    + "if(f&&f.kind==='ep'&&os.length>1){for(var bi=1;bi<os.length;bi++){if(/byse/i.test(epName(os[bi]))){os=[os[bi]].concat(os.slice(0,bi),os.slice(bi+1));break;}}}"
     // embedplay.one esconde a lista atras de "Mostrar Opções" (.changeOptions) — revela uma vez
     + "if(f&&f.kind==='ep'){var co=document.querySelector('.changeOptions');if(co&&!done['__show__']&&vis(co)&&String(co.className).indexOf('hidden')<0){done['__show__']=1;fire(co);}}"
     + "if(f&&!os.length&&out&&!reported){reported=true;try{console.log('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"

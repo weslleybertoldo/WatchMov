@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Player novo (17/10/2026): fundo dos controles. Antes era um véu preto de 60% na tela toda; agora é um véu leve
+     + sombra em cima e embaixo (como Netflix/BingeBang), pra a imagem continuar aparecendo com os botões na tela.
+     É o fundo do exo_controls_background, que o Media3 já faz aparecer/sumir com fade. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item><color android:color="#33000000"/></item>
+    <item android:gravity="top" android:height="140dp" android:drawable="@drawable/wm_grad_top"/>
+    <item android:gravity="bottom" android:height="190dp" android:drawable="@drawable/wm_grad_bottom"/>
+</layer-list>
