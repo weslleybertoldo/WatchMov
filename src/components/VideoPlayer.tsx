@@ -3,7 +3,8 @@ import { Button } from '@/components/ui/button';
 import { X, Tv, Copy, Smartphone, Layers, Check, Loader2, Maximize, Minimize, CheckSquare, Square, SkipForward, ChevronUp, Server, Sparkles, ListVideo, Download, Trash2, MoreVertical } from 'lucide-react';
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { toast } from 'sonner';
-import { PROVIDERS, type PlayerTarget } from '@/lib/players';
+import { PROVIDERS, rotuloDaFonte, type PlayerTarget } from '@/lib/players';
+import { formatPosicao } from '@/lib/formatters';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl, isExpiredUrl, canRecaptureAgain } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
@@ -106,6 +107,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // vídeo…". O link que o WebView oculto captura chega pelo mesmo streamFound e o auto-abrir
   // (efeito C) abre o reprodutor. Ver src/lib/resolver.ts e ResolverPlugin.java.
   const [resolving, setResolving] = useState(false);
+  // "Aguarde…" do resolvedor quando ele roda pra RENOVAR o link ou trocar de servidor pelo popup do player (pedido dele
+  // 17/10/2026): no lugar do "Procurando o vídeo…", com a posição de onde o reprodutor vai continuar.
+  const [aviso, setAviso] = useState<string | null>(null);
   const [optProgress, setOptProgress] = useState<{ k: number; n: number; name: string; names: string[] } | null>(null);
   const lastOptRef = useRef<{ k: number; name: string } | null>(null);   // v4.61: opcao vencedora (persiste por titulo)
   const resolvingRef = useRef(false);
@@ -376,6 +380,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // Assistir pelo servidor (iframe): grava que a última vez foi no servidor
   // (ao reabrir o título abre o servidor, não o reprodutor).
   const goServer = () => {
+    setAviso(null);
     setPickerOpen(false);
     setOwnStream(null);
     setPreferIframe(true);
@@ -426,7 +431,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
     setResolving(true); setOptProgress(null);
-    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, startOpt: (() => { try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; } })() }).catch(() => setResolving(false));
+    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, startOpt: (() => {
+      // EmbedPlay: começa SEMPRE pela 1ª da lista, que agora é a BYSE quando ela existe (pedido dele 17/10/2026); a opção
+      // que venceu antes neste título não vale aqui (ela falava da ordem antiga, ABYS antes da BYSE).
+      if (providerId === 'embedplayapi') return undefined;
+      try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; }
+    })() }).catch(() => setResolving(false));
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
@@ -489,6 +499,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!nativeOwn || !ownStream || playedRef.current) return;
     playedRef.current = true;
+    setAviso(null);
     const startMs = getEntry(tmdbId, type, season, episode)?.positionMs ?? 0;
     // Auto-avanço ESCOPADO: se escolheu um MASTER, só avança entre masters; se
     // escolheu uma faixa, só entre faixas (não mistura completo com só-áudio/só-vídeo).
@@ -503,6 +514,11 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
       qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
+      // Topo do player: "6 · EmbedMovies · Blogger" (servidor de onde o link veio + o player escolhido nele).
+      fonte: rotuloDaFonte(ownStream.provider || providerId, ownStream.option || lastOptRef.current?.name),
+      // Popup do botão do servidor: "Abrir servidores" + estes ("embedmovies|6 · EmbedMovies"), ✓ no atual.
+      servidores: available.map(p => `${p.id}|${rotuloDaFonte(p.id)}`),
+      servidorAtual: ownStream.provider || providerId,
     };
     // Veio do "Próximo episódio" com o player JÁ ABERTO: entrega o link pro player
     // vivo (não abre outra Activity) — assim o espelhamento na TV não se perde.
@@ -540,10 +556,17 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         setCapturedList([]);
         const agora = Date.now();
         if (!canRecaptureAgain(recaptureAtRef.current, agora)) goServer();
-        else { recaptureAtRef.current = agora; reResolve(); }
+        else { recaptureAtRef.current = agora; reResolve(); setAviso('Aguarde, pegando um link novo…'); }
         return;
       }
-      if (res.server) { goServer(); return; }                 // botão Servidor → modo servidor
+      // Escolheu outro servidor no popup do player: troca a fonte e o resolvedor pega o link dela; o (C) reabre o
+      // reprodutor na posição salva acima (pedido dele 17/10/2026: "troca de servidor e o resolvedor abre").
+      if (res.serverId) {
+        setCapturedList([]); pickSource(res.serverId); reResolve();
+        setAviso(`Aguarde, abrindo ${rotuloDaFonte(res.serverId) || 'o servidor'}…`);
+        return;
+      }
+      if (res.server) { goServer(); return; }                 // "Abrir servidores" → modo servidor
       // O player fechou pedindo o próximo ep. Se o JS JÁ tinha avançado (in-place que
       // não achou link), NÃO avança de novo — senão pularia um episódio.
       if (res.next) { if (!advanced) { pendingNextInPlayer = true; onNext?.(); } return; }
@@ -608,10 +631,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
     onPlayerError?.((e) => {
-      // Tira da lista SÓ o que é morte permanente: expirado (403/410), muro
-      // WebView-only (451) ou manifesto malformado (code 3002). 500/timeout/rede
-      // são temporários → mantém (o auto-avanço só pula na hora).
-      const permanent = e.httpCode === 403 || e.httpCode === 410 || e.httpCode === 451 || e.code === 3002;
+      // Tira da lista SÓ o que é morte permanente: expirado (403/410), sumiu (404, 17/10/2026: reabria morto no dia
+      // seguinte), muro WebView-only (451) ou manifesto malformado (code 3002). 500/timeout/rede são temporários →
+      // mantém (o auto-avanço só pula na hora).
+      const permanent = e.httpCode === 403 || e.httpCode === 404 || e.httpCode === 410 || e.httpCode === 451 || e.code === 3002;
       if (e.url && permanent) {
         removeStream(e.url, tmdbId, type, season, episode);
         setCapturedList(prev => prev.filter(s => streamKey(s.url) !== streamKey(e.url!)));
@@ -693,6 +716,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   };
 
   const pickSource = (id: string) => {
+    setAviso(null);
     setProviderId(id);
     try { localStorage.setItem(srcKey, id); } catch { /* ignore */ }
     setSourceOpen(false);
@@ -839,7 +863,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         ) : resolving ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            <p className="text-white">Procurando o vídeo em {provider?.name ?? 'servidor'}…</p>
+            <p className="text-white">{aviso ?? `Procurando o vídeo em ${provider?.name ?? 'servidor'}…`}</p>
+            {aviso && (getEntry(tmdbId, type, season, episode)?.positionMs ?? 0) > 0 && (
+              <p className="text-white/70 text-xs">Continua de onde parou ({formatPosicao(getEntry(tmdbId, type, season, episode)!.positionMs!)})</p>
+            )}
             {optProgress && optProgress.n > 0 && (
               <p className="text-white/70 text-xs">Opção {optProgress.k}/{optProgress.n}{optProgress.name ? ` · ${optProgress.name}` : ''}</p>
             )}

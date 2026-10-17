@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating, formatAirDate, upcomingLabel } from "./formatters";
+import { formatTime, formatDate, getSeriesProgress, getSeasonProgress, formatVotes, formatRating, formatAirDate, upcomingLabel, formatPosicao } from "./formatters";
 
 describe("upcomingLabel", () => {
   const hoje = new Date(2026, 8, 7); // 07/09/2026
@@ -99,5 +99,15 @@ describe("getSeriesProgress", () => {
         { watchedEpisodes: 10, totalEpisodes: 10 },
       ])
     ).toBe(75);
+  });
+});
+
+describe('formatPosicao', () => {
+  it('mm:ss abaixo de 1 h e h:mm:ss acima', () => {
+    expect(formatPosicao(754000)).toBe('12:34');
+    expect(formatPosicao(5000)).toBe('0:05');
+    expect(formatPosicao(3 * 3600 * 1000)).toBe('3:00:00');
+    expect(formatPosicao(3661000)).toBe('1:01:01');
+    expect(formatPosicao(-1)).toBe('0:00');
   });
 });

@@ -38,17 +38,19 @@ public class LinkExpiryTest {
 
     @Test
     public void pedeLinkNovo_quandoVenceuOuCaiuNoMeio() {
-        // venceu (403/410 ou prazo da URL): sempre, mesmo sem ter tocado
+        // morreu (403/404/410 ou prazo da URL): sempre, mesmo sem ter tocado
         assertTrue(LinkExpiry.shouldRecapture(410, false, false));
         assertTrue(LinkExpiry.shouldRecapture(403, false, false));
+        // 404: link salvo que reabre morto no dia seguinte (17/10/2026) e o que morre no meio
+        assertTrue(LinkExpiry.shouldRecapture(404, false, false));
+        assertTrue(LinkExpiry.shouldRecapture(404, false, true));
         assertTrue(LinkExpiry.shouldRecapture(0, true, false));
         // caiu no meio do filme (já tocou): servidor fora, rede, motor /abyss/ parado
         assertTrue(LinkExpiry.shouldRecapture(503, false, true));
         assertTrue(LinkExpiry.shouldRecapture(0, false, true));
         assertTrue(LinkExpiry.shouldRecapture(429, false, true));
-        // nunca tocou e não venceu (404, formato, 5xx logo de cara) → não insiste
-        assertFalse(LinkExpiry.shouldRecapture(404, false, false));
+        // nunca tocou e não morreu (formato, 5xx logo de cara) → não insiste
         assertFalse(LinkExpiry.shouldRecapture(503, false, false));
-        assertFalse(LinkExpiry.shouldRecapture(404, false, true));
+        assertFalse(LinkExpiry.shouldRecapture(0, false, false));
     }
 }

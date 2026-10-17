@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 // valendo por cima do favorito — ela existe justamente pros títulos que só têm
 // em outra fonte.
 export const FAVORITE_SERVER_KEY = 'watchmov_fav_server';
-export const DEFAULT_SERVER_ID = 'embedmovies';   // Fonte 6 — padrão quando não há favorito
+export const DEFAULT_SERVER_ID = 'embedmovies';   // Fonte 1 (EmbedMovies; era a 6 até 17/10/2026) — padrão quando não há favorito
 
 const EVT = 'watchmov:fav-server';
 

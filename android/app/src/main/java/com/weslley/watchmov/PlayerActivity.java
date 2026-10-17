@@ -65,6 +65,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static final String EXTRA_HAS_NEXT = "hasNext";
     public static final String EXTRA_WATCHED = "watched";
     public static final String EXTRA_OFFLINE = "offline";
+    public static final String EXTRA_FONTE = "fonte";             // "6 · EmbedMovies · Blogger" (servidor · player)
+    public static final String EXTRA_SERVIDORES = "servidores";   // ["embedmovies|6 · EmbedMovies", …] (popup do servidor)
+    public static final String EXTRA_SERVIDOR_ATUAL = "servidorAtual";
     public static final String EXTRA_DOWNLOADED = "downloaded";   // ep tem download concluído
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
     private static final long AUTO_NEXT_THRESHOLD_MS = 30000; // auto-avanço pro próximo ep quando faltam 30 s (pedido 07/09/2026; era 1 min)
@@ -74,6 +77,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static final String RESULT_NEXT = "next";
     public static final String RESULT_SERVER = "server";
     public static final String RESULT_RECAPTURE = "recapture";
+    public static final String RESULT_SERVER_ID = "serverId";      // servidor escolhido no popup (o app troca e resolve)
     public static final String RESULT_WATCHED = "watched";
     // De QUAL episódio o "assistido" acima está falando (tmdbId:type:season:ep). Sem
     // isto o JS aplicava a marcação no ep que ABRIU o player: depois de um "Próximo"
@@ -88,8 +92,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
     private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
-    private Button qualityBtn;
-    private Button nextBtn;                       // "Próximo ⏭" da barra de cima
+    private TextView qualityBtn;                  // qualidade na barra de baixo ("720p"; toque = lista)
+    private int alturaEscolhida = 0;              // qualidade escolhida na lista (0 = Auto)
+    private View nextBtn;                         // ⏭ próximo episódio, na barra de baixo (player novo)
+    private View voltarBtn;                       // ← da barra de cima do controller (player novo)
+    private long setaEm;                          // última ↑/← do controle da TV (elapsedRealtime)
+    private boolean voltarPorSeta;                // o foco chegou no ← por ↑/← dele (não largado pelo Android)
     private Button nextCastBtn;                   // "Próximo episódio ▶|" do overlay do cast
     private TextView wmTitleTv;                   // título dentro do controller
     private OkHttpDataSource.Factory httpFactory; // headers (Referer) do ep atual
@@ -128,6 +136,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private boolean watched = false;              // estado atual do "assistido"
     private boolean userUnwatched = false;        // desmarcou manual → não auto-marcar de novo
     private android.widget.ImageButton watchedBtn;
+    private TextView fonteTv, assistidoTv;        // player novo: servidor · player (topo) e "✓ Assistido" (barra)
+    private String fonteRotulo;
+    private String[] servidores;                  // popup do servidor: "id|rótulo" dos servidores do título
+    private String servidorAtual;
     private android.widget.ImageButton shareBtn;   // enviar o vídeo pra outro app (WVC/VLC)
     private android.widget.ImageButton downloadBtn; // baixar o link atual (Media3/.exo x MP4)
     private boolean resultSaved = false;
@@ -149,7 +161,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             // 07/09/2026 — antes era junto com o ✓, faltando 1 min) — só se o JS achar link
             // capturado/baixado do próximo; sem link o player fica no episódio
             // (autoNextPending → stayOnEpisode). 1x por ep.
-            if (hasNext && !autoNextDone && !awaitingNext && dur > AUTO_NEXT_THRESHOLD_MS && pos >= dur - AUTO_NEXT_THRESHOLD_MS) {
+            // Player novo (17/10/2026): tocando AQUI quem avança é a contagem de 10 s (marcasTick: créditos ou
+            // faltando 40 s → pula faltando 30 s); estes 30 s automáticos ficam só pro espelhamento.
+            if (castMode != CAST_NONE && hasNext && !autoNextDone && !awaitingNext && dur > AUTO_NEXT_THRESHOLD_MS && pos >= dur - AUTO_NEXT_THRESHOLD_MS) {
                 autoNextDone = true;
                 requestNext(castMode != CAST_NONE, true);
             }
@@ -169,6 +183,19 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private int resizeIdx = 0;
     private boolean landscape = true;
     private boolean tvMode = false;               // Fire TV / Android TV: teclas do controle (dispatchKeyEvent)
+
+    // Player novo (17/10/2026): marcas do episódio (TheIntroDB), "Pular abertura", contagem do próximo e painel ⚙.
+    private PlayerMarcas marcas = PlayerMarcas.VAZIO;
+    private PlayerMarcas.Contagem contagem = new PlayerMarcas.Contagem();
+    private String marcasChave;                   // de qual episódio são as `marcas` (resposta atrasada não vale)
+    private Button pularBtn;                      // "Pular abertura" / "Pular resumo"
+    private LinearLayout proximoCard;             // "Próximo episódio em 10 s"
+    private TextView proximoTxt;
+    private Button proximoAgoraBtn, proximoCancelarBtn;
+    private FrameLayout painel;                   // ⚙: o que saiu da barra (qualidade, velocidade, tela…)
+    private View painelCard;
+    private android.widget.GridLayout painelGrade;
+    private static okhttp3.OkHttpClient marcasHttp;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -211,6 +238,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         downloaded = getIntent().getBooleanExtra(EXTRA_DOWNLOADED, false) || offline;
         resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
+        fonteRotulo = getIntent().getStringExtra(EXTRA_FONTE);
+        servidores = getIntent().getStringArrayExtra(EXTRA_SERVIDORES);
+        servidorAtual = getIntent().getStringExtra(EXTRA_SERVIDOR_ATUAL);
         long savedPos = resumeKey != null ? resumePrefs.getLong(resumeKey, 0) : 0;
         // Reabriu o título que a TV está tocando: a posição é a DA TV (o serviço seguiu lendo com o player fechado).
         // A salva é a do fechar — 25/09/2026 a TV voltou de 13:11 pra 6:51 ao reabrir.
@@ -238,6 +268,11 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         watchedBtn = view.findViewById(R.id.wm_watched);
         watchedBtn.setColorFilter(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
         watchedBtn.setOnClickListener(v -> toggleWatched());
+        fonteTv = view.findViewById(R.id.wm_fonte);
+        assistidoTv = view.findViewById(R.id.wm_assistido);
+        assistidoTv.setOnClickListener(v -> toggleWatched());
+        view.findViewById(R.id.wm_fwd60).setOnClickListener(v -> avancar1Min());
+        updateWatchedUi();
 
         castBtn = view.findViewById(R.id.wm_cast);
         castBtn.setColorFilter(Color.WHITE);
@@ -256,77 +291,64 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             downloadBtn.setOnClickListener(v -> onDownloadButton());
         }
 
-        final LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setPadding(28, 24, 28, 24);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-
-        Button back = pill("‹ Voltar", v -> finishWithResult(false, false));
-        Button server = pill("▣ Servidor", v -> finishWithResult(false, true));
-        Button links = pill("Links", v -> showLinks());
-        // Indicador (não é botão de ação): destaque = este episódio está baixado.
-        dlBtn = pill("⤓", v -> android.widget.Toast.makeText(this,
-            downloaded ? "Episódio baixado no aparelho" : "Episódio não baixado", android.widget.Toast.LENGTH_SHORT).show());
-        qualityBtn = pill("Auto", v -> showQuality());
-        Button fwd60 = pill("+60s", v -> { if (player != null) player.seekTo(player.getCurrentPosition() + 60000); });
-        nextBtn = pill("Próximo ⏭", v -> requestNext(false));
-        Button speed = pill("1x", v -> {
-            speedIdx = (speedIdx + 1) % speeds.length;
-            if (player != null) player.setPlaybackParameters(new PlaybackParameters(speeds[speedIdx]));
-            ((Button) v).setText(speeds[speedIdx] + "x");
+        // Player novo (17/10/2026, "muito mais limpo e fluido … igual da Netflix"): as 10 pílulas de texto de cima
+        // saíram. Voltar/título/espelhar ficam na barra de cima DO controller; próximo/servidor/⚙ na de baixo; o resto
+        // (qualidade, velocidade, tela, áudio, links, +1 min, assistido, baixar, enviar, girar) no painel do ⚙.
+        voltarBtn = view.findViewById(R.id.wm_back);
+        voltarBtn.setOnClickListener(v -> finishWithResult(false, false));
+        voltarBtn.setOnFocusChangeListener((v, tem) ->
+            voltarPorSeta = tem && android.os.SystemClock.elapsedRealtime() - setaEm < 400);
+        view.findViewById(R.id.wm_server).setOnClickListener(v -> abrirServidores());
+        view.findViewById(R.id.wm_more).setOnClickListener(v -> abrirPainel());
+        nextBtn = view.findViewById(R.id.wm_next);
+        // ⏭ no fim do ep (créditos ou últimos 40 s, onde a contagem aparece) = "Assistir agora": marca assistido e vai.
+        // Antes disso só pula pro próximo, sem marcar (como sempre foi).
+        nextBtn.setOnClickListener(v -> {
+            if (player != null && marcas.naJanelaDaContagem(player.getCurrentPosition(), player.getDuration())) irProximo("⏭");
+            else requestNext(false);
         });
-        Button resize = pill("Tela: " + resizeNames[resizeIdx], v -> {
-            resizeIdx = (resizeIdx + 1) % resizeModes.length;
-            view.setResizeMode(resizeModes[resizeIdx]);
-            ((Button) v).setText("Tela: " + resizeNames[resizeIdx]);
-            if (resumeKey != null) resumePrefs.edit().putInt(resumeKey + "_resize", resizeIdx).apply();
-        });
-        Button rotate = pill("Girar", v -> {
-            landscape = !landscape;
-            setRequestedOrientation(landscape ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        });
-
-        bar.addView(back);
-        // Na TV os botões da direita ficam numa faixa que rola: na box 720p os 9 passavam da tela e o "Tela"
-        // sumia; com o controle o foco anda pela faixa e ela rola até o botão.
-        LinearLayout grupo = bar;
-        if (tv) {
-            grupo = new LinearLayout(this);
-            grupo.setOrientation(LinearLayout.HORIZONTAL);
-            grupo.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-            android.widget.HorizontalScrollView faixa = new android.widget.HorizontalScrollView(this);
-            faixa.setHorizontalScrollBarEnabled(false);
-            faixa.setFillViewport(true);
-            faixa.addView(grupo, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            bar.addView(faixa, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        } else {
-            View spacer = new View(this);
-            bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
-        }
-        grupo.addView(server);
-        grupo.addView(dlBtn);
-        grupo.addView(fwd60);
-        grupo.addView(nextBtn);
         nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
-        if (urls != null && urls.length > 1) grupo.addView(links);
-        grupo.addView(qualityBtn); grupo.addView(speed); grupo.addView(resize);
-        if (!tv) grupo.addView(rotate);   // TV não tem retrato
-        root.addView(bar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+        // Qualidade na barra, depois do ⏭ (pedido dele 17/10/2026: "Na barra de baixo precisa aparecer a qualidade
+        // também, ex: 720p" e "clicando … as qualidades disponíveis … Só as que realmente tiver disponíveis").
+        qualityBtn = view.findViewById(R.id.wm_quality);
+        qualityBtn.setOnClickListener(v -> showQuality());
 
-        // A barra de cima some/aparece junto com os controles do player (o título e os
-        // botões assistido/espelhar já fazem parte do controller de baixo, então se
-        // escondem sozinhos com ele).
+        // A barra de cima some JUNTO com o resto: o Media3 anima o alfa do exo_controls_background ao mostrar e
+        // esconder os controles, e ela copia esse alfa a cada quadro (sem isso sumia seca no fim da animação).
+        final View fundoCtrl = view.findViewById(androidx.media3.ui.R.id.exo_controls_background);
+        final View topoCtrl = view.findViewById(R.id.wm_top_bar);
+        if (fundoCtrl != null && topoCtrl != null) {
+            view.getViewTreeObserver().addOnPreDrawListener(() -> {
+                if (topoCtrl.getAlpha() != fundoCtrl.getAlpha()) topoCtrl.setAlpha(fundoCtrl.getAlpha());
+                return true;
+            });
+        }
+        // TV: os controles voltaram com o foco largado (no ← ou no vídeo) → foco no play, como ao abrir.
+        if (tv) view.getViewTreeObserver().addOnPreDrawListener(() -> {
+            if (view.isControllerFullyVisible() && focoLargado()) focarPlayTv();
+            return true;
+        });
         view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
-            bar.setVisibility(visibility);
             if (tv && visibility == View.VISIBLE && getCurrentFocus() == null) focarPlayTv();
+            // Controles sumiram com a contagem ou o "Pular" na tela: o foco vai pra eles (o OK é deles e o destaque
+            // mostra isso). Sem isso, o cartão que apareceu com os controles na tela ficava sem destaque.
+            if (tv && visibility != View.VISIBLE && !painelAberto()) {
+                if (proximoNaTela()) proximoAgoraBtn.requestFocus();
+                else if (pularNaTela()) pularBtn.requestFocus();
+            }
         });
 
         status = new TextView(this);
         status.setTextColor(Color.WHITE);
         status.setTextSize(15);
+        status.setShadowLayer(6, 0, 0, Color.BLACK);
         status.setText("Carregando vídeo…");
-        root.addView(status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        // Abaixo do play (antes ficava em cima dele: "Carregando vídeo…" aparecia atrás dos botões do meio).
+        FrameLayout.LayoutParams statusLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        statusLp.topMargin = dp(120);
+        root.addView(status, statusLp);
+        montarPularEProximo(root);
+        carregarMarcas(resumeKey);
 
         // Overlay de controle remoto (some por padrão; aparece ao espelhar).
         castOverlay = new FrameLayout(this);
@@ -605,10 +627,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 // pra diagnosticar o SuperFlix — o Weslley manda esse texto.
                 String cause = error.getCause() != null ? (" — " + error.getCause().getClass().getSimpleName()
                     + (error.getCause().getMessage() != null ? ": " + error.getCause().getMessage() : "")) : "";
-                String msg = "Erro: " + error.getErrorCodeName() + " (" + error.errorCode + ")" + cause;
-                status.setText(msg);
-                status.setVisibility(View.VISIBLE);
-                android.widget.Toast.makeText(PlayerActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
+                // O erro técnico só aparece quando nada mais vai ser tentado (último ramo abaixo); tentando outro link
+                // ou pegando um novo, a tela mostra o "Aguarde…" com o círculo (pedido dele 17/10/2026).
+                final String msg = "Erro: " + error.getErrorCodeName() + " (" + error.errorCode + ")" + cause;
                 // Registra o motivo REAL no banco (aba "Bugs") — cause já tem classe+msg.
                 String causeTxt = error.getCause() != null
                     ? error.getCause().getClass().getSimpleName()
@@ -650,23 +671,31 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 String falhou = "Link " + (failedIdx >= 0 ? (failedIdx + 1) : "?") + "/" + total + " falhou";
                 if (nextUrl != null) {
                     status.setText(falhou + " — tentando " + (nextIdx + 1) + "/" + total + "…");
+                    android.util.Log.i("WatchMov", "outro link: " + falhou + " (http " + httpCode + ") → " + (nextIdx + 1) + "/" + total);
+                    mostrarAguarde("Aguarde, tentando o link " + (nextIdx + 1) + " de " + total + "…");
                     final String nu = nextUrl, nm = nextMime;
                     progressHandler.postDelayed(() -> playUrl(nu, nm, posAtError), 700);
                 } else if (!offline && LinkExpiry.shouldRecapture(httpCode, LinkExpiry.isExpired(currentUrl, agora), everReady)) {
                     // Link venceu ou caiu no meio do filme e não sobrou outro: o app pega um link NOVO pelo
                     // resolvedor e reabre nesta posição (finishWithResult salva) — antes parava aqui (24/09/2026).
+                    android.util.Log.i("WatchMov", "link novo: " + falhou + " (http " + httpCode + ", tocou=" + everReady + ") em " + posAtError + " ms");
                     status.setText(falhou + " — pegando um link novo…");
+                    mostrarAguarde("Aguarde, pegando um link novo…");
                     progressHandler.postDelayed(() -> finishWithResult(false, false, true), 900);
                 } else {
-                    status.setText(falhou + ". Nenhum link tocou — toque em ▣ Servidor ou Links.");
+                    esconderAguarde();
+                    status.setText(falhou + ". Nenhum link tocou — troque de servidor (barra de baixo) ou de link (⚙ › Links).");
+                    status.setVisibility(View.VISIBLE);
+                    android.widget.Toast.makeText(PlayerActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
                 refreshMediaNotification();
                 noteStall(state);
+                if (state == androidx.media3.common.Player.STATE_READY) esconderAguarde();   // o link novo/seguinte tocou
                 if (semImagem) return;   // o aviso de "sem imagem" fica na tela
                 if (state == androidx.media3.common.Player.STATE_READY || state == androidx.media3.common.Player.STATE_ENDED) status.setVisibility(View.GONE);
-                else if (state == androidx.media3.common.Player.STATE_BUFFERING) {
+                else if (state == androidx.media3.common.Player.STATE_BUFFERING && !aguardeNaTela()) {
                     int i = linkIndex(), n = urls != null ? urls.length : 0;
                     status.setText(n > 1 && i >= 0 ? "Carregando vídeo… (link " + (i + 1) + "/" + n + ")" : "Carregando vídeo…");
                     status.setVisibility(View.VISIBLE);
@@ -867,12 +896,18 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void setWatched(boolean w) {
         if (watched == w) return;
         watched = w;
+        android.util.Log.i("WatchMov", "assistido: " + w + " (" + resumeKey + ")");
         if (watchedBtn != null) watchedBtn.setColorFilter(w ? Color.parseColor("#4ADE80") : Color.WHITE);
         updateWatchedUi();
         NativePlayerPlugin.reportWatched(w, resumeKey);   // sempre com a chave do ep ATUAL
     }
 
     private void updateWatchedUi() {
+        // Pedido dele 17/10/2026: "Quando não tiver assistido vai aparecer 'Não assistido' sem o check"; assistido = ✓ verde.
+        if (assistidoTv != null) {
+            assistidoTv.setText(watched ? "✓ Assistido" : "Não assistido");
+            assistidoTv.setTextColor(watched ? Color.parseColor("#4ADE80") : Color.parseColor("#B3FFFFFF"));
+        }
         if (castWatchedBtn == null) return;
         castWatchedBtn.setText(watched ? "✓ Concluído" : "✓ Marcar como concluído");
         castWatchedBtn.setTextColor(watched ? Color.parseColor("#4ADE80") : Color.WHITE);
@@ -880,6 +915,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
     // De onde o vídeo vem AGORA (barra de baixo) e se o episódio está baixado (topo).
     private void updateSourceUi() {
+        if (fonteTv != null) {
+            // Do aparelho = cache offline, ou ep baixado aberto sem servidor (MP4 da aba Downloads).
+            boolean semFonte = fonteRotulo == null || fonteRotulo.isEmpty();
+            boolean doAparelho = offline || (downloaded && semFonte);
+            fonteTv.setText(doAparelho ? "Baixado no aparelho" : fonteRotulo);
+            fonteTv.setTextColor(doAparelho ? Color.parseColor("#4ADE80") : Color.parseColor("#E6FFFFFF"));
+            fonteTv.setVisibility(doAparelho || !semFonte ? View.VISIBLE : View.GONE);
+        }
         if (sourceTv != null) {
             // "downloaded" cobre o MP4 local, que roda com offline=false (não passa pelo
             // proxy) mas é tão baixado quanto o cache.
@@ -985,7 +1028,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 android.widget.Toast.LENGTH_LONG).show();
             playUrl(urls[idx], mimes != null && idx < mimes.length ? mimes[idx] : null, Math.max(0, player.getCurrentPosition()));
         } else {
-            status.setText("Este aparelho não mostra a imagem deste vídeo. Troque de fonte em ▣ Servidor ou Links.");
+            status.setText("Este aparelho não mostra a imagem deste vídeo. Troque de servidor (barra de baixo) ou de link (⚙ › Links).");
             status.setVisibility(View.VISIBLE);
         }
     }
@@ -1071,6 +1114,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         else { localPendente = false; player.prepare(); }
         progressHandler.removeCallbacks(progressTick);
         progressHandler.postDelayed(progressTick, 5000);
+        progressHandler.removeCallbacks(marcasTick);
+        progressHandler.postDelayed(marcasTick, 500);
     }
 
     // Qualidade real do vídeo: lê as resoluções das faixas HLS e deixa escolher
@@ -1089,18 +1134,25 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         // MP4 em várias qualidades (ABYS: /abyss/<sid>/480p|720p|1080p.mp4): o ExoPlayer não tem faixas
         // adaptativas aqui — "qualidade" = trocar de LINK na mesma posição (rótulos em qualities[]).
         if (heights.size() <= 1 && urls != null && urls.length > 1 && allLabeled(qualities, urls.length)) { showLinks(); return; }
-        if (heights.isEmpty()) return;
+        if (heights.size() <= 1) {
+            String so = heights.isEmpty() ? String.valueOf(qualityBtn.getText()) : heights.get(0) + "p";
+            android.widget.Toast.makeText(this, "Este vídeo só tem " + so, android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // Só as que o vídeo tem (faixas reais do HLS), com ✓ na escolhida; "Auto" = o player escolhe sozinho.
         final String[] labels = new String[heights.size() + 1];
-        labels[0] = "Auto";
-        for (int i = 0; i < heights.size(); i++) labels[i + 1] = heights.get(i) + "p";
+        labels[0] = (alturaEscolhida == 0 ? "✓ " : "") + "Auto";
+        for (int i = 0; i < heights.size(); i++) labels[i + 1] = (alturaEscolhida == heights.get(i) ? "✓ " : "") + heights.get(i) + "p";
         new AlertDialog.Builder(this)
             .setTitle("Qualidade")
             .setItems(labels, (d, i) -> {
                 if (i == 0) {
+                    alturaEscolhida = 0;
                     trackSelector.setParameters(trackSelector.buildUponParameters().clearVideoSizeConstraints());
                     qualityBtn.setText("Auto");
                 } else {
                     int h = heights.get(i - 1);
+                    alturaEscolhida = h;
                     trackSelector.setParameters(trackSelector.buildUponParameters().setMaxVideoSize(Integer.MAX_VALUE, h).setMinVideoSize(0, h));
                     qualityBtn.setText(h + "p");
                 }
@@ -2633,7 +2685,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                                 final String title, final String[] nUrls, final String[] nMimes,
                                 final String[] nQualities, final boolean nHasNext, final String key,
                                 final long startMs, final boolean nOffline, final boolean nWatched,
-                                final boolean nDownloaded) {
+                                final boolean nDownloaded, final String nFonte) {
         runOnUiThread(() -> {
             progressHandler.removeCallbacks(nextTimeout);
             if (!awaitingNext) return;
@@ -2652,12 +2704,16 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             // pelas versões antigas). Retomar de onde parou continua valendo quando o
             // usuário ABRE o episódio pela lista — só o "Próximo" começa do início.
             if (resumeKey != null && resumePrefs != null) resumePrefs.edit().remove(resumeKey).apply();
+            // Player novo: episódio novo = contagem nova, botões fora da tela e as marcas DELE.
+            contagem = new PlayerMarcas.Contagem();
+            esconderProximo(); esconderPular();
+            carregarMarcas(key);
             final long start = 0;
             mReferer = referer;
             applyRefererHeaders(referer);
             mMime = mime; mTitle = title;
             urls = nUrls; mimes = nMimes; qualities = nQualities;
-            hasNext = nHasNext; offline = nOffline; downloaded = nDownloaded || nOffline;
+            hasNext = nHasNext; offline = nOffline; downloaded = nDownloaded || nOffline; fonteRotulo = nFonte;
             watched = nWatched; userUnwatched = false;
             updateSourceUi(); updateWatchedUi();
             triedUrls.clear(); errorHandled = false;
@@ -2720,7 +2776,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
 
     private void finishWithResult(boolean next, boolean server) { finishWithResult(next, server, false); }
 
-    private void finishWithResult(boolean next, boolean server, boolean recapture) {
+    private void finishWithResult(boolean next, boolean server, boolean recapture) { finishWithResult(next, server, recapture, null); }
+
+    private void finishWithResult(boolean next, boolean server, boolean recapture, String serverId) {
         saveResume();
         Intent data = new Intent();
         data.putExtra(RESULT_POSITION, curPosMs());   // espelhando = posição da TV
@@ -2728,6 +2786,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         data.putExtra(RESULT_NEXT, next);
         data.putExtra(RESULT_SERVER, server);
         data.putExtra(RESULT_RECAPTURE, recapture);
+        data.putExtra(RESULT_SERVER_ID, serverId);
         data.putExtra(RESULT_WATCHED, watched); // estado final do "assistido" (fonte da verdade no fechar)
         data.putExtra(RESULT_WATCHED_KEY, resumeKey);   // …e de qual episódio ele é
         setResult(RESULT_OK, data);
@@ -2735,8 +2794,37 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         finish();
     }
 
+    // Botão do servidor (pedido dele 17/10/2026): popup com "Abrir servidores" (a aba de servidores, como antes) e os
+    // servidores do título; escolher um fecha o player e o app troca de servidor e roda o resolvedor nele (reabre aqui
+    // na mesma posição). Sem a lista (app antigo, episódio baixado) o botão abre a aba direto, como antes.
+    private void abrirServidores() {
+        final PlayerServidores p = PlayerServidores.de(servidores, servidorAtual);
+        if (p.soAbrirServidores()) { finishWithResult(false, true); return; }
+        new AlertDialog.Builder(this)
+            .setTitle("Servidor")
+            .setItems(p.nomes, (d, w) -> {
+                if (p.ids[w] == null) { finishWithResult(false, true); return; }
+                android.util.Log.i("WatchMov", "servidor: " + servidorAtual + " → " + p.ids[w]);
+                finishWithResult(false, false, false, p.ids[w]);
+            })
+            .show();
+    }
+
+    // Voltar (player novo, 17/10/2026 — pedido dele: "com os botões aparecendo … deveria só minimizar os botões" e
+    // "com a tela minimizada aí sim ele deveria voltar"). Painel ⚙ e contagem do próximo fecham antes; esconder os
+    // controles é só na TV (no celular o voltar segue saindo, como antes).
     @Override
-    public void onBackPressed() { finishWithResult(false, false); }
+    public void onBackPressed() {
+        int acao = PlayerMarcas.acaoDoVoltar(painelAberto(), proximoNaTela(),
+            view != null && view.isControllerFullyVisible(), tvMode, castMode != CAST_NONE);
+        android.util.Log.i("WatchMov", "voltar: " + acao);   // 0 sai · 1 fecha painel · 2 cancela contagem · 3 esconde
+        switch (acao) {
+            case PlayerMarcas.VOLTAR_FECHA_PAINEL: fecharPainel(); return;
+            case PlayerMarcas.VOLTAR_CANCELA_CONTAGEM: cancelarProximo(); return;
+            case PlayerMarcas.VOLTAR_ESCONDE_CONTROLES: view.hideController(); return;
+            default: finishWithResult(false, false);
+        }
+    }
 
     // Enviar pra TV: chegou outro título do celular com o vídeo tocando → fecha como no Voltar (salva a posição).
     void fecharPorFora() { finishWithResult(false, false); }
@@ -2746,6 +2834,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // (Android) e cada tecla segura os controles mais 8 s. ⏪/⏩/⏯ do controle valem sempre.
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN
+            && (e.getKeyCode() == KeyEvent.KEYCODE_DPAD_UP || e.getKeyCode() == KeyEvent.KEYCODE_DPAD_LEFT))
+            setaEm = android.os.SystemClock.elapsedRealtime();   // ↑/← antes do Android mover o foco (focoLargado)
         if (tvMode && view != null && player != null && teclaTv(e)) return true;
         return super.dispatchKeyEvent(e);
     }
@@ -2754,6 +2845,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         final int code = e.getKeyCode();
         final boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
         final boolean primeira = down && e.getRepeatCount() == 0;
+        final boolean ok = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
+            || code == KeyEvent.KEYCODE_NUMPAD_ENTER;
         switch (code) {
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: case KeyEvent.KEYCODE_MEDIA_REWIND:
                 if (down) pularTv(code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 10000 : -10000);
@@ -2763,8 +2856,36 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 return true;
             default:
         }
+        // Player novo (17/10/2026): painel ⚙ aberto = setas/OK andam pelos blocos (foco do Android); o voltar fecha
+        // (onBackPressed).
+        if (painelAberto()) return false;
+        if (!view.isControllerFullyVisible()) {
+            // Contagem do próximo na tela: setas ←/→ e OK ficam com os 2 botões dela ("Assistir agora"/"Cancelar").
+            if (proximoNaTela() && (ok || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+                View f = getCurrentFocus();
+                if (f != proximoAgoraBtn && f != proximoCancelarBtn) {
+                    // Sem foco no cartão (ex.: o aparelho saiu do modo de toque): OK já é o "Assistir agora";
+                    // setas só põem o foco nele.
+                    if (primeira) { if (ok) proximoAgoraBtn.performClick(); else proximoAgoraBtn.requestFocus(); }
+                    return true;
+                }
+                return false;
+            }
+            // "Pular abertura/resumo" na tela: o OK aperta ele (←/→ seguem voltando/avançando 10 s).
+            if (pularNaTela() && ok) {
+                if (primeira) pularBtn.performClick();
+                return true;
+            }
+        }
         if (view.isControllerFullyVisible()) {
             if (down) view.showController();   // renova os 8 s
+            // OK com o foco largado = pausa/continua e põe o foco no play. O ← só sai quando ele foi até lá com ↑/←:
+            // o play do meio some na animação de esconder, o Android larga o foco no ← e um OK nessa hora fechava o
+            // player (e o controle voltava com o foco no ←, pronto pra fechar no OK seguinte).
+            if (ok && focoLargado()) {
+                if (primeira) { alternarTv(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE); focarPlayTv(); }
+                return true;
+            }
             return false;                       // setas e OK seguem pro foco dos botões
         }
         switch (code) {
@@ -2780,6 +2901,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             default:
                 return false;
         }
+    }
+
+    // +1 min da barra de baixo: avança 60 s sem passar do fim.
+    private void avancar1Min() {
+        if (player == null) return;
+        long pos = player.getCurrentPosition() + 60_000, dur = player.getDuration();
+        if (dur != C.TIME_UNSET && dur > 0) pos = Math.min(pos, Math.max(0, dur - 1000));
+        player.seekTo(pos);
     }
 
     private void pularTv(long delta) {
@@ -2806,6 +2935,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void focarPlayTv() {
         View pp = view.findViewById(androidx.media3.ui.R.id.exo_play_pause);
         if (pp != null) pp.requestFocus();
+    }
+
+    // Foco largado pelo Android com os controles na tela: em lugar nenhum, no vídeo ou no ← sem ele ter ido até lá.
+    private boolean focoLargado() {
+        View f = getCurrentFocus();
+        return f == null || f == view || (f == voltarBtn && !voltarPorSeta);
     }
 
     // Aviso curto no alto da tela (±10 s com os controles escondidos): some sozinho em 1,5 s.
@@ -2861,6 +2996,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         awaitingNext = false;
         progressHandler.removeCallbacks(nextTimeout);
         progressHandler.removeCallbacks(progressTick);
+        progressHandler.removeCallbacks(marcasTick);
         progressHandler.removeCallbacks(castPoll);
         if (player != null) { player.release(); player = null; }
         if (castSessionManager != null && castSessionListener != null) {
@@ -2934,6 +3070,420 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                 requestPermissions(new String[]{ android.Manifest.permission.POST_NOTIFICATIONS }, 7331);
         } catch (Exception ignored) {}
+    }
+
+    // ═══ Player novo (17/10/2026): painel ⚙, "Pular abertura/resumo" e contagem do próximo episódio ═══════════════
+
+    // "Aguarde…" com o círculo girando (pedido dele 17/10/2026: "abri o reprodutor com o link antigo, aparece uma barra
+    // carregando em círculo com um aviso, aguarde"): enquanto tenta o próximo link da lista ou pega um link novo.
+    private FrameLayout aguarde;
+    private TextView aguardeTxt;
+
+    private boolean aguardeNaTela() { return aguarde != null && aguarde.getVisibility() == View.VISIBLE; }
+
+    private void mostrarAguarde(String texto) {
+        if (aguarde == null) {
+            aguarde = new FrameLayout(this);
+            aguarde.setBackgroundColor(Color.parseColor("#D9000000"));
+            aguarde.setClickable(true);
+            LinearLayout col = new LinearLayout(this);
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.setGravity(Gravity.CENTER_HORIZONTAL);
+            android.widget.ProgressBar roda = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
+            roda.setIndeterminate(true);
+            if (roda.getIndeterminateDrawable() != null)
+                roda.getIndeterminateDrawable().setColorFilter(Color.parseColor("#A78BFA"), android.graphics.PorterDuff.Mode.SRC_IN);
+            col.addView(roda, new LinearLayout.LayoutParams(dp(56), dp(56)));
+            aguardeTxt = new TextView(this);
+            aguardeTxt.setTextColor(Color.WHITE); aguardeTxt.setTextSize(18); aguardeTxt.setGravity(Gravity.CENTER);
+            aguardeTxt.setShadowLayer(6, 0, 0, Color.BLACK);
+            LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            tl.topMargin = dp(16);
+            col.addView(aguardeTxt, tl);
+            aguarde.addView(col, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+            aguarde.setVisibility(View.GONE);
+            ((FrameLayout) view.getParent()).addView(aguarde, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        aguardeTxt.setText(texto);
+        if (status != null) status.setVisibility(View.GONE);
+        if (view != null) view.hideController();
+        aguarde.animate().cancel();
+        if (aguarde.getVisibility() != View.VISIBLE) { aguarde.setAlpha(0f); aguarde.setVisibility(View.VISIBLE); }
+        aguarde.animate().alpha(1f).setDuration(200).start();
+    }
+
+    private void esconderAguarde() {
+        if (!aguardeNaTela()) return;
+        aguarde.animate().cancel();
+        aguarde.animate().alpha(0f).setDuration(180).withEndAction(() -> aguarde.setVisibility(View.GONE)).start();
+    }
+
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+
+    private boolean painelAberto() { return painel != null && painel.getVisibility() == View.VISIBLE; }
+    private boolean proximoNaTela() { return proximoCard != null && proximoCard.getVisibility() == View.VISIBLE; }
+    private boolean pularNaTela() { return pularBtn != null && pularBtn.getVisibility() == View.VISIBLE; }
+
+    // Aparece e some com fade (modelo de navegação dele: nada aparece nem some "seco").
+    private static void mostrarSuave(View v) {
+        if (v.getVisibility() == View.VISIBLE && v.getAlpha() == 1f) return;
+        v.animate().cancel();
+        if (v.getVisibility() != View.VISIBLE) { v.setAlpha(0f); v.setTranslationY(16f); v.setVisibility(View.VISIBLE); }
+        v.animate().alpha(1f).translationY(0f).setDuration(200).start();
+    }
+
+    private static void esconderSuave(View v) {
+        if (v == null || v.getVisibility() != View.VISIBLE) return;
+        v.animate().cancel();
+        v.animate().alpha(0f).translationY(16f).setDuration(180).withEndAction(() -> v.setVisibility(View.GONE)).start();
+    }
+
+    // "Pular abertura" e o cartão "Próximo episódio em 10 s": canto de baixo, acima da barra de progresso. Ficam fora
+    // do controller (aparecem com os controles escondidos, como na Netflix).
+    private void montarPularEProximo(FrameLayout root) {
+        pularBtn = pill("Pular abertura", v -> pularTrecho());
+        pularBtn.setBackground(pillBg(true));
+        pularBtn.setVisibility(View.GONE);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        lp.rightMargin = dp(28); lp.bottomMargin = dp(124);
+        root.addView(pularBtn, lp);
+
+        proximoCard = new LinearLayout(this);
+        proximoCard.setOrientation(LinearLayout.VERTICAL);
+        proximoCard.setPadding(dp(18), dp(14), dp(18), dp(14));
+        android.graphics.drawable.GradientDrawable fundo = new android.graphics.drawable.GradientDrawable();
+        fundo.setColor(Color.parseColor("#EB15121D")); fundo.setCornerRadius(dp(14)); fundo.setStroke(dp(1), Color.parseColor("#33FFFFFF"));
+        proximoCard.setBackground(fundo);
+        proximoTxt = new TextView(this);
+        proximoTxt.setTextColor(Color.WHITE); proximoTxt.setTextSize(17);
+        proximoTxt.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        proximoCard.addView(proximoTxt);
+        LinearLayout linha = new LinearLayout(this);
+        linha.setOrientation(LinearLayout.HORIZONTAL);
+        linha.setPadding(0, dp(10), 0, 0);
+        proximoAgoraBtn = pill("▶  Assistir agora", v -> irProximo("botão"));
+        proximoAgoraBtn.setBackground(pillBgPrimario());
+        ((LinearLayout.LayoutParams) proximoAgoraBtn.getLayoutParams()).leftMargin = 0;
+        proximoCancelarBtn = pill("Cancelar", v -> cancelarProximo());
+        linha.addView(proximoAgoraBtn); linha.addView(proximoCancelarBtn);
+        proximoCard.addView(linha);
+        proximoCard.setVisibility(View.GONE);
+        FrameLayout.LayoutParams lp2 = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        lp2.rightMargin = dp(28); lp2.bottomMargin = dp(124);
+        root.addView(proximoCard, lp2);
+    }
+
+    private void pularTrecho() {
+        if (player == null) return;
+        long pos = player.getCurrentPosition(), fim = marcas.fimDoPulo(pos);
+        android.util.Log.i("WatchMov", "pular: " + pos + " → " + fim);
+        if (fim > 0) player.seekTo(fim);
+        esconderPular();
+    }
+
+    private void mostrarPular(int tipo) {
+        String txt = tipo == PlayerMarcas.RESUMO ? "Pular resumo" : "Pular abertura";
+        if (!txt.contentEquals(pularBtn.getText())) pularBtn.setText(txt);
+        boolean novo = !pularNaTela();
+        if (novo) android.util.Log.i("WatchMov", "pular: apareceu (" + txt + ") em " + player.getCurrentPosition() + " ms");
+        mostrarSuave(pularBtn);
+        // TV com os controles escondidos: o OK aperta o "Pular" (teclaTv); o foco vai nele pra ficar destacado.
+        if (novo && tvMode && !view.isControllerFullyVisible() && !painelAberto()) pularBtn.requestFocus();
+    }
+
+    private void esconderPular() { esconderSuave(pularBtn); }
+
+    private void mostrarProximo() {
+        android.util.Log.i("WatchMov", "contagem: apareceu em " + (player != null ? player.getCurrentPosition() : -1) + " ms");
+        atualizarTextoProximo();
+        esconderPular();
+        mostrarSuave(proximoCard);
+        if (tvMode && !view.isControllerFullyVisible() && !painelAberto()) proximoAgoraBtn.requestFocus();
+    }
+
+    private void atualizarTextoProximo() {
+        if (proximoTxt != null) proximoTxt.setText("Próximo episódio em " + contagem.segundos() + " s");
+    }
+
+    private void esconderProximo() { esconderSuave(proximoCard); }
+
+    private void cancelarProximo() { contagem.cancelar(); esconderProximo(); }
+
+    // Zerou a contagem, "Assistir agora" ou ⏭ no fim do ep: pausa, marca assistido e vai pro próximo pelo MESMO caminho
+    // do ⏭ (link capturado/baixado toca aqui mesmo; sem link volta pro servidor do próximo episódio). Pedidos dele
+    // 17/10/2026: "faltando 30 ele pausa, marca como assistido e pula o eps" e, mesmo desmarcado antes, "se eu desmarcar
+    // de assistido e assistir novamente e clicar em próximo EPS ou aguardar os 10s e ele passar o eps ele precisa marcar
+    // novamente como assistido" (o tick do último minuto segue respeitando o desmarcar).
+    private void irProximo(String origem) {
+        android.util.Log.i("WatchMov", "próximo: em " + (player != null ? player.getCurrentPosition() : -1) + " ms (" + origem + ")");
+        contagem.pularAgora();
+        esconderProximo();
+        if (player != null) player.pause();
+        userUnwatched = false;
+        setWatched(true);
+        requestNext(false);
+    }
+
+    // 2×/s: mostra/esconde o "Pular" e anda a contagem do próximo. Espelhando, nada disso (a TV tem o overlay dela e
+    // o avanço automático de 30 s do progressTick).
+    private final Runnable marcasTick = new Runnable() {
+        @Override public void run() {
+            atualizarMarcas();
+            progressHandler.postDelayed(this, 500);
+        }
+    };
+
+    private void atualizarMarcas() {
+        if (player == null || pularBtn == null) return;
+        long pos = player.getCurrentPosition(), dur = player.getDuration();
+        boolean durOk = dur != C.TIME_UNSET && dur > 0;
+        boolean espelhando = castMode != CAST_NONE;
+        int tipo = !espelhando && durOk && !proximoNaTela() ? marcas.tipoDoPulo(pos) : PlayerMarcas.NENHUM;
+        if (tipo != PlayerMarcas.NENHUM) mostrarPular(tipo); else esconderPular();
+        if (espelhando || !hasNext || awaitingNext || !durOk) { esconderProximo(); return; }
+        boolean acabou = player.getPlaybackState() == androidx.media3.common.Player.STATE_ENDED;
+        switch (contagem.tique(pos, marcas.inicioDaContagem(dur), player.isPlaying(), acabou,
+                android.os.SystemClock.elapsedRealtime())) {
+            case PlayerMarcas.CONTAGEM_MOSTRAR: mostrarProximo(); break;
+            case PlayerMarcas.CONTAGEM_ATUALIZAR: atualizarTextoProximo(); break;
+            case PlayerMarcas.CONTAGEM_ESCONDER: esconderProximo(); break;
+            case PlayerMarcas.CONTAGEM_PULAR: irProximo("contagem"); break;
+            default:
+        }
+    }
+
+    private static synchronized okhttp3.OkHttpClient clienteMarcas() {
+        if (marcasHttp == null) {
+            marcasHttp = new okhttp3.OkHttpClient.Builder().dns(AppDns.get())
+                .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+                .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build();
+        }
+        return marcasHttp;
+    }
+
+    // Marcas do episódio na TheIntroDB. Episódio sem mapa (404), erro ou sem internet = VAZIO (regra dos 40 s).
+    private void carregarMarcas(final String chave) {
+        marcas = PlayerMarcas.VAZIO;
+        marcasChave = chave;
+        final long[] serie = PlayerMarcas.chaveDeSerie(chave);
+        if (serie == null) return;
+        new Thread(() -> {
+            String corpo = null;
+            try {
+                okhttp3.Request req = new okhttp3.Request.Builder().url(PlayerMarcas.urlDaApi(serie))
+                    .header("User-Agent", "WatchMov-Android").build();
+                try (okhttp3.Response r = clienteMarcas().newCall(req).execute()) {
+                    if (r.isSuccessful() && r.body() != null) corpo = r.body().string();
+                }
+            } catch (Exception e) {
+                android.util.Log.i("WatchMov", "marcas " + chave + ": " + e);
+            }
+            final PlayerMarcas m = PlayerMarcas.deJson(corpo);
+            android.util.Log.i("WatchMov", "marcas " + chave + ": " + (m.vazio() ? "sem mapa"
+                : "abertura " + m.abertura.length + " · resumo " + m.resumo.length + " · créditos " + m.creditos.length));
+            runOnUiThread(() -> { if (chave.equals(marcasChave)) marcas = m; });
+        }, "wm-marcas").start();
+    }
+
+    // ── Painel ⚙: o que saiu da barra. Blocos com nome + valor (como no BingeBang); entra e sai com fade + zoom. ──
+    private void abrirPainel() {
+        if (painel == null) montarPainel();
+        preencherPainel();
+        view.hideController();
+        painel.animate().cancel(); painelCard.animate().cancel();
+        painel.setAlpha(0f); painelCard.setScaleX(0.95f); painelCard.setScaleY(0.95f);
+        painel.setVisibility(View.VISIBLE);
+        painel.animate().alpha(1f).setDuration(200).start();
+        painelCard.animate().scaleX(1f).scaleY(1f).setDuration(200).start();
+        if (painelGrade.getChildCount() > 0) painelGrade.getChildAt(0).requestFocus();
+    }
+
+    private void fecharPainel() {
+        if (!painelAberto()) return;
+        painel.animate().cancel(); painelCard.animate().cancel();
+        painel.animate().alpha(0f).setDuration(180).withEndAction(() -> {
+            painel.setVisibility(View.GONE);
+            // TV: volta pros controles com o foco no ⚙ (de onde veio). Sem isso o foco caía no ← e o OK saía do player.
+            if (tvMode && view != null) {
+                view.showController();
+                View mais = view.findViewById(R.id.wm_more);
+                if (mais != null) mais.requestFocus();
+            }
+        }).start();
+        painelCard.animate().scaleX(0.95f).scaleY(0.95f).setDuration(180).start();
+    }
+
+    private void montarPainel() {
+        FrameLayout root = (FrameLayout) view.getParent();
+        // Foco preso no painel: pausado, os controles seguem na tela atrás dele e a busca do Android (janela inteira)
+        // achava o play do meio mais perto que o bloco ao lado — "Tela" → "Áudio" caía no play e o OK dava play.
+        painel = new FrameLayout(this) {
+            @Override public View focusSearch(View focused, int direction) {
+                View v = android.view.FocusFinder.getInstance().findNextFocus(this, focused, direction);
+                return v != null ? v : focused;
+            }
+        };
+        painel.setBackgroundColor(Color.parseColor("#99000000"));
+        painel.setClickable(true);
+        painel.setOnClickListener(v -> fecharPainel());   // toque fora do cartão fecha
+        painel.setVisibility(View.GONE);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(14), dp(18), dp(16));
+        card.setClickable(true);                            // toque dentro do cartão não fecha
+        android.graphics.drawable.GradientDrawable f = new android.graphics.drawable.GradientDrawable();
+        f.setColor(Color.parseColor("#F215121D")); f.setCornerRadius(dp(16)); f.setStroke(dp(1), Color.parseColor("#26FFFFFF"));
+        card.setBackground(f);
+
+        LinearLayout topo = new LinearLayout(this);
+        topo.setOrientation(LinearLayout.HORIZONTAL);
+        topo.setGravity(Gravity.CENTER_VERTICAL);
+        TextView titulo = new TextView(this);
+        titulo.setText("Ajustes"); titulo.setTextColor(Color.WHITE); titulo.setTextSize(20);
+        titulo.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        topo.addView(titulo, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        topo.addView(pill("✕", v -> fecharPainel()));
+        card.addView(topo);
+
+        painelGrade = new android.widget.GridLayout(this);
+        android.widget.ScrollView rolagem = new android.widget.ScrollView(this);
+        rolagem.addView(painelGrade);
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        glp.topMargin = dp(10);
+        card.addView(rolagem, glp);
+        painelCard = card;
+
+        painel.addView(card, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        root.addView(painel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void preencherPainel() {
+        painelGrade.removeAllViews();
+        float d = getResources().getDisplayMetrics().density;
+        int larguraDp = (int) (getResources().getDisplayMetrics().widthPixels / d);
+        painelGrade.setColumnCount(Math.max(2, Math.min(tvMode ? 4 : 5, (larguraDp - 96) / 150)));
+        bloco("Velocidade", () -> fmtVel(speeds[speedIdx]), false, () -> {
+            speedIdx = (speedIdx + 1) % speeds.length;
+            if (player != null) player.setPlaybackParameters(new PlaybackParameters(speeds[speedIdx]));
+        });
+        bloco("Tela", () -> resizeNames[resizeIdx], false, () -> {
+            resizeIdx = (resizeIdx + 1) % resizeModes.length;
+            view.setResizeMode(resizeModes[resizeIdx]);
+            if (resumeKey != null) resumePrefs.edit().putInt(resumeKey + "_resize", resizeIdx).apply();
+        });
+        bloco("Áudio", this::audioAtual, true, this::showAudio);
+        if (urls != null && urls.length > 1) bloco("Links", () -> urls.length + " links", true, this::showLinks);
+        bloco("Download", () -> downloaded ? "Baixado" : "Baixar", true, this::onDownloadButton);
+        if (!tvMode) {
+            bloco("Enviar", () -> "Outro app", true, this::onShareButton);
+            bloco("Girar", () -> landscape ? "Deitado" : "Em pé", true, () -> {
+                landscape = !landscape;
+                setRequestedOrientation(landscape ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            });
+        }
+    }
+
+    // `fecha` = a ação abre outra coisa (lista, download, salto) → o painel sai antes; senão troca o valor ali mesmo.
+    private void bloco(String rotulo, java.util.function.Supplier<String> valor, boolean fecha, Runnable acao) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setPadding(dp(14), dp(12), dp(14), dp(12));
+        b.setBackground(blocoBg());
+        b.setFocusable(true); b.setClickable(true);
+        TextView r = new TextView(this);
+        r.setText(rotulo); r.setTextColor(Color.parseColor("#B3FFFFFF")); r.setTextSize(13);
+        TextView v = new TextView(this);
+        v.setText(valor.get()); v.setTextColor(Color.WHITE); v.setTextSize(16);
+        v.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        v.setSingleLine(true); v.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        b.addView(r); b.addView(v);
+        b.setOnClickListener(x -> {
+            clickPulse(x);
+            if (fecha) { fecharPainel(); acao.run(); }
+            else { acao.run(); v.setText(valor.get()); }
+        });
+        android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams();
+        lp.width = dp(140);
+        lp.setMargins(dp(5), dp(5), dp(5), dp(5));
+        painelGrade.addView(b, lp);
+    }
+
+    private android.graphics.drawable.Drawable blocoBg() {
+        android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
+        normal.setColor(Color.parseColor("#1FFFFFFF")); normal.setCornerRadius(dp(12));
+        android.graphics.drawable.GradientDrawable foco = new android.graphics.drawable.GradientDrawable();
+        foco.setColor(Color.parseColor("#CC7C3AED")); foco.setCornerRadius(dp(12)); foco.setStroke(3, Color.WHITE);
+        android.graphics.drawable.StateListDrawable sl = new android.graphics.drawable.StateListDrawable();
+        sl.addState(new int[]{ android.R.attr.state_pressed }, foco);
+        sl.addState(new int[]{ android.R.attr.state_focused }, foco);
+        sl.addState(new int[]{}, normal);
+        return sl;
+    }
+
+    // "Assistir agora": roxo cheio (o principal do cartão), mais claro + borda branca no foco/toque.
+    private android.graphics.drawable.Drawable pillBgPrimario() {
+        android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
+        normal.setColor(Color.parseColor("#7C3AED")); normal.setCornerRadius(12);
+        android.graphics.drawable.GradientDrawable foco = new android.graphics.drawable.GradientDrawable();
+        foco.setColor(Color.parseColor("#9F67FF")); foco.setCornerRadius(12); foco.setStroke(3, Color.WHITE);
+        android.graphics.drawable.StateListDrawable sl = new android.graphics.drawable.StateListDrawable();
+        sl.addState(new int[]{ android.R.attr.state_pressed }, foco);
+        sl.addState(new int[]{ android.R.attr.state_focused }, foco);
+        sl.addState(new int[]{}, normal);
+        return sl;
+    }
+
+    private static String fmtVel(float v) {
+        return (v == (long) v ? String.valueOf((long) v) : String.valueOf(v).replace('.', ',')) + "x";
+    }
+
+    // Áudio (saiu do ⚙ do Media3, que também trazia a velocidade): faixas de áudio do vídeo atual.
+    private void showAudio() {
+        if (player == null) return;
+        final java.util.List<String> nomes = new java.util.ArrayList<>();
+        final java.util.List<androidx.media3.common.TrackSelectionOverride> escolhas = new java.util.ArrayList<>();
+        for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < g.length; i++) {
+                if (!g.isTrackSupported(i)) continue;
+                nomes.add((g.isTrackSelected(i) ? "✓ " : "") + nomeAudio(g.getTrackFormat(i), nomes.size()));
+                escolhas.add(new androidx.media3.common.TrackSelectionOverride(g.getMediaTrackGroup(), i));
+            }
+        }
+        if (nomes.size() <= 1) {
+            android.widget.Toast.makeText(this, "Este vídeo tem um áudio só", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Áudio")
+            .setItems(nomes.toArray(new String[0]), (dlg, w) -> {
+                if (player != null) player.setTrackSelectionParameters(player.getTrackSelectionParameters()
+                    .buildUpon().setOverrideForType(escolhas.get(w)).build());
+            })
+            .show();
+    }
+
+    private String audioAtual() {
+        if (player == null) return "Padrão";
+        for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < g.length; i++) if (g.isTrackSelected(i)) return nomeAudio(g.getTrackFormat(i), 0);
+        }
+        return "Padrão";
+    }
+
+    private static String nomeAudio(androidx.media3.common.Format f, int n) {
+        if (f.label != null && !f.label.isEmpty()) return f.label;
+        if (f.language != null && !f.language.isEmpty() && !"und".equals(f.language)) {
+            String nome = new java.util.Locale(f.language).getDisplayLanguage(new java.util.Locale("pt", "BR"));
+            if (!nome.isEmpty()) return Character.toUpperCase(nome.charAt(0)) + nome.substring(1);
+        }
+        return "Áudio " + (n + 1);
     }
 
     private Button pill(String text, View.OnClickListener onClick) {

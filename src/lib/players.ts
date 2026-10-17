@@ -25,13 +25,31 @@ export interface Provider {
 const s = (t: PlayerTarget) => t.season ?? 1;
 const e = (t: PlayerTarget) => t.episode ?? 1;
 
-// Ordem = numeração das fontes na tela (Fonte 1…6). O PADRÃO do "Assistir" é escolhido
-// no VideoPlayer (Fonte 6 EmbedMovies desde 07/09/2026; antes SuperFlix, antes EmbedPlayApi).
-// (BetterFlix/VidAPI/WarezCDN removidos — domínios mortos/propaganda.)
+// Ordem = numeração das fontes na tela (Fonte 1…5). Nova ordem 17/10/2026 (pedido dele): as que funcionam primeiro e
+// as que bloqueiam no fim — 1 EmbedMovies, 2 EmbedPlay, 3 FS/HD, 4 SuperFlix, 5 WarezCDN (antes: 6, 1, 5, 2, 4).
+// A Fonte 3 antiga (Fembed, fembed.lol) foi REMOVIDA no mesmo dia ("remove a 3, a 3 é a mesma da 2"): a página só juntava
+// outras — abria na SuperFlix e tinha EmbedPlay, MyEmbed e uma em inglês. Os ids não mudam, então favorito, fonte
+// escolhida por título e links salvos continuam valendo. O PADRÃO do "Assistir" é o favorito (favoriteServer.ts).
+// Removidas antes: BetterFlix/VidAPI (domínios mortos/propaganda); 09/08 MegaEmbed, PlayerFlix, OverflixTV, Roxano,
+// MostraFlix e VisionCine (slug sem rota por id ou domínio morto); VSEmbed (vsembed.ru = VidSrc, só legenda PT).
 export const PROVIDERS: Provider[] = [
   {
+    id: 'embedmovies',
+    name: 'Fonte 1 (EmbedMovies PT-BR)',   // PADRÃO quando não há favorito (favoriteServer.ts)
+    tag: 'EmbedMovies', color: '#22d3ee',
+    // myembed.biz — doc oficial (myembed.biz/api). Aceita TMDB ou IMDB, mesmo
+    // esquema do SuperFlix (/filme/{id}, /serie/{id}/{s}/{e}). iframe-only.
+    build: (t) => {
+      const id = t.tmdbId ?? t.imdbId;
+      if (!id) return null;
+      return t.type === 'movie'
+        ? `https://myembed.biz/filme/${id}`
+        : `https://myembed.biz/serie/${id}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
     id: 'embedplayapi',
-    name: 'Fonte 1 (EmbedPlayApi PT-BR)', // PRINCIPAL/default
+    name: 'Fonte 2 (EmbedPlayApi PT-BR)',
     tag: 'EmbedPlay', color: '#60a5fa',
     // Player BR dublado. TMDB id. Formato /embed/{id} e /embed/{id}/{s}/{e}.
     // ⚠️ o banner "Novo domínio da API, atualize no seu código >> embedplayapi.top"
@@ -45,8 +63,20 @@ export const PROVIDERS: Provider[] = [
     },
   },
   {
+    id: 'fshd',
+    name: 'Fonte 3 (FS/HD PT-BR)',
+    tag: 'FS/HD', color: '#c084fc',
+    // IMDB id — confirmado no navegador (fshd.link/filme/tt1375666).
+    build: (t) => {
+      if (!t.imdbId) return null;
+      return t.type === 'movie'
+        ? `https://fshd.link/filme/${t.imdbId}`
+        : `https://fshd.link/serie/${t.imdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
     id: 'superflix',
-    name: 'Fonte 2 (SuperFlix PT-BR DUB+LEG)',
+    name: 'Fonte 4 (SuperFlix PT-BR DUB+LEG)',
     tag: 'SuperFlix', color: '#f87171',
     // Dublado+legendado. Anti-bot no CDN → NÃO toca no player nativo; abre no
     // modo Servidor (iframe/WebView). Aceita IMDB ou TMDB id.
@@ -59,27 +89,8 @@ export const PROVIDERS: Provider[] = [
     },
   },
   {
-    id: 'fembed',
-    name: 'Fonte 3 (Fembed PT-BR)',
-    tag: 'Fembed', color: '#4ade80',
-    // Herdeiro do Superflix, catálogo dublado pt-br. TMDB id.
-    // 25/09/2026: fembed.sx morreu (DNS SERVFAIL até na Cloudflare) e a fonte ficava ~45 s "procurando" à toa;
-    // o site mudou pra fembed.lol (o /e/ antigo redireciona pra /filme/{id} e /serie/{id}/{s}/{e} — já direto).
-    build: (t) => {
-      if (!t.tmdbId) return null;
-      return t.type === 'movie'
-        ? `https://fembed.lol/filme/${t.tmdbId}`
-        : `https://fembed.lol/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  // ── Candidatos BR (esquema validado com o Weslley 09/08 no navegador) ──────────
-  // Removidas 09/08: MegaEmbed, PlayerFlix, OverflixTV (overflix.party é slug, sem
-  // rota por id), Roxano (domínio morto), MostraFlix (domínio morto), VisionCine
-  // (visioncine.lol é slug .html, sem rota por id). Slug-based precisaria de um
-  // resolvedor título→slug (scrape) — fora de escopo por ora.
-  {
     id: 'warezcdn',
-    name: 'Fonte 4 (WarezCDN PT-BR)',
+    name: 'Fonte 5 (WarezCDN PT-BR)',
     tag: 'WarezCDN', color: '#fbbf24',
     // Domínio real warezcdn.lat (embed.warezcdn.com morreu). Usa TMDB id
     // (/serie/276643 confirmado). Série abre no landing p/ escolher temporada/ep.
@@ -88,34 +99,6 @@ export const PROVIDERS: Provider[] = [
       return t.type === 'movie'
         ? `https://warezcdn.lat/filme/${t.tmdbId}`
         : `https://warezcdn.lat/serie/${t.tmdbId}`;
-    },
-  },
-  {
-    id: 'fshd',
-    name: 'Fonte 5 (FS/HD PT-BR)',
-    tag: 'FS/HD', color: '#c084fc',
-    // IMDB id — confirmado no navegador (fshd.link/filme/tt1375666).
-    build: (t) => {
-      if (!t.imdbId) return null;
-      return t.type === 'movie'
-        ? `https://fshd.link/filme/${t.imdbId}`
-        : `https://fshd.link/serie/${t.imdbId}/${s(t)}/${e(t)}`;
-    },
-  },
-  // VSEmbed (vsembed.ru = VidSrc) REMOVIDO 09/08: é embedder internacional só com
-  // LEGENDA PT (ds_lang), sem áudio dublado — foge do foco (PT-BR dublado).
-  {
-    id: 'embedmovies',
-    name: 'Fonte 6 (EmbedMovies PT-BR)',
-    tag: 'EmbedMovies', color: '#22d3ee',
-    // myembed.biz — doc oficial (myembed.biz/api). Aceita TMDB ou IMDB, mesmo
-    // esquema do SuperFlix (/filme/{id}, /serie/{id}/{s}/{e}). iframe-only.
-    build: (t) => {
-      const id = t.tmdbId ?? t.imdbId;
-      if (!id) return null;
-      return t.type === 'movie'
-        ? `https://myembed.biz/filme/${id}`
-        : `https://myembed.biz/serie/${id}/${s(t)}/${e(t)}`;
     },
   },
 ];
@@ -134,3 +117,12 @@ export const PROVIDER_HOSTS = [
   'https://fembed.lol',
   'https://warezcdn.sbs',
 ];
+
+// Rótulo "servidor · player" do topo do player nativo (pedido dele 17/10/2026: "6 - nome do servidor - nome do player
+// escolhido"): número da fonte, etiqueta dela e a opção (player) escolhida dentro do servidor, quando houver.
+export function rotuloDaFonte(providerId?: string, opcao?: string): string {
+  const p = providerId ? PROVIDERS.find(x => x.id === providerId) : undefined;
+  const num = p ? /Fonte\s+(\d+)/.exec(p.name)?.[1] : undefined;
+  const op = opcao?.replace(/\s+/g, ' ').trim();
+  return [num, p?.tag, op].filter(Boolean).join(' · ');
+}
