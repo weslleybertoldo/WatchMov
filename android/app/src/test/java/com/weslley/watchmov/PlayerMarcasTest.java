@@ -128,4 +128,98 @@ public class PlayerMarcasTest {
         d.tique(ini, ini, true, false, 0);
         assertEquals(PlayerMarcas.CONTAGEM_PULAR, d.tique(ini + 3_000, ini, false, true, 3_000));
     }
+
+    // ── 18/10/2026: IntroDB completando a TheIntroDB, ⏭ e "Assistido" ─────────────────────────────────────────
+    // Resposta real da IntroDB (Lanternas T1E5, 18/10/2026): a TheIntroDB não tinha este episódio (404).
+    private static final String LANTERNAS_T1E5_INTRODB = "{\"imdb_id\":\"tt26545992\",\"media_type\":\"tv\","
+        + "\"is_movie\":false,\"season\":1,\"episode\":5,"
+        + "\"intro\":{\"start_sec\":389,\"end_sec\":398,\"start_ms\":389000,\"end_ms\":398000,\"confidence\":0.5,"
+        + "\"submission_count\":1,\"updated_at\":\"2026-10-12T00:00:00Z\"},\"recap\":null,"
+        + "\"outro\":{\"start_sec\":3069,\"end_sec\":3189,\"start_ms\":3069000,\"end_ms\":3189000,\"confidence\":0.5,"
+        + "\"submission_count\":1,\"updated_at\":\"2026-10-12T00:00:00Z\"},\"post_credits\":null,"
+        + "\"no_intro\":false,\"no_recap\":false,\"no_outro\":false}";
+
+    @Test public void introDbViraMarcasComOutroNosCreditos() {
+        PlayerMarcas m = PlayerMarcas.deIntroDb(LANTERNAS_T1E5_INTRODB);
+        assertArrayEquals(new long[]{ 389_000, 398_000 }, m.abertura[0]);
+        assertEquals(0, m.resumo.length);
+        assertArrayEquals(new long[]{ 3_069_000, 3_189_000 }, m.creditos[0]);
+        // Vídeo de 53:09: o popup abre no começo dos créditos (51:09), não faltando 40 s.
+        assertEquals(3_069_000, m.inicioDaContagem(3_189_000));
+    }
+
+    @Test public void introDbSemMapaOuTortaFicaVazia() {
+        assertTrue(PlayerMarcas.deIntroDb("{\"error\":\"not found\"}").vazio());
+        assertTrue(PlayerMarcas.deIntroDb("{\"intro\":null,\"recap\":null,\"outro\":null}").vazio());
+        assertTrue(PlayerMarcas.deIntroDb("<html>").vazio());
+        assertTrue(PlayerMarcas.deIntroDb(null).vazio());
+    }
+
+    @Test public void juntarUsaATheIntroDbECompletaComAIntroDb() {
+        PlayerMarcas tidb = PlayerMarcas.deJson(BB_T1E1);   // abertura + créditos
+        PlayerMarcas idb = PlayerMarcas.deIntroDb(LANTERNAS_T1E5_INTRODB);
+        PlayerMarcas j = PlayerMarcas.juntar(tidb, idb);
+        assertArrayEquals(tidb.abertura[0], j.abertura[0]);
+        assertArrayEquals(tidb.creditos[0], j.creditos[0]);
+        // A que só a IntroDB tem (Lanternas T1E5: TheIntroDB 404) vem inteira dela.
+        PlayerMarcas k = PlayerMarcas.juntar(PlayerMarcas.VAZIO, idb);
+        assertArrayEquals(new long[]{ 3_069_000, 3_189_000 }, k.creditos[0]);
+        assertTrue(PlayerMarcas.juntar(PlayerMarcas.VAZIO, PlayerMarcas.VAZIO).vazio());
+        // Trecho a trecho: a TheIntroDB só com abertura ganha os créditos da IntroDB.
+        PlayerMarcas soAbertura = PlayerMarcas.deJson("{\"intro\":[{\"start_ms\":1000,\"end_ms\":9000}]}");
+        PlayerMarcas l = PlayerMarcas.juntar(soAbertura, idb);
+        assertArrayEquals(new long[]{ 1_000, 9_000 }, l.abertura[0]);
+        assertArrayEquals(new long[]{ 3_069_000, 3_189_000 }, l.creditos[0]);
+    }
+
+    @Test public void urlDaIntroDbSoComImdbValido() {
+        long[] serie = PlayerMarcas.chaveDeSerie("95350:tv:1:5");
+        assertEquals("https://api.introdb.app/segments?imdb_id=tt26545992&season=1&episode=5",
+            PlayerMarcas.urlDaIntroDb("tt26545992", serie));
+        assertNull(PlayerMarcas.urlDaIntroDb(null, serie));
+        assertNull(PlayerMarcas.urlDaIntroDb("", serie));
+        assertNull(PlayerMarcas.urlDaIntroDb("26545992", serie));
+        assertNull(PlayerMarcas.urlDaIntroDb("tt265&x=1", serie));
+    }
+
+    @Test public void assistidoComProximoVaiProPontoDoPopup() {
+        long dur = 3_189_000;
+        // Sem mapa: faltando 40 s.
+        assertEquals(dur - 40_000, PlayerMarcas.VAZIO.pontoDoAssistido(1_000_000, dur, true));
+        // Com créditos: no começo deles.
+        PlayerMarcas m = PlayerMarcas.deIntroDb(LANTERNAS_T1E5_INTRODB);
+        assertEquals(3_069_000, m.pontoDoAssistido(1_000_000, dur, true));
+        // Já passou do ponto: não volta.
+        assertEquals(-1, m.pontoDoAssistido(3_100_000, dur, true));
+        assertEquals(-1, PlayerMarcas.VAZIO.pontoDoAssistido(dur - 20_000, dur, true));
+    }
+
+    @Test public void assistidoSemProximoContinuaFaltando1Min() {
+        long dur = 3_189_000;
+        assertEquals(dur - 60_000, PlayerMarcas.VAZIO.pontoDoAssistido(1_000_000, dur, false));
+        assertEquals(-1, PlayerMarcas.VAZIO.pontoDoAssistido(dur - 30_000, dur, false));
+        // Vídeo curto (sem contagem) com próximo: cai no 1 min; duração desconhecida (C.TIME_UNSET) não pula.
+        assertEquals(10_000, PlayerMarcas.VAZIO.pontoDoAssistido(0, 70_000, true));
+        assertEquals(-1, PlayerMarcas.VAZIO.pontoDoAssistido(0, Long.MIN_VALUE + 1, true));
+    }
+
+    @Test public void rearmarReabreDepoisDeCancelarMasNaoMexeNaContagemNaTela() {
+        long ini = 500_000;
+        PlayerMarcas.Contagem c = new PlayerMarcas.Contagem();
+        assertEquals(PlayerMarcas.CONTAGEM_MOSTRAR, c.tique(ini, ini, true, false, 0));
+        c.cancelar();
+        assertEquals(PlayerMarcas.CONTAGEM_NADA, c.tique(ini + 1_000, ini, true, false, 1_000));
+        c.rearmar();
+        assertEquals(PlayerMarcas.CONTAGEM_MOSTRAR, c.tique(ini + 1_000, ini, true, false, 2_000));
+        assertEquals(10, c.segundos());
+        // Na tela e contando: rearmar não volta pros 10 s.
+        c.tique(ini + 5_000, ini, true, false, 6_000);
+        int antes = c.segundos();
+        c.rearmar();
+        assertEquals(antes, c.segundos());
+        // Já disparou: nada.
+        c.pularAgora();
+        c.rearmar();
+        assertEquals(PlayerMarcas.CONTAGEM_NADA, c.tique(ini + 6_000, ini, true, false, 7_000));
+    }
 }

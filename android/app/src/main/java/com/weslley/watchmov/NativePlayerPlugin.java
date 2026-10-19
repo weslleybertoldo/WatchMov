@@ -201,6 +201,7 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_TITLE, call.getString("title"));
         intent.putExtra(PlayerActivity.EXTRA_START_MS, call.getLong("startMs", 0L));
         intent.putExtra(PlayerActivity.EXTRA_KEY, call.getString("key"));
+        intent.putExtra(PlayerActivity.EXTRA_IMDB, call.getString("imdbId"));
         intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));
         intent.putExtra(PlayerActivity.EXTRA_WATCHED, Boolean.TRUE.equals(call.getBoolean("watched", false)));
         intent.putExtra(PlayerActivity.EXTRA_OFFLINE, Boolean.TRUE.equals(call.getBoolean("offline", false)));

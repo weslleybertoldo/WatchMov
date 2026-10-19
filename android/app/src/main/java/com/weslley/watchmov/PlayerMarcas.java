@@ -10,7 +10,8 @@ import java.util.Locale;
  * Player novo (17/10/2026): marcas do episódio (abertura, resumo e créditos) e as regras que dependem delas.
  *
  * As marcas vêm da TheIntroDB (`api.theintrodb.org`, a mesma base que o BingeBang usa) pela chave do episódio
- * ("tmdbId:tv:temporada:ep"). Regras pedidas por ele:
+ * ("tmdbId:tv:temporada:ep"), completadas pela IntroDB (`api.introdb.app`, pelo IMDb da série) desde 18/10/2026.
+ * Regras pedidas por ele:
  * - "Pular abertura"/"Pular resumo" enquanto a posição está dentro do trecho.
  * - Próximo episódio: com os créditos mapeados a contagem de 10 s começa neles; sem mapa ela aparece faltando 40 s
  *   ("Faltando 40s aparece o popup de 10s e faltando 30 ele pausa, marca como assistido e pula o eps").
@@ -50,6 +51,36 @@ final class PlayerMarcas {
         } catch (Exception e) {
             return VAZIO;
         }
+    }
+
+    /**
+     * Resposta da IntroDB (`api.introdb.app/segments`, 18/10/2026) → marcas. Lá cada trecho é UM objeto (ou null) e os
+     * créditos se chamam "outro". Episódio sem mapa (404) ou JSON torto = VAZIO.
+     */
+    static PlayerMarcas deIntroDb(String json) {
+        if (json == null || json.isEmpty()) return VAZIO;
+        try {
+            JSONObject o = new JSONObject(json);
+            return new PlayerMarcas(trechoUnico(o, "intro"), trechoUnico(o, "recap"), trechoUnico(o, "outro"));
+        } catch (Exception e) {
+            return VAZIO;
+        }
+    }
+
+    private static long[][] trechoUnico(JSONObject o, String nome) {
+        JSONObject t = o.optJSONObject(nome);
+        return t == null ? NADA : trechos(new JSONArray().put(t));
+    }
+
+    /**
+     * Junta as 2 bases (pedido dele 18/10/2026: a Lanternas T1E5 não tinha créditos na TheIntroDB e ficou sem o popup;
+     * a IntroDB tinha). Por trecho: vale o da TheIntroDB (a base de antes) e a IntroDB completa o que faltar.
+     */
+    static PlayerMarcas juntar(PlayerMarcas theIntroDb, PlayerMarcas introDb) {
+        return new PlayerMarcas(
+            theIntroDb.abertura.length > 0 ? theIntroDb.abertura : introDb.abertura,
+            theIntroDb.resumo.length > 0 ? theIntroDb.resumo : introDb.resumo,
+            theIntroDb.creditos.length > 0 ? theIntroDb.creditos : introDb.creditos);
     }
 
     // `start_ms` nulo = desde o começo; `end_ms` nulo = até o fim. Trecho sem tamanho é descartado.
@@ -104,6 +135,21 @@ final class PlayerMarcas {
         return ini >= 0 && posMs >= ini;
     }
 
+    /** O "Assistido" sem próximo episódio pula pra faltar 1 min (como sempre foi). */
+    static final long ASSISTIDO_FALTANDO_MS = 60_000;
+
+    /**
+     * Pra onde o "Assistido" pula (-1 = fica onde está; nunca volta pra trás). Com próximo episódio vai pro ponto da
+     * contagem (créditos ou faltando 40 s) e o popup de 10 s abre na hora (pedido dele 18/10/2026: "clicar em assistido
+     * avançar para 40s e abrir o popup de 10s", com os créditos seguindo e, no zero, pausa e passa). Sem próximo
+     * (filme, último ep da temporada), faltando 1 min.
+     */
+    long pontoDoAssistido(long posMs, long durMs, boolean comPopup) {
+        long alvo = comPopup ? inicioDaContagem(durMs) : -1;
+        if (alvo < 0 && durMs > ASSISTIDO_FALTANDO_MS) alvo = durMs - ASSISTIDO_FALTANDO_MS;
+        return alvo > posMs ? alvo : -1;
+    }
+
     /** tmdbId, temporada e episódio da chave "tmdbId:tv:temporada:ep"; null se não é episódio de série. */
     static long[] chaveDeSerie(String chave) {
         if (chave == null) return null;
@@ -120,6 +166,13 @@ final class PlayerMarcas {
     static String urlDaApi(long[] serie) {
         return String.format(Locale.ROOT, "https://api.theintrodb.org/v3/media?tmdb_id=%d&season=%d&episode=%d",
             serie[0], serie[1], serie[2]);
+    }
+
+    /** IntroDB pelo IMDb da série (ela não aceita o id do TMDB); null quando o id não tem a cara "tt123…". */
+    static String urlDaIntroDb(String imdbId, long[] serie) {
+        if (imdbId == null || !imdbId.matches("tt\\d+")) return null;
+        return String.format(Locale.ROOT, "https://api.introdb.app/segments?imdb_id=%s&season=%d&episode=%d",
+            imdbId, serie[1], serie[2]);
     }
 
     // ── Voltar ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -172,5 +225,11 @@ final class PlayerMarcas {
         void cancelar() { cancelada = true; visivel = false; }
 
         void pularAgora() { disparou = true; visivel = false; }
+
+        /** "Assistido" leva pro ponto da contagem: abre de novo mesmo se ele tinha cancelado antes (na tela, segue). */
+        void rearmar() {
+            if (disparou || visivel) return;
+            cancelada = false; visivel = false; restanteMs = CONTAGEM_MS; ultimoMs = -1;
+        }
     }
 }
