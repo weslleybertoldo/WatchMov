@@ -514,6 +514,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
       qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
+      // IMDb da série: o player completa as marcas (abertura/créditos) da TheIntroDB com as da IntroDB (18/10/2026).
+      imdbId,
       // Topo do player: "6 · EmbedMovies · Blogger" (servidor de onde o link veio + o player escolhido nele).
       fonte: rotuloDaFonte(ownStream.provider || providerId, ownStream.option || lastOptRef.current?.name),
       // Popup do botão do servidor: "Abrir servidores" + estes ("embedmovies|6 · EmbedMovies"), ✓ no atual.

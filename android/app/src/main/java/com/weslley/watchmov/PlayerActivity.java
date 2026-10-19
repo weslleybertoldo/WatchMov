@@ -69,6 +69,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static final String EXTRA_SERVIDORES = "servidores";   // ["embedmovies|6 · EmbedMovies", …] (popup do servidor)
     public static final String EXTRA_SERVIDOR_ATUAL = "servidorAtual";
     public static final String EXTRA_DOWNLOADED = "downloaded";   // ep tem download concluído
+    public static final String EXTRA_IMDB = "imdbId";             // IMDb da série: marcas da IntroDB (18/10/2026)
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
     private static final long AUTO_NEXT_THRESHOLD_MS = 30000; // auto-avanço pro próximo ep quando faltam 30 s (pedido 07/09/2026; era 1 min)
     public static final String RESUME_PREFS = "watchmov_resume";
@@ -188,6 +189,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private PlayerMarcas marcas = PlayerMarcas.VAZIO;
     private PlayerMarcas.Contagem contagem = new PlayerMarcas.Contagem();
     private String marcasChave;                   // de qual episódio são as `marcas` (resposta atrasada não vale)
+    private PlayerMarcas marcasTheIntroDb = PlayerMarcas.VAZIO, marcasIntroDb = PlayerMarcas.VAZIO;   // as 2 bases
+    private String imdbId;                        // IMDb da série (o mesmo nos próximos episódios): chave da IntroDB
     private Button pularBtn;                      // "Pular abertura" / "Pular resumo"
     private LinearLayout proximoCard;             // "Próximo episódio em 10 s"
     private TextView proximoTxt;
@@ -238,6 +241,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         downloaded = getIntent().getBooleanExtra(EXTRA_DOWNLOADED, false) || offline;
         resumePrefs = getSharedPreferences(RESUME_PREFS, MODE_PRIVATE);
         resumeKey = getIntent().getStringExtra(EXTRA_KEY);
+        imdbId = getIntent().getStringExtra(EXTRA_IMDB);
         fonteRotulo = getIntent().getStringExtra(EXTRA_FONTE);
         servidores = getIntent().getStringArrayExtra(EXTRA_SERVIDORES);
         servidorAtual = getIntent().getStringExtra(EXTRA_SERVIDOR_ATUAL);
@@ -302,10 +306,18 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         view.findViewById(R.id.wm_more).setOnClickListener(v -> abrirPainel());
         nextBtn = view.findViewById(R.id.wm_next);
         // ⏭ no fim do ep (créditos ou últimos 40 s, onde a contagem aparece) = "Assistir agora": marca assistido e vai.
-        // Antes disso só pula pro próximo, sem marcar (como sempre foi).
+        // Antes disso só pula pro próximo, sem marcar (como sempre foi) — mas pausa na hora (pedido dele 18/10/2026:
+        // "quando eu clicar em próx eps ele precisa pausar e avançar de eps"; o vídeo seguia tocando enquanto o link
+        // do próximo carregava).
         nextBtn.setOnClickListener(v -> {
             if (player != null && marcas.naJanelaDaContagem(player.getCurrentPosition(), player.getDuration())) irProximo("⏭");
-            else requestNext(false);
+            else {
+                if (player != null && castMode == CAST_NONE) {
+                    player.pause();
+                    android.util.Log.i("WatchMov", "⏭ no meio: pausou em " + player.getCurrentPosition() + " ms");
+                }
+                requestNext(false);
+            }
         });
         nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
         // Qualidade na barra, depois do ⏭ (pedido dele 17/10/2026: "Na barra de baixo precisa aparecer a qualidade
@@ -877,15 +889,27 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (player != null) { player.setVolume(1f); player.setPlayWhenReady(true); }
     }
 
-    // Toggle do botão "assistido": marca (e pula p/ faltar 1 min, como pedido) ou
-    // desmarca. As 3 formas de marcar convergem aqui/no tick: botão, assistir até
-    // faltar 1 min, ou o checkbox do overlay (via JS).
+    // Toggle do botão "assistido": marca (e pula) ou desmarca. As 3 formas de marcar convergem aqui/no tick: botão,
+    // assistir até faltar 1 min, ou o checkbox do overlay (via JS). Pulo (18/10/2026, escolha dele "2"): com próximo
+    // episódio tocando aqui vai pro ponto do popup (créditos ou faltando 40 s) e o popup de 10 s abre na hora, com os
+    // créditos seguindo — no zero pausa e passa (irProximo). Sem próximo/espelhando: faltando 1 min, como antes.
     private void toggleWatched() {
         if (!watched) {
             setWatched(true);
             if (player != null) {
-                long dur = player.getDuration();
-                if (dur > WATCHED_THRESHOLD_MS) player.seekTo(dur - WATCHED_THRESHOLD_MS);
+                boolean comPopup = hasNext && castMode == CAST_NONE && !awaitingNext;
+                long alvo = marcas.pontoDoAssistido(player.getCurrentPosition(), player.getDuration(), comPopup);
+                android.util.Log.i("WatchMov", "assistido: pulo pra " + alvo + " ms" + (comPopup ? " (popup)" : ""));
+                if (alvo >= 0) player.seekTo(alvo);
+                if (comPopup) {
+                    // A contagem só anda tocando: na TV ele pausa (OK) pra chegar no botão, então volta a tocar aqui.
+                    player.play();
+                    contagem.rearmar();
+                    // Na TV o foco vai pro "Assistir agora" na hora (mostrarProximo só foca com os controles saindo). O
+                    // buffering do pulo traz os controles de volta por uns segundos; o popup fica acima da barra.
+                    view.hideController();
+                    atualizarMarcas();
+                }
             }
         } else {
             userUnwatched = true; // desmarcou de propósito → não deixa o tick re-marcar
@@ -3264,28 +3288,47 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         return marcasHttp;
     }
 
-    // Marcas do episódio na TheIntroDB. Episódio sem mapa (404), erro ou sem internet = VAZIO (regra dos 40 s).
+    // Marcas do episódio: TheIntroDB (pelo TMDB) + IntroDB (pelo IMDb da série), as 2 ao mesmo tempo; cada resposta
+    // que chega já vale e a outra completa o que faltar (PlayerMarcas.juntar). Sem mapa nas 2 (404), erro ou sem
+    // internet = VAZIO (regra dos 40 s).
     private void carregarMarcas(final String chave) {
         marcas = PlayerMarcas.VAZIO;
+        marcasTheIntroDb = PlayerMarcas.VAZIO; marcasIntroDb = PlayerMarcas.VAZIO;
         marcasChave = chave;
         final long[] serie = PlayerMarcas.chaveDeSerie(chave);
         if (serie == null) return;
+        buscarMarcas(chave, false, PlayerMarcas.urlDaApi(serie));
+        String introDb = PlayerMarcas.urlDaIntroDb(imdbId, serie);
+        if (introDb != null) buscarMarcas(chave, true, introDb);
+    }
+
+    private void buscarMarcas(final String chave, final boolean introDb, final String url) {
+        final String base = introDb ? "IntroDB" : "TheIntroDB";
         new Thread(() -> {
             String corpo = null;
             try {
-                okhttp3.Request req = new okhttp3.Request.Builder().url(PlayerMarcas.urlDaApi(serie))
+                okhttp3.Request req = new okhttp3.Request.Builder().url(url)
                     .header("User-Agent", "WatchMov-Android").build();
                 try (okhttp3.Response r = clienteMarcas().newCall(req).execute()) {
                     if (r.isSuccessful() && r.body() != null) corpo = r.body().string();
                 }
             } catch (Exception e) {
-                android.util.Log.i("WatchMov", "marcas " + chave + ": " + e);
+                android.util.Log.i("WatchMov", "marcas " + base + " " + chave + ": " + e);
             }
-            final PlayerMarcas m = PlayerMarcas.deJson(corpo);
-            android.util.Log.i("WatchMov", "marcas " + chave + ": " + (m.vazio() ? "sem mapa"
-                : "abertura " + m.abertura.length + " · resumo " + m.resumo.length + " · créditos " + m.creditos.length));
-            runOnUiThread(() -> { if (chave.equals(marcasChave)) marcas = m; });
+            final PlayerMarcas m = introDb ? PlayerMarcas.deIntroDb(corpo) : PlayerMarcas.deJson(corpo);
+            android.util.Log.i("WatchMov", "marcas " + base + " " + chave + ": " + resumoDasMarcas(m));
+            runOnUiThread(() -> {
+                if (!chave.equals(marcasChave)) return;
+                if (introDb) marcasIntroDb = m; else marcasTheIntroDb = m;
+                marcas = PlayerMarcas.juntar(marcasTheIntroDb, marcasIntroDb);
+                android.util.Log.i("WatchMov", "marcas " + chave + ": " + resumoDasMarcas(marcas));
+            });
         }, "wm-marcas").start();
+    }
+
+    private static String resumoDasMarcas(PlayerMarcas m) {
+        return m.vazio() ? "sem mapa"
+            : "abertura " + m.abertura.length + " · resumo " + m.resumo.length + " · créditos " + m.creditos.length;
     }
 
     // ── Painel ⚙: o que saiu da barra. Blocos com nome + valor (como no BingeBang); entra e sai com fade + zoom. ──

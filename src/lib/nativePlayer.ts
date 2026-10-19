@@ -1,7 +1,7 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { applyTvPosition } from '@/lib/streamCache';
 
-interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string>; fonte?: string; servidores?: string[]; servidorAtual?: string }
+interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string>; fonte?: string; servidores?: string[]; servidorAtual?: string; imdbId?: string }
 // `watchedKey` = de QUAL episódio o `watched` fala (tmdbId:type:season:ep). O player
 // troca de episódio sem recriar a Activity, então o estado final do "assistido" pode
 // ser de um ep diferente do que abriu o player. APK antigo não manda → undefined.
