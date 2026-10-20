@@ -286,6 +286,15 @@ public class StreamSnifferPlugin extends Plugin {
     @PluginMethod
     public void startWatching(PluginCall call) { watching = true; emitted.clear(); probed.clear(); probeCount = 0; call.resolve(); }
 
+    // Captura parou (fechou o título ou trocou de fonte): a MainActivity fecha a popup oculta que abriu nela.
+    static volatile Runnable aoParar;
+
     @PluginMethod
-    public void stopWatching(PluginCall call) { watching = false; call.resolve(); }
+    public void stopWatching(PluginCall call) {
+        watching = false;
+        Runnable r = aoParar;
+        android.app.Activity a = getActivity();
+        if (r != null && a != null) a.runOnUiThread(r);
+        call.resolve();
+    }
 }
