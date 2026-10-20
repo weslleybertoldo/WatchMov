@@ -25,8 +25,9 @@ export interface Provider {
 const s = (t: PlayerTarget) => t.season ?? 1;
 const e = (t: PlayerTarget) => t.episode ?? 1;
 
-// Ordem = numeração das fontes na tela (Fonte 1…5). Nova ordem 17/10/2026 (pedido dele): as que funcionam primeiro e
+// Ordem = numeração das fontes na tela (Fonte 1…6). Nova ordem 17/10/2026 (pedido dele): as que funcionam primeiro e
 // as que bloqueiam no fim — 1 EmbedMovies, 2 EmbedPlay, 3 FS/HD, 4 SuperFlix, 5 WarezCDN (antes: 6, 1, 5, 2, 4).
+// 19/10/2026: a Pomfy entra como Fonte 4 (funciona, áudio dublado + original) → SuperFlix vira 5 e WarezCDN 6.
 // A Fonte 3 antiga (Fembed, fembed.lol) foi REMOVIDA no mesmo dia ("remove a 3, a 3 é a mesma da 2"): a página só juntava
 // outras — abria na SuperFlix e tinha EmbedPlay, MyEmbed e uma em inglês. Os ids não mudam, então favorito, fonte
 // escolhida por título e links salvos continuam valendo. O PADRÃO do "Assistir" é o favorito (favoriteServer.ts).
@@ -75,8 +76,22 @@ export const PROVIDERS: Provider[] = [
     },
   },
   {
+    id: 'pomfy',
+    name: 'Fonte 4 (Pomfy PT-BR DUB+EN)',
+    tag: 'Pomfy', color: '#34d399',
+    // api.pomfy.stream — doc oficial na própria página. Só TMDB id (/filme/{id}, /serie/{id}/{s}/{e}). Abre SÓ
+    // dentro de iframe: aberta direto dá 403 (o servidor confere o Sec-Fetch-Dest) → o resolvedor monta um iframe
+    // (IFRAME_PROVIDERS). "Assistir" → "Servidor 1" → gate da Byse → HLS com 2 áudios: Português (padrão) e English.
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://api.pomfy.stream/filme/${t.tmdbId}`
+        : `https://api.pomfy.stream/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
+  {
     id: 'superflix',
-    name: 'Fonte 4 (SuperFlix PT-BR DUB+LEG)',
+    name: 'Fonte 5 (SuperFlix PT-BR DUB+LEG)',
     tag: 'SuperFlix', color: '#f87171',
     // Dublado+legendado. Anti-bot no CDN → NÃO toca no player nativo; abre no
     // modo Servidor (iframe/WebView). Aceita IMDB ou TMDB id.
@@ -90,7 +105,7 @@ export const PROVIDERS: Provider[] = [
   },
   {
     id: 'warezcdn',
-    name: 'Fonte 5 (WarezCDN PT-BR)',
+    name: 'Fonte 6 (WarezCDN PT-BR)',
     tag: 'WarezCDN', color: '#fbbf24',
     // Domínio real warezcdn.lat (embed.warezcdn.com morreu). Usa TMDB id
     // (/serie/276643 confirmado). Série abre no landing p/ escolher temporada/ep.
@@ -116,6 +131,7 @@ export const PROVIDER_HOSTS = [
   'https://superflixapi.monster',
   'https://fembed.lol',
   'https://warezcdn.sbs',
+  'https://api.pomfy.stream',
 ];
 
 // Rótulo "servidor · player" do topo do player nativo (pedido dele 17/10/2026: "6 - nome do servidor - nome do player

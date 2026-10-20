@@ -4,7 +4,7 @@ import { rotuloDaFonte } from './players';
 describe('rotuloDaFonte', () => {
   it('número da fonte, etiqueta e o player escolhido', () => {
     expect(rotuloDaFonte('embedmovies', 'Blogger')).toBe('1 · EmbedMovies · Blogger');
-    expect(rotuloDaFonte('superflix', '  Player   2 ')).toBe('4 · SuperFlix · Player 2');
+    expect(rotuloDaFonte('superflix', '  Player   2 ')).toBe('5 · SuperFlix · Player 2');   // 19/10/2026: a Pomfy entrou como 4
   });
 
   it('sem player escolhido fica só o servidor', () => {

@@ -629,6 +629,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             // tela preta). O ExoPlayer não escolhe a faixa de vídeo e segue com o áudio, sem erro nenhum.
             // Espelhando, quem mostra a imagem é a TV — não mexe.
             @Override public void onTracksChanged(Tracks tracks) {
+                ajustarLegendaPadrao(tracks);
                 if (semImagem || activeCastMode != CAST_NONE) return;
                 if (!tracks.containsType(C.TRACK_TYPE_VIDEO) || tracks.isTypeSupported(C.TRACK_TYPE_VIDEO, true)) return;
                 semImagem = true;
@@ -3509,6 +3510,27 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                     .buildUpon().setOverrideForType(escolhas.get(w)).build());
             })
             .show();
+    }
+
+    // Legenda "padrão" só liga sozinha com áudio em outra língua (19/10/2026, Fonte 4/Pomfy): o episódio vem com áudio
+    // Português e legenda Português marcados como padrão, e o player ligava os dois juntos. Áudio em português →
+    // ignora o "padrão" das legendas (a forçada continua); trocou pro inglês → a legenda padrão liga, como no legendado.
+    // A escolha feita no CC é override e vale por cima disso.
+    private void ajustarLegendaPadrao(Tracks tracks) {
+        if (player == null) return;
+        String idioma = null;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < g.length; i++) if (g.isTrackSelected(i)) idioma = g.getTrackFormat(i).language;
+        }
+        int flags = flagsIgnoradasDaLegenda(idioma);
+        androidx.media3.common.TrackSelectionParameters p = player.getTrackSelectionParameters();
+        if (p.ignoredTextSelectionFlags == flags) return;
+        player.setTrackSelectionParameters(p.buildUpon().setIgnoredTextSelectionFlags(flags).build());
+    }
+
+    static int flagsIgnoradasDaLegenda(String idiomaDoAudio) {
+        return idiomaDoAudio != null && idiomaDoAudio.toLowerCase(java.util.Locale.ROOT).startsWith("pt") ? C.SELECTION_FLAG_DEFAULT : 0;
     }
 
     private String audioAtual() {
