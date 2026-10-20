@@ -12,7 +12,7 @@ import { isTv } from './device';
 
 export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option'; url: string; hops?: number; k?: number; n?: number; name?: string; names?: string[] }
 interface ResolverPlugin {
-  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; key?: string; fallbackMs?: number; optMs?: number; startOpt?: number; budgetMs: number }): Promise<void>;
+  start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; key?: string; fallbackMs?: number; optMs?: number; startOpt?: number; budgetMs: number; wrapIframe?: boolean }): Promise<void>;
   stop(o?: { keep?: boolean }): Promise<void>;
   pickOption(o: { k: number }): Promise<void>;
   addListener(event: 'resolverEvent', cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle>;
@@ -32,7 +32,9 @@ export const ABYS_PROVIDER = 'embedplayapi';   // Fonte 1: "Mostrar Opções" �
 // abyssplayer.com depois de "Dublado" + servidor (25/09/2026) — antes ficava 45 s "procurando" sem clicar nada.
 export const ABYS_PROVIDERS = [ABYS_PROVIDER, 'fshd'];
 export const usesAbys = (providerId?: string) => !!providerId && ABYS_PROVIDERS.includes(providerId);
-export function budgetFor(providerId: string): number { return usesAbys(providerId) ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
+// 19/10/2026: a Fonte 4 (Pomfy) passa por 3 páginas (título → servidor → Byse) sem lista de opções, então o cronômetro
+// por opção não estica o prazo — no emulador o vídeo saiu aos ~44 s → mesmo orçamento do ABYS.
+export function budgetFor(providerId: string): number { return usesAbys(providerId) || wrapsIframe(providerId) ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
 // Iframes de player em que é preciso CLICAR (opção/gate) → frame-hop (só no fallback sem injeção).
 export const HOP_HOSTS = ['playerflix.ink', 'embedplay.one', 'f7hyg4q.org'];
 // Ordem importa: 1 clique por tick e no máximo 1 por seletor por página. "text:" = por texto.
@@ -48,6 +50,16 @@ export const CLICK_STEPS_BYSE = ['text:Mostrar Opções', 'text:Opção 2', ...S
 export const CLICK_STEPS = CLICK_STEPS_BYSE;   // padrão das demais fontes/fallback (compatível com os testes antigos)
 // v4.64: Fonte 1 no ciclo de opções — só revela a lista ('Mostrar Opções'); a opção K vem da lista REAL (.player_select_item)
 export const CLICK_STEPS_F1 = ['text:Mostrar Opções', ...STEPS_TAIL];
+// 19/10/2026: Fonte 4 (Pomfy) = página do título → "Assistir" → "Escolha o servidor" (o 2 está "Em breve") → player da
+// Byse (n1mwq.org) com o gate `.captcha-gate__play` do STEPS_TAIL.
+export const CLICK_STEPS_POMFY = ['text:Assistir', 'text:Servidor 1', ...STEPS_TAIL];
+// Fontes que só abrem DENTRO de iframe (aberta direto = 403; o servidor confere o Sec-Fetch-Dest): o nativo carrega
+// uma página mínima com o iframe, no endereço do app — o mesmo Referer do modo Servidor.
+export const IFRAME_PROVIDERS = ['pomfy'];
+export const wrapsIframe = (providerId?: string) => !!providerId && IFRAME_PROVIDERS.includes(providerId);
+export function clickStepsFor(providerId?: string): string[] {
+  return providerId === 'pomfy' ? CLICK_STEPS_POMFY : CLICK_STEPS;
+}
 // 25/09/2026: seletor que pode precisar de mais de 1 toque (no PC o play da UPNS abriu 2 anúncios antes de tocar).
 // Toca de novo só se continuar visível, com 3 s entre toques.
 export const STEPS_REPEAT: Record<string, number> = { '#player-button': 3 };
@@ -422,12 +434,13 @@ export async function startResolver(o: { url: string; referer?: string; provider
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
     // v4.64: Fonte 1 também roda o ciclo de opções (lista REAL da embedplay.one) + o pump do ABYS; o antigo par
     // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
-    injectScript: abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript() + buildBloggerScript(),
+    injectScript: abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript(clickStepsFor(o.providerId)) + buildBloggerScript(),
     injectScriptAlt: '',
     abyssSid: sid, key: o.key ?? '', fallbackMs: 0,
     optMs: RESOLVER_OPT_MS,
     startOpt: o.startOpt ?? 1,
     budgetMs: o.budgetMs ?? budgetFor(o.providerId ?? ''),
+    wrapIframe: wrapsIframe(o.providerId),
   });
 }
 // keep = o vídeo está tocando pelo /abyss/ (página oculta = motor) → só para o relógio; o WebView fica.

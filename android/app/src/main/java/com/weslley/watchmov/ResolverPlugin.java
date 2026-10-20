@@ -74,6 +74,8 @@ public class ResolverPlugin extends Plugin {
     private Runnable abyssFallback;
     // v4.57: ciclo de opcoes (playerflix / Fonte 6). O console WMOPT diz N/nomes; o nativo troca o K e recarrega.
     private String referer = "";
+    // 19/10/2026 (Fonte 4, Pomfy): fonte que só abre DENTRO de iframe — a página da fonte vai num iframe (loadStart).
+    private boolean wrapIframe = false;
     private int optK = 1, optN = 0, optReports = 0;
     private String[] optNames = new String[0];
     private long optMs = 30000;
@@ -113,6 +115,7 @@ public class ResolverPlugin extends Plugin {
         final int fallbackMs = call.getInt("fallbackMs", 0);
         final int optMsArg = call.getInt("optMs", 30000);
         final int startOptArg = call.getInt("startOpt", 1);
+        final boolean wrapArg = Boolean.TRUE.equals(call.getBoolean("wrapIframe", false));
         final List<String> hosts = new ArrayList<>();
         try {
             JSArray a = call.getArray("hopHosts");
@@ -139,7 +142,7 @@ public class ResolverPlugin extends Plugin {
                 final int mySession = ++session;
                 hopped.clear(); hops = 0; reports = 0; navReports = 0; clicks = 0; hopHosts = hosts; clickScript = script; injectScript = inject; injected = false; currentUrl = url;
                 abyssSid = sid; injectAlt = injectAltScript; abyssReady = false; engine = false; abyssExtended = false; startUrl = url; injectHandler = null; abyssFallback = null;
-                this.referer = referer; optMs = optMsArg; optK = Math.max(1, startOptArg); optN = 0; optReports = 0; optTries = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0); StreamSnifferPlugin.currentOption = "";
+                this.referer = referer; wrapIframe = wrapArg; optMs = optMsArg; optK = Math.max(1, startOptArg); optN = 0; optReports = 0; optTries = 0; optNames = new String[0]; optTimer = null; abysLog.setLength(0); StreamSnifferPlugin.currentOption = "";
                 optStages.clear(); mediaSeen = false;
                 // v4.64: a lista de opções da Fonte 1 vem do console (WMOPT), como na Fonte 6 — não é mais fixa (ABYS/Byse).
                 // Motor ABYS com o app no fundo (25/09/2026 22:45): player fechado com a TV tocando e o app atrás → a janela
@@ -220,7 +223,7 @@ public class ResolverPlugin extends Plugin {
                 report("RESOLVER_INJECT", injected ? "on" : (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ? "add-threw" : "unsupported"));
                 Map<String, String> h = new HashMap<>();
                 if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
-                w.loadUrl(url, h);
+                loadStart(w, h);
                 if (!injected) ui.postDelayed(ticker, 1500);   // injeção cobre todos os frames; ticker só no fallback
                 deadline = () -> {
                     if (mySession != session) return;
@@ -253,7 +256,7 @@ public class ResolverPlugin extends Plugin {
                             injectHandler = WebViewCompat.addDocumentStartJavaScript(web, injectAlt, java.util.Collections.singleton("*"));
                         } catch (Throwable t) { report("RESOLVER_ABYS_FALLBACK", "troca de script falhou: " + t); }
                         ProxyServer.abyssDrop(abyssSid);
-                        try { web.stopLoading(); web.loadUrl(startUrl, hh); } catch (Throwable ignored) {}
+                        try { web.stopLoading(); loadStart(web, hh); } catch (Throwable ignored) {}
                     };
                     ui.postDelayed(abyssFallback, fallbackMs);
                 }
@@ -316,7 +319,7 @@ public class ResolverPlugin extends Plugin {
             } catch (Throwable ignored) {}
             Map<String, String> h = new HashMap<>();
             if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
-            try { web.stopLoading(); web.loadUrl(startUrl, h); } catch (Throwable ignored) {}
+            try { web.stopLoading(); loadStart(web, h); } catch (Throwable ignored) {}
             if (optTimer != null) { optStartedAt = android.os.SystemClock.uptimeMillis(); armOptTimer(optMs); }
             call.resolve();
         });
@@ -367,6 +370,22 @@ public class ResolverPlugin extends Plugin {
             if (p != null) p.offerQuality(u, "video/mp4", q.q + "p");
         }
         report("RESOLVER_ABYS_ADD", sb.toString());
+    }
+
+    // Abre a página da fonte (start, recarga do ciclo de opções, escolha manual). Fonte que só abre em iframe (Pomfy,
+    // 19/10/2026: aberta direto = 403) vai numa página mínima no endereço do app (baseUrl = Referer, igual ao modo
+    // Servidor); os cliques seguem pela injeção em todos os frames.
+    private void loadStart(WebView w, Map<String, String> h) {
+        if (!wrapIframe) { w.loadUrl(startUrl, h); return; }
+        String base = (referer != null && !referer.isEmpty()) ? referer : "https://localhost/";
+        w.loadDataWithBaseURL(base, iframePage(startUrl), "text/html", "utf-8", null);
+    }
+
+    static String iframePage(String url) {
+        String src = url.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;");
+        return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
+            + "<body style=\"margin:0;background:#000\"><iframe src=\"" + src + "\" style=\"border:0;width:100vw;height:100vh\""
+            + " allow=\"autoplay; fullscreen; encrypted-media\" allowfullscreen></iframe></body></html>";
     }
 
     // Player em IFRAME cross-origin de host conhecido → vira frame principal (só assim dá pra clicar por JS).
@@ -619,7 +638,7 @@ public class ResolverPlugin extends Plugin {
             } catch (Throwable t) { reportOption("RESOLVER_OPTION_FAIL", "reinjecao: " + t); }
             Map<String, String> h = new HashMap<>();
             if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
-            try { web.stopLoading(); web.loadUrl(startUrl, h); } catch (Throwable ignored) {}
+            try { web.stopLoading(); loadStart(web, h); } catch (Throwable ignored) {}
             optStartedAt = android.os.SystemClock.uptimeMillis();
             armOptTimer(optMs);
         } else {
