@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { ArrowLeft, RefreshCw, Trash2, Bug, Folder, Tv, Film, ChevronRight, CalendarDays, X } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2, Bug, Folder, Tv, Film, ChevronRight, CalendarDays, X, Timer } from 'lucide-react';
+import { BUSCA_TEMPO, tempoDasFontes, fmtTempo } from '@/lib/fonteTempo';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -80,7 +81,9 @@ export default function BugsView({ onBack }: { onBack: () => void }) {
   useAndroidBackButton(up);
   const goBack = () => { if (!up()) onBack(); };
 
-  const entries = useMemo(() => toEntries(rows), [rows]);
+  // Tempo de cada busca do resolvedor (item 16, 20/10/2026): vira só o resumo por fonte, fora das pastas dos títulos.
+  const tempos = useMemo(() => tempoDasFontes(rows), [rows]);
+  const entries = useMemo(() => toEntries(rows.filter(r => r.error_name !== BUSCA_TEMPO)), [rows]);
   const roots = useMemo(() => rootFolders(entries), [entries]);
   const showKind = useMemo(() => (show ? kindOf(entries, show) : null), [entries, show]);
   const subs = useMemo(() => (show ? subFolders(entries, show) : []), [entries, show]);
@@ -151,6 +154,24 @@ export default function BugsView({ onBack }: { onBack: () => void }) {
           </Button>
         )}
       </div>
+
+      {!show && !loading && !error && tempos.length > 0 && (
+        <div className="bg-card border border-border/60 rounded-lg p-3 space-y-1.5" data-testid="tempo-fontes">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Timer className="w-4 h-4 text-primary shrink-0" /> Tempo de cada fonte pra achar o vídeo
+          </div>
+          {tempos.map(t => (
+            <div key={t.fonte} className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="font-medium text-foreground mr-1">{t.fonte}</span>
+              {t.achou > 0 && t.medianaAchouMs != null && (
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">achou {t.achou}× · {fmtTempo(t.medianaAchouMs)}</span>
+              )}
+              {t.naoTem > 0 && <span className="px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">não tem {t.naoTem}×</span>}
+              {t.estourou > 0 && <span className="px-1.5 py-0.5 rounded bg-destructive/15 text-destructive">estourou {t.estourou}×</span>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Carregando…</p>
