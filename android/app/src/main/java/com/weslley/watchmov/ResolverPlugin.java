@@ -549,6 +549,13 @@ public class ResolverPlugin extends Plugin {
             });
             return;
         }
+        // 20/10/2026 (estudo do Nuvio, item 1): `none|reason=R|host=H` = a página da fonte disse que não tem o título →
+        // a busca acaba na hora (antes esperava o prazo inteiro, 45–90 s) e o app pula pra próxima fonte.
+        if (body.startsWith("none|")) {
+            final String note = body.substring(5);
+            ui.post(() -> semTitulo(mySession, note));
+            return;
+        }
         if (!body.startsWith("n=")) return;
         int n; String[] names;
         try {
@@ -558,6 +565,21 @@ public class ResolverPlugin extends Plugin {
         } catch (Throwable t) { return; }
         final int nn = n; final String[] nm = names;
         ui.post(() -> onOptionsDiscovered(mySession, nn, nm));
+    }
+
+    // A fonte não tem o título: avisa o app (resolverEvent 'none', com o motivo) e encerra. Se um vídeo já passou pela
+    // rede ou o motor ABYS já ligou, o recado chegou tarde e não vale.
+    private void semTitulo(int mySession, String note) {
+        if (mySession != session || web == null || abyssReady || engine || mediaSeen) return;
+        report("RESOLVER_SEM_TITULO", note);
+        JSObject d = new JSObject();
+        d.put("type", "none");
+        d.put("url", currentUrl);
+        d.put("hops", hops);
+        String motivo = OptionMsg.field(note, "reason");
+        d.put("reason", motivo == null ? "" : motivo);
+        notifyListeners("resolverEvent", d);
+        stopInternal();
     }
 
     // playerflix informou N opcoes -> cronometra cada uma (e cancela o deadline fixo: o ciclo controla o fim).

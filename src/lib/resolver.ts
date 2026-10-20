@@ -10,7 +10,8 @@ import { isTv } from './device';
 // quem abre o reprodutor é o auto-abrir do VideoPlayer. Aqui: wrapper do plugin, receita de
 // cliques, toggle (padrão ligado) e pausa por fonte (3 timeouts seguidos na MESMA versão → 2 h).
 
-export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option'; url: string; hops?: number; k?: number; n?: number; name?: string; names?: string[] }
+// 'none' = a página da fonte disse que não tem o título (reason = qual sinal; 20/10/2026).
+export interface ResolverEvent { type: 'loaded' | 'hop' | 'click' | 'timeout' | 'abyss' | 'option' | 'none'; url: string; hops?: number; k?: number; n?: number; name?: string; names?: string[]; reason?: string }
 interface ResolverPlugin {
   start(o: { url: string; referer?: string; hopHosts: string[]; clickScript: string; injectScript: string; injectScriptAlt?: string; abyssSid?: string; key?: string; fallbackMs?: number; optMs?: number; startOpt?: number; budgetMs: number; wrapIframe?: boolean }): Promise<void>;
   stop(o?: { keep?: boolean }): Promise<void>;
@@ -330,6 +331,48 @@ export function buildBloggerScript(): string {
     + '}catch(_){}})();';
 }
 
+// "Esta fonte não tem o título" em 1–2 s (estudo do Nuvio, item 1, 20/10/2026). Antes o resolvedor esperava o prazo
+// inteiro (45 s, ou 90 s na Pomfy e no ABYS) numa página que já tinha dito que não tem. Roda em todo frame junto dos
+// cliques e avisa o nativo pelo console (`WMOPT|none|reason=…`), que encerra a busca na hora. Sinais testados em
+// 19/10/2026 com Ultimato, Link Click T1E1, Breaking Bad T1E1 e o episódio inexistente T9E99:
+//  - Fonte 1 (myembed.biz → iframe playerflix.ink): a página pede a lista ao /inc/Ajax.php; sem nenhuma opção dublada
+//    que o ciclo abra (lang pt, fora a Premium do superflixapi, atrás do Turnstile) = não tem;
+//  - Fonte 2 (embedplayapi.top): bloco `.movie-not-found` ("Filme ou episódio não encontrado", título "movie not found");
+//  - Fonte 3 (fshd.link): título "FSHD — 404"; episódio inexistente cai na página da série sem episódio marcado;
+//  - Fonte 4 (api.pomfy.stream): `const available=false` (o botão vira "Em breve").
+// As Fontes 5 e 6 ficam atrás da verificação da Cloudflare antes de qualquer coisa: não entram aqui.
+export function buildSemTituloScript(): string {
+  return '(function(){try{if(window.__wmSem)return;window.__wmSem=1;var H=String(location.hostname||\'\').toLowerCase(),said=false;'
+    + "var none=function(r){if(said)return;said=true;try{console.log('WMOPT|none|reason='+r+'|host='+H)}catch(_){}};"
+    // Só a 1ª resposta da lista vale; formato que não for o conhecido não decide nada (fica pro prazo, como antes).
+    + "var lido=false,lista=function(txt){if(lido)return;lido=true;try{var d=JSON.parse(txt);if(d&&d.status===false){none('f1-vazio');return}var os=d&&d.data&&d.data.options;if(!Array.isArray(os))return;"
+    + "for(var i=0;i<os.length;i++){var o=os[i]||{};if(String(o.lang||'').toLowerCase().indexOf('pt')===0&&String(o.embed||'').indexOf('superflixapi.')<0)return}none(os.length?'f1-sem-dublado':'f1-sem-opcao')}catch(_){}};"
+    + "if(H.indexOf('playerflix')>=0){try{var OF=window.fetch;if(OF)window.fetch=function(){var r=OF.apply(this,arguments);try{var u=String(arguments[0]&&arguments[0].url||arguments[0]||'');"
+    + "if(u.indexOf('Ajax.php')>=0)r.then(function(res){try{res.clone().text().then(lista).catch(function(){})}catch(_){}}).catch(function(){})}catch(_){}return r}}catch(_){}}"
+    + "var pagina=function(){if(said||!document.body)return;var t=String(document.title||'').trim();"
+    + "if(H.indexOf('embedplayapi')>=0){if(document.querySelector('.movie-not-found')||/^assistir movie not found online$/i.test(t))none('f2-nao-encontrado');return}"
+    + "if(H.indexOf('fshd')>=0){if(/^fshd\\s*\\S\\s*404$/i.test(t))none('f3-404');else if(document.querySelector('.episodeOption')&&!document.querySelector('.episodeOption.active'))none('f3-sem-episodio');return}"
+    + "if(H.indexOf('pomfy')>=0){var ss=document.scripts||[];for(var i=0;i<ss.length;i++){if(/\\bconst\\s+available\\s*=\\s*false\\b/.test(ss[i].text||'')){none('f4-indisponivel');return}}}};"
+    + 'var n=0,iv=setInterval(function(){n++;pagina();if(said||n>15)clearInterval(iv)},650);'
+    + "if(document.readyState!=='loading')pagina();else document.addEventListener('DOMContentLoaded',pagina);"
+    + '}catch(_){}})();';
+}
+
+// Fontes que entram no pulo automático quando dizem "não tem" (Fontes 1 a 4, na ordem da tela). A 5 e a 6 ficam atrás
+// da Cloudflare: só abrem pelo servidor.
+export const AUTO_PULO = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy'];
+/** Próxima fonte do pulo automático depois de `atual` (segue a ordem da tela e dá a volta: 4 → 1 → 2 → 3), pulando as
+ *  que já disseram "não tem" nesta abertura e as que estão em pausa. Nenhuma sobrando = null. */
+export function proximaFonte(ordem: string[], atual: string, descartadas: Set<string>, emPausa: (id: string) => boolean = () => false): string | null {
+  const lista = ordem.filter(id => AUTO_PULO.includes(id));
+  const i = lista.indexOf(atual);
+  for (let d = 1; d <= lista.length; d++) {
+    const id = lista[((i < 0 ? -1 : i) + d) % lista.length];
+    if (id !== atual && !descartadas.has(id) && !emPausa(id)) return id;
+  }
+  return null;
+}
+
 export function isHopHost(host: string | null | undefined, hops: string[] = HOP_HOSTS): boolean {
   const h = (host || '').toLowerCase();
   return !!h && hops.some(x => h === x || h.endsWith('.' + x));
@@ -411,7 +454,8 @@ export function clearResolverCooldown(providerId: string): void {
 
 // Por que o resolvedor NÃO vai rodar nesta abertura — pra mostrar na tela e gravar na aba Bugs.
 // Antes ele calava e o servidor abria como se o recurso não existisse.
-export type ResolverSkip = 'off' | 'cache' | 'server-mode' | 'cooldown' | 'tried' | 'unavailable' | null;
+// 'sem-titulo' (20/10/2026) = as fontes do pulo automático disseram que não têm o título nesta abertura.
+export type ResolverSkip = 'off' | 'cache' | 'server-mode' | 'cooldown' | 'tried' | 'unavailable' | 'sem-titulo' | null;
 // serverChosen = ele escolheu o SERVIDOR agora (▣ Servidor do reprodutor, picker): não roda, mas é 'server-mode'
 // mesmo se o reprodutor tinha aberto do cache — o chip mostra o "Ligar" (26/09/2026: sumia até reabrir o título).
 export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; armed: boolean; cooldown: boolean; tried: boolean; serverChosen?: boolean }): ResolverSkip {
@@ -434,7 +478,8 @@ export async function startResolver(o: { url: string; referer?: string; provider
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
     // v4.64: Fonte 1 também roda o ciclo de opções (lista REAL da embedplay.one) + o pump do ABYS; o antigo par
     // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
-    injectScript: abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript(clickStepsFor(o.providerId)) + buildBloggerScript(),
+    injectScript: (abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript(clickStepsFor(o.providerId)) + buildBloggerScript())
+      + buildSemTituloScript(),
     injectScriptAlt: '',
     abyssSid: sid, key: o.key ?? '', fallbackMs: 0,
     optMs: RESOLVER_OPT_MS,
