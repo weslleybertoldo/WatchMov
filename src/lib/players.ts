@@ -31,8 +31,10 @@ const e = (t: PlayerTarget) => t.episode ?? 1;
 // A Fonte 3 antiga (Fembed, fembed.lol) foi REMOVIDA no mesmo dia ("remove a 3, a 3 é a mesma da 2"): a página só juntava
 // outras — abria na SuperFlix e tinha EmbedPlay, MyEmbed e uma em inglês. Os ids não mudam, então favorito, fonte
 // escolhida por título e links salvos continuam valendo. O PADRÃO do "Assistir" é o favorito (favoriteServer.ts).
-// Removidas antes: BetterFlix/VidAPI (domínios mortos/propaganda); 09/08 MegaEmbed, PlayerFlix, OverflixTV, Roxano,
-// MostraFlix e VisionCine (slug sem rota por id ou domínio morto); VSEmbed (vsembed.ru = VidSrc, só legenda PT).
+// Removidas antes: BetterFlix/VidAPI (domínios mortos/propaganda); 09/08 PlayerFlix, OverflixTV, Roxano, MostraFlix e
+// VisionCine (slug sem rota por id ou domínio morto); VSEmbed (vsembed.ru = VidSrc, só legenda PT).
+// 20/10/2026: a MegaEmbed (saiu em 09/08 com o domínio velho megaembedapi.site) VOLTA como Fonte 7, no domínio novo, e no
+// fim da lista pra não renumerar as outras (pedido dele "1 e 3").
 export const PROVIDERS: Provider[] = [
   {
     id: 'embedmovies',
@@ -116,6 +118,19 @@ export const PROVIDERS: Provider[] = [
         : `https://warezcdn.lat/serie/${t.tmdbId}`;
     },
   },
+  {
+    id: 'megaembed',
+    name: 'Fonte 7 (MegaEmbed PT-BR)',
+    tag: 'MegaEmbed', color: '#fb923c',
+    // megaembed.com — mesmo endereço do plugin do Nuvio. Só TMDB id (/embed/{id}, /embed/{id}/{s}/{e}). A página traz a
+    // lista de opções escrita (`sources`); no app ela é lida por HTTP (megaembed.ts), sem o WebView oculto.
+    build: (t) => {
+      if (!t.tmdbId) return null;
+      return t.type === 'movie'
+        ? `https://megaembed.com/embed/${t.tmdbId}`
+        : `https://megaembed.com/embed/${t.tmdbId}/${s(t)}/${e(t)}`;
+    },
+  },
 ];
 
 // Domínios usados (para CSP frame-src — o valor que vale está em vercel.json; só a web usa CSP)
@@ -132,6 +147,7 @@ export const PROVIDER_HOSTS = [
   'https://fembed.lol',
   'https://warezcdn.sbs',
   'https://api.pomfy.stream',
+  'https://megaembed.com',
 ];
 
 // Rótulo "servidor · player" do topo do player nativo (pedido dele 17/10/2026: "6 - nome do servidor - nome do player

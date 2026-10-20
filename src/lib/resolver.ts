@@ -375,10 +375,10 @@ export function buildSemTituloScript(): string {
     + '}catch(_){}})();';
 }
 
-// Fontes que entram no pulo automático quando dizem "não tem" (Fontes 1 a 4, na ordem da tela). A 5 e a 6 ficam atrás
-// da Cloudflare: só abrem pelo servidor.
-export const AUTO_PULO = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy'];
-/** Próxima fonte do pulo automático depois de `atual` (segue a ordem da tela e dá a volta: 4 → 1 → 2 → 3), pulando as
+// Fontes que entram no pulo automático quando dizem "não tem" (Fontes 1 a 4 e a 7, na ordem da tela). A 5 e a 6 ficam
+// atrás da Cloudflare: só abrem pelo servidor. A 7 (MegaEmbed, 20/10/2026) responde por HTTP se tem o título.
+export const AUTO_PULO = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'megaembed'];
+/** Próxima fonte do pulo automático depois de `atual` (segue a ordem da tela e dá a volta: 4 → 7 → 1 → 2), pulando as
  *  que já disseram "não tem" nesta abertura e as que estão em pausa. Nenhuma sobrando = null. */
 export function proximaFonte(ordem: string[], atual: string, descartadas: Set<string>, emPausa: (id: string) => boolean = () => false): string | null {
   const lista = ordem.filter(id => AUTO_PULO.includes(id));

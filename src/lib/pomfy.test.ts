@@ -6,8 +6,8 @@ import { budgetFor, buildOptionCycleScript, clickStepsFor, wrapsIframe, CLICK_ST
 
 // 19/10/2026: Pomfy (api.pomfy.stream) como Fonte 4 — dublado + original no mesmo HLS; só abre dentro de iframe.
 describe('Fonte 4 (Pomfy)', () => {
-  it('entra como Fonte 4; SuperFlix vira 5 e WarezCDN 6 (ids iguais)', () => {
-    expect(PROVIDERS.map(p => p.id)).toEqual(['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn']);
+  it('entra como Fonte 4; SuperFlix vira 5 e WarezCDN 6 (ids iguais); a MegaEmbed volta como 7 (20/10/2026)', () => {
+    expect(PROVIDERS.map(p => p.id)).toEqual(['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn', 'megaembed']);
     expect(rotuloDaFonte('pomfy')).toBe('4 · Pomfy');
     expect(rotuloDaFonte('superflix')).toBe('5 · SuperFlix');
     expect(rotuloDaFonte('warezcdn')).toBe('6 · WarezCDN');

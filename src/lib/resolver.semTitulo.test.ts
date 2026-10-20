@@ -132,21 +132,23 @@ describe('não tem o título (sinais por fonte)', () => {
 });
 
 describe('pulo automático pra próxima fonte', () => {
-  const ordem = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn'];
+  const ordem = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn', 'megaembed'];
 
-  it('só as Fontes 1 a 4 entram no pulo (a 5 e a 6 ficam atrás da Cloudflare)', () => {
-    expect(AUTO_PULO).toEqual(['embedmovies', 'embedplayapi', 'fshd', 'pomfy']);
+  it('as Fontes 1 a 4 e a 7 entram no pulo (a 5 e a 6 ficam atrás da Cloudflare)', () => {
+    expect(AUTO_PULO).toEqual(['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'megaembed']);
   });
 
-  it('segue a ordem da tela e dá a volta: 4 → 1 → 2 → 3', () => {
+  it('segue a ordem da tela e dá a volta: 4 → 7 → 1 → 2 → 3', () => {
     const fora = new Set<string>();
-    expect(proximaFonte(ordem, 'pomfy', fora)).toBe('embedmovies');
+    expect(proximaFonte(ordem, 'pomfy', fora)).toBe('megaembed');   // a 5 e a 6 não entram
     fora.add('pomfy');
+    expect(proximaFonte(ordem, 'megaembed', fora)).toBe('embedmovies');
+    fora.add('megaembed');
     expect(proximaFonte(ordem, 'embedmovies', fora)).toBe('embedplayapi');
     fora.add('embedmovies');
     expect(proximaFonte(ordem, 'embedplayapi', fora)).toBe('fshd');
     fora.add('embedplayapi');
-    expect(proximaFonte(ordem, 'fshd', fora)).toBeNull();   // as 4 disseram que não têm
+    expect(proximaFonte(ordem, 'fshd', fora)).toBeNull();   // as 5 disseram que não têm
   });
 
   it('pula a que já disse "não tem", a que está em pausa e a que não existe pro título (Fonte 3 sem IMDb)', () => {
