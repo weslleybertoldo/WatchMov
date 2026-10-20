@@ -303,9 +303,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       setCapturedList(prev => withCompletos(mergeCaptured(prev, r)));
       if (!r.ephemeral) addStreams([r], tmdbId, type, season, episode);   // efêmero (/abyss/) nunca persiste
       freshKeysRef.current.add(streamKey(r.url));   // capturado AO VIVO (conta pro auto-abrir)
-    }).then(fn => { if (alive) stop = fn; else fn(); });
+    }, ({ url, quality }) => { if (alive) rotularQualidade(url, quality); })   // a resolução chega depois do link (20/10/2026)
+      .then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
   }, [open, embedUrl, tmdbId, type, season, episode]);
+
+  // Resolução de um link já na lista (medida pelo sniffer depois de avisar o link, ou pelo ExoPlayer ao tocar):
+  // rotula na lista e guarda junto do link salvo.
+  function rotularQualidade(url: string, quality: string) {
+    if (!quality) return;
+    setCapturedList(prev => prev.map(s => streamKey(s.url) === streamKey(url) ? { ...s, quality } : s));
+    addStreams([{ url, quality }], tmdbId, type, season, episode);
+  }
 
   // Players externos instalados (pra oferecer no diálogo de cast).
   useEffect(() => {
@@ -619,12 +628,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
-    onPlayerQuality?.(({ url, quality }) => {
-      if (!quality) return;
-      setCapturedList(prev => prev.map(s => streamKey(s.url) === streamKey(url) ? { ...s, quality } : s));
-      addStreams([{ url, quality }], tmdbId, type, season, episode);
-    })?.then(h => { handle = h; });
+    onPlayerQuality?.(({ url, quality }) => rotularQualidade(url, quality))?.then(h => { handle = h; });
     return () => { handle?.remove(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tmdbId, type, season, episode]);
 
   // Registra no banco (aba "Bugs") todo erro de reprodução do player nativo, com o

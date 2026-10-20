@@ -217,17 +217,24 @@ public class StreamSnifferPlugin extends Plugin {
         if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) {
             if (e.getKey() != null && e.getValue() != null && !dropHeader(e.getKey())) hdrs.put(e.getKey(), e.getValue());
         }
-        // Tenta descobrir a resolução SEM tocar (rotula o link já na captura).
+        // O link vai pro app NA HORA (estudo do Nuvio, item 2, 20/10/2026): antes a resolução era medida primeiro
+        // (baixar o master ou ler o vídeo = 0,3 a 3 s a mais em todo Play). A qualidade segue depois, sem tocar, num 2º
+        // evento (streamQuality) que só rotula o link na lista.
+        JSObject d = new JSObject();
+        d.put("url", url);
+        if (referer != null) d.put("referer", referer);
+        d.put("mime", fMime);
+        if (hdrs.length() > 0) d.put("headers", hdrs);
+        if (currentOption != null && !currentOption.isEmpty()) d.put("option", currentOption);
+        instance.notifyListeners("streamFound", d);
         pool.submit(() -> {
             String quality = probeQuality(url, referer, isHls);
-            JSObject d = new JSObject();
-            d.put("url", url);
-            if (referer != null) d.put("referer", referer);
-            d.put("mime", fMime);
-            if (hdrs.length() > 0) d.put("headers", hdrs);
-            if (!quality.isEmpty()) d.put("quality", quality);
-            if (currentOption != null && !currentOption.isEmpty()) d.put("option", currentOption);
-            instance.notifyListeners("streamFound", d);
+            StreamSnifferPlugin p = instance;
+            if (quality.isEmpty() || p == null) return;
+            JSObject q = new JSObject();
+            q.put("url", url);
+            q.put("quality", quality);
+            p.notifyListeners("streamQuality", q);
         });
     }
 
