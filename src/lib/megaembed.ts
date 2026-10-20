@@ -51,8 +51,8 @@ export function opcoesDaPagina(html: string): OpcaoMega[] | null {
   return out;
 }
 
-// "Acesso Restrito · Domínio Não Autorizado" (visto 20/10/2026 em ids que o MegaEmbed usa pra canal de TV): a página não
-// toca fora do site deles, nem no WebView → conta como "não tem".
+// "Acesso Restrito · Domínio Não Autorizado" (visto 20/10/2026 em ids que o MegaEmbed usa pra canal de TV; vem com HTTP 403):
+// a página não toca fora do site deles, nem no WebView → conta como "não tem".
 export function paginaRestrita(html: string): boolean {
   return /Dom[ií]nio N[ãa]o Autorizado|Acesso Restrito/i.test(html);
 }
@@ -142,11 +142,12 @@ export async function conferirOpcao(o: OpcaoMega): Promise<{ abre: boolean; dim:
 export async function resolverMegaEmbed(alvo: AlvoMega, sinal: { cancelado: boolean } = { cancelado: false }): Promise<MegaResultado> {
   if (!Capacitor.isNativePlatform()) return { tipo: 'webview', motivo: 'sem-nativo' };   // no navegador o CORS barra
   const pagina = await pedir(urlMegaEmbed(alvo), { cab: { Accept: 'text/html,application/xhtml+xml,*/*;q=0.8' } });
-  if (pagina.status === 404) return { tipo: 'nao-tem', motivo: 'f7-404' };
-  if (pagina.status !== 200) return { tipo: 'webview', motivo: `pagina-${pagina.status}` };
   const html = texto(pagina.data);
+  if (pagina.status === 404) return { tipo: 'nao-tem', motivo: 'f7-404' };
+  if (paginaRestrita(html)) return { tipo: 'nao-tem', motivo: 'f7-restrito' };   // vem com 403 (emulador, 20/10/2026)
+  if (pagina.status !== 200) return { tipo: 'webview', motivo: `pagina-${pagina.status}` };
   const opcoes = opcoesDaPagina(html);
-  if (!opcoes) return paginaRestrita(html) ? { tipo: 'nao-tem', motivo: 'f7-restrito' } : { tipo: 'webview', motivo: 'sem-lista' };
+  if (!opcoes) return { tipo: 'webview', motivo: 'sem-lista' };
   if (!opcoes.length) return { tipo: 'nao-tem', motivo: 'f7-sem-opcao' };
   if (sinal.cancelado) return { tipo: 'webview', motivo: 'cancelado' };
 

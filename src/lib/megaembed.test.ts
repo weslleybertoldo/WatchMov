@@ -176,6 +176,8 @@ describe('Fonte 7 — cadeia por HTTP (CapacitorHttp falso)', () => {
     expect(await resolverMegaEmbed({ tmdbId: 999999999, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-sem-opcao' });
     rotas = () => ({ status: 404, data: '' });
     expect(await resolverMegaEmbed({ tmdbId: 1, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-404' });
+    rotas = () => ({ status: 403, data: RESTRITA });   // como veio no emulador (Grande Hotel, TMDB 5)
+    expect(await resolverMegaEmbed({ tmdbId: 5, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-restrito' });
     rotas = () => ({ status: 200, data: RESTRITA });
     expect(await resolverMegaEmbed({ tmdbId: 3, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-restrito' });
     rotas = p => (p.url.startsWith('https://megaembed.com/') ? { status: 200, data: pagina(ULTIMATO) } : { status: 403, data: '' });
