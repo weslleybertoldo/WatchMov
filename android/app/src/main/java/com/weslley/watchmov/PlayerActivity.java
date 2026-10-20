@@ -118,6 +118,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private boolean semImagem = false;
     // Teto de qualidade por filme/série NESTE aparelho (26/09/2026): altura que tocou sem imagem aqui.
     private static final String TETO_PREFS = "wm_teto_video";
+    // Último áudio escolhido no ⚙ Áudio (estudo do Nuvio, item 13, 20/10/2026): o idioma vale pros próximos vídeos
+    // deste aparelho quando eles tiverem essa faixa (ex.: Fonte 4 = Português + English).
+    private static final String AUDIO_PREFS = "wm_audio_preferido";
     private boolean everReady = false;    // o link atual já tocou (READY) → erro/buffering depois disso é "no meio"
     // Engasgos (buffering depois de já ter tocado) → aba Bugs como PLAYER_ENGASGOU, no máx. 1×/min (24/09/2026:
     // "fica engasgando no 1080p" não deixava rastro nenhum).
@@ -610,6 +613,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             .setSeekBackIncrementMs(10000)
             .setSeekForwardIncrementMs(10000)
             .build();
+        String audioPreferido = getSharedPreferences(AUDIO_PREFS, MODE_PRIVATE).getString("idioma", null);
+        if (audioPreferido != null) player.setTrackSelectionParameters(player.getTrackSelectionParameters()
+            .buildUpon().setPreferredAudioLanguage(audioPreferido).build());
         view.setPlayer(player);
 
         player.addListener(new androidx.media3.common.Player.Listener() {
@@ -3491,12 +3497,14 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (player == null) return;
         final java.util.List<String> nomes = new java.util.ArrayList<>();
         final java.util.List<androidx.media3.common.TrackSelectionOverride> escolhas = new java.util.ArrayList<>();
+        final java.util.List<String> idiomas = new java.util.ArrayList<>();
         for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
             if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
             for (int i = 0; i < g.length; i++) {
                 if (!g.isTrackSupported(i)) continue;
                 nomes.add((g.isTrackSelected(i) ? "✓ " : "") + nomeAudio(g.getTrackFormat(i), nomes.size()));
                 escolhas.add(new androidx.media3.common.TrackSelectionOverride(g.getMediaTrackGroup(), i));
+                idiomas.add(idiomaParaLembrar(g.getTrackFormat(i).language));
             }
         }
         if (nomes.size() <= 1) {
@@ -3506,10 +3514,25 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         new android.app.AlertDialog.Builder(this)
             .setTitle("Áudio")
             .setItems(nomes.toArray(new String[0]), (dlg, w) -> {
-                if (player != null) player.setTrackSelectionParameters(player.getTrackSelectionParameters()
-                    .buildUpon().setOverrideForType(escolhas.get(w)).build());
+                if (player == null) return;
+                // A faixa escolhida vale agora (override); o idioma dela fica lembrado pros próximos vídeos e episódios.
+                String idioma = idiomas.get(w);
+                androidx.media3.common.TrackSelectionParameters.Builder b = player.getTrackSelectionParameters()
+                    .buildUpon().setOverrideForType(escolhas.get(w));
+                if (idioma != null) {
+                    b.setPreferredAudioLanguage(idioma);
+                    getSharedPreferences(AUDIO_PREFS, MODE_PRIVATE).edit().putString("idioma", idioma).apply();
+                }
+                player.setTrackSelectionParameters(b.build());
             })
             .show();
+    }
+
+    /** Idioma da faixa de áudio que vale lembrar ("pt", "en", "pt-br"); sem idioma ou "und" = null (não lembra). */
+    static String idiomaParaLembrar(String idioma) {
+        if (idioma == null) return null;
+        String l = idioma.trim().toLowerCase(java.util.Locale.ROOT);
+        return l.isEmpty() || "und".equals(l) ? null : l;
     }
 
     // Legenda "padrão" só liga sozinha com áudio em outra língua (19/10/2026, Fonte 4/Pomfy): o episódio vem com áudio

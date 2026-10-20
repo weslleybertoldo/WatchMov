@@ -8,13 +8,14 @@ import { formatPosicao } from '@/lib/formatters';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl, isExpiredUrl, canRecaptureAgain } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
-import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
+import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, proximaFonte, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
 import { downloadAsMp4, useMp4, removeMp4 } from '@/lib/mp4Download';
 import { setLogProvider, logPlaybackError } from '@/lib/playbackLog';
+import { textoDaBusca, BUSCA_TEMPO, type ResultadoBusca } from '@/lib/fonteTempo';
 import { isTv } from '@/lib/device';
 
 // Sinaliza (entre remounts) que o usuário veio do "Próximo ep" — o novo ep abre
@@ -32,6 +33,13 @@ let pendingNextInPlayer = false;
 function providerTag(provider?: string): { label: string; color: string } | null {
   const p = provider ? PROVIDERS.find(x => x.id === provider) : undefined;
   return p ? { label: p.tag, color: p.color } : null;
+}
+
+// "Fonte 4" (o número da tela) — pro aviso do pulo automático.
+function fonteN(id: string): string {
+  const p = PROVIDERS.find(x => x.id === id);
+  const n = p ? /Fonte\s+(\d+)/.exec(p.name)?.[1] : undefined;
+  return n ? `Fonte ${n}` : (p?.tag ?? id);
 }
 
 interface ScreenCastPlugin { openCast(): Promise<void>; }
@@ -115,6 +123,20 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const resolvingRef = useRef(false);
   useEffect(() => { resolvingRef.current = resolving; });
   const resolveTriedRef = useRef<string | null>(null);   // embedUrl em que já tentou (1×/fonte por abertura)
+  // Pulo automático (estudo do Nuvio, item 1, 20/10/2026): fonte que diz "não tem" nesta abertura sai da busca e o app
+  // tenta a próxima (1 → 2 → 3 → 4, dando a volta). `fonteInicialRef` = onde começou: sem nenhuma, volta pra ela.
+  const semTituloRef = useRef<Set<string>>(new Set());
+  const fonteInicialRef = useRef<string | null>(null);
+  const [pulo, setPulo] = useState<{ de: string; para: string } | null>(null);
+  // Busca em andamento no resolvedor (item 16, 20/10/2026): quando começou e em qual fonte, pra registrar quanto demorou.
+  const buscaRef = useRef<{ fonte: string; t0: number; url: string } | null>(null);
+  const registrarBusca = (resultado: ResultadoBusca, extra = '') => {
+    const b = buscaRef.current;
+    buscaRef.current = null;
+    if (!b) return;
+    const cause = textoDaBusca({ fonte: rotuloDaFonte(b.fonte) || b.fonte, resultado, ms: Date.now() - b.t0, extra: `${extra}${extra ? ' ' : ''}aparelho=${isTv() ? 'tv' : 'celular'}` });
+    logPlaybackError({ url: b.url, code: 0, name: BUSCA_TEMPO, cause, title });
+  };
   const cacheOpenRef = useRef(false);                     // abriu direto do cache (efeito A) → não resolve
   const recaptureAtRef = useRef(0);                       // quando pediu link novo sozinho pela última vez (0 = ainda não)
   const keepEngineRef = useRef(false);                    // link efêmero (/abyss/) tocando → o WebView oculto (motor) fica vivo
@@ -223,6 +245,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     playedRef.current = false;
     freshKeysRef.current = new Set(); autoFiredRef.current = null; resolveTriedRef.current = null; cacheOpenRef.current = false;
     recaptureAtRef.current = 0;
+    semTituloRef.current = new Set(); fonteInicialRef.current = null; setPulo(null);
     if (!isNative()) return;
     // Veio do "Próximo episódio": este ep começa do ZERO. Limpa a posição salva nos
     // DOIS stores (streamCache + SharedPreferences do player) — as versões antigas
@@ -303,9 +326,18 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       setCapturedList(prev => withCompletos(mergeCaptured(prev, r)));
       if (!r.ephemeral) addStreams([r], tmdbId, type, season, episode);   // efêmero (/abyss/) nunca persiste
       freshKeysRef.current.add(streamKey(r.url));   // capturado AO VIVO (conta pro auto-abrir)
-    }).then(fn => { if (alive) stop = fn; else fn(); });
+    }, ({ url, quality }) => { if (alive) rotularQualidade(url, quality); })   // a resolução chega depois do link (20/10/2026)
+      .then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
   }, [open, embedUrl, tmdbId, type, season, episode]);
+
+  // Resolução de um link já na lista (medida pelo sniffer depois de avisar o link, ou pelo ExoPlayer ao tocar):
+  // rotula na lista e guarda junto do link salvo.
+  function rotularQualidade(url: string, quality: string) {
+    if (!quality) return;
+    setCapturedList(prev => prev.map(s => streamKey(s.url) === streamKey(url) ? { ...s, quality } : s));
+    addStreams([{ url, quality }], tmdbId, type, season, episode);
+  }
 
   // Players externos instalados (pra oferecer no diálogo de cast).
   useEffect(() => {
@@ -415,6 +447,12 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     const base = open && isNative() && !!embedUrl && !ownStream;
     if (!base) { setResolverPaused(null); if (resolvingRef.current && !ownStream) setResolving(false); return; }
+    // Esta fonte já disse que não tem o título nesta abertura (pulo automático): não busca de novo.
+    if (semTituloRef.current.has(providerId) && !preferIframe) {
+      if (resolvingRef.current) setResolving(false);
+      setResolverPaused('sem-titulo');
+      return;
+    }
     const reason = resolverSkipReason({
       enabled: resolverEnabled(), cacheOpen: cacheOpenRef.current, armed: autoArmedRef.current,
       cooldown: resolverOnCooldown(providerId), tried: resolveTriedRef.current === embedUrl, serverChosen: preferIframe,
@@ -437,8 +475,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       if (providerId === 'embedplayapi') return undefined;
       try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; }
     })() }).catch(() => setResolving(false));
+    buscaRef.current = { fonte: providerId, t0: Date.now(), url: embedUrl! };
     const t = window.setTimeout(() => {
       if (!resolvingRef.current) return;
+      registrarBusca('estourou');
       setResolving(false); stopResolver(); noteResolverResult(providerId, false);
       setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
     }, Math.max(budgetFor(providerId), 210000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo). 25/09/2026: 150→210 s — a opção que mostra progresso (gate da Byse) ganha até +2×30 s
@@ -458,12 +498,44 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       else if (e.type === 'timeout') {
         setOptProgress(null);
         if (resolvingRef.current && !ownStreamRef.current) {
+          registrarBuscaRef.current('estourou');
           setResolving(false); stopResolver(); noteResolverResult(providerId, false); setResolverPaused('unavailable');
         }
+      }
+      // A página da fonte disse que não tem o título (20/10/2026): não é falha do resolvedor (não conta pra pausa) —
+      // pula pra próxima fonte na hora.
+      else if (e.type === 'none') {
+        setOptProgress(null);
+        if (resolvingRef.current && !ownStreamRef.current) pularFonteRef.current(providerId, e.reason ?? '');
       }
     })?.then(h => { if (alive) handle = h; else h.remove(); });
     return () => { alive = false; handle?.remove(); };
   }, [open, providerId]);
+
+  // Pulo automático: a fonte `de` não tem o título → tenta a próxima (Fontes 1 a 4, na ordem da tela, dando a volta).
+  // A troca NÃO vira a fonte escolhida do título (srcKey): quem escolhe é ele; o pulo só procura. Nenhuma sobrando →
+  // volta pra fonte em que começou e mostra "Nenhuma fonte tem este título".
+  const pularFonte = (de: string, motivo: string) => {
+    registrarBusca('nao-tem', motivo ? `motivo=${motivo}` : '');
+    if (!fonteInicialRef.current) fonteInicialRef.current = de;
+    semTituloRef.current.add(de);
+    const para = proximaFonte(available.map(p => p.id), de, semTituloRef.current, id => resolverOnCooldown(id));
+    setSourceOpen(false);
+    autoFiredRef.current = null; resolveTriedRef.current = null; freshKeysRef.current = new Set();
+    if (!para) {
+      setResolving(false); stopResolver(); setPulo(null);
+      setResolverPaused('sem-titulo');
+      const ini = fonteInicialRef.current;
+      if (ini && ini !== de) setProviderId(ini);
+      return;
+    }
+    setPulo({ de, para });
+    if (aviso) setAviso(`Aguarde, abrindo ${rotuloDaFonte(para) || 'a próxima fonte'}…`);
+    setProviderId(para);
+  };
+  const pularFonteRef = useRef(pularFonte);
+  const registrarBuscaRef = useRef(registrarBusca);
+  useEffect(() => { pularFonteRef.current = pularFonte; registrarBuscaRef.current = registrarBusca; });
 
   // "Tentar agora"/"Ligar" no chip: esquece a pausa da fonte, re-arma o auto-abrir e roda de novo.
   // Sai do servidor escolhido e zera o "já abriu"/cache/links ao vivo desta abertura (26/09/2026): é o
@@ -473,13 +545,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setPreferIframe(false);
     autoArmedRef.current = true; resolveTriedRef.current = null;
     autoFiredRef.current = null; cacheOpenRef.current = false; freshKeysRef.current = new Set();
+    semTituloRef.current = new Set(); fonteInicialRef.current = null; setPulo(null);   // tentar de novo vale pras fontes do pulo
     setResolverRetry(n => n + 1);
   };
 
   // Reprodutor abriu (auto-abrir ou escolha dele) enquanto resolvia → sucesso da fonte.
   useEffect(() => {
     if (!ownStream || !resolvingRef.current) return;
-    setResolving(false); stopResolver(!!ownStream.ephemeral); noteResolverResult(providerId, true);
+    const opcao = ownStream.option || lastOptRef.current?.name;
+    registrarBusca('achou', opcao ? `opcao=${opcao.replace(/\s+/g, ' ').trim()}` : '');
+    setResolving(false); stopResolver(!!ownStream.ephemeral); noteResolverResult(providerId, true); setPulo(null);
     try { const wk = lastOptRef.current?.k; if (wk && wk > 0) localStorage.setItem(optKey, String(wk)); } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownStream]);
@@ -619,12 +694,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   useEffect(() => {
     if (!open || !isNative()) return;
     let handle: { remove: () => void } | null = null;
-    onPlayerQuality?.(({ url, quality }) => {
-      if (!quality) return;
-      setCapturedList(prev => prev.map(s => streamKey(s.url) === streamKey(url) ? { ...s, quality } : s));
-      addStreams([{ url, quality }], tmdbId, type, season, episode);
-    })?.then(h => { handle = h; });
+    onPlayerQuality?.(({ url, quality }) => rotularQualidade(url, quality))?.then(h => { handle = h; });
     return () => { handle?.remove(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tmdbId, type, season, episode]);
 
   // Registra no banco (aba "Bugs") todo erro de reprodução do player nativo, com o
@@ -745,7 +817,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   // tentar (15/09/2026). Sumia calado e parecia "desativado". Vale também com o Servidor escolhido (26/09/2026).
   // Celular: logo abaixo da barra do topo (top-14), sem cobrir o título nem os botões. TV: DENTRO da barra, ao lado
   // dos Links (26/09/2026, pedido dele) — solto por cima, cobria o topo da página do servidor e a setinha não ia lá.
-  const chipResolvedor = !nativeOwn && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && isNative() ? (
+  const chipResolvedor = !nativeOwn && !resolving && !!src && !!resolverPaused && resolverPaused !== 'unavailable' && resolverPaused !== 'sem-titulo' && isNative() ? (
     <div className={`${isTv() ? 'mr-1' : 'absolute left-1/2 -translate-x-1/2 top-14 z-30 shadow-lg'} flex items-center gap-2 rounded-full bg-card/95 border border-border px-3 py-1.5 text-xs animate-fade-in`} data-resolver-paused={resolverPaused}>
       <span className="text-muted-foreground">
         {resolverPaused === 'cooldown' ? `Resolvedor em pausa nesta fonte até ${new Date(resolverCooldownUntil(providerId)).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
@@ -865,6 +937,9 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         ) : resolving ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            {pulo && pulo.para === providerId && (
+              <p className="text-amber-300 text-xs" data-pulo={pulo.de}>{fonteN(pulo.de)} não tem este título — tentando a {fonteN(pulo.para)}</p>
+            )}
             <p className="text-white">{aviso ?? `Procurando o vídeo em ${provider?.name ?? 'servidor'}…`}</p>
             {aviso && (getEntry(tmdbId, type, season, episode)?.positionMs ?? 0) > 0 && (
               <p className="text-white/70 text-xs">Continua de onde parou ({formatPosicao(getEntry(tmdbId, type, season, episode)!.positionMs!)})</p>
@@ -889,10 +964,19 @@ export default function VideoPlayer(props: VideoPlayerProps) {
               <Button size="sm" variant="ghost" className="text-white/70" onClick={() => setSourceOpen(true)} data-tv-autofocus>Trocar fonte</Button>
             </div>
           </div>
-        ) : resolverPaused === 'unavailable' ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center">
-            <p className="text-white">Não identificou vídeo, troque de fonte</p>
-            <p className="text-white/50 text-xs">Tente outra fonte. Se preferir, abra o servidor desta fonte.</p>
+        ) : resolverPaused === 'unavailable' || resolverPaused === 'sem-titulo' ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-white/80 text-sm px-6 text-center" data-resolver-paused={resolverPaused}>
+            {resolverPaused === 'sem-titulo' ? (
+              <>
+                <p className="text-white">Nenhuma fonte tem este título</p>
+                <p className="text-white/50 text-xs">Disseram que não têm: {[...semTituloRef.current].map(fonteN).join(', ')}. Tente outra fonte ou abra o servidor.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-white">Não identificou vídeo, troque de fonte</p>
+                <p className="text-white/50 text-xs">Tente outra fonte. Se preferir, abra o servidor desta fonte.</p>
+              </>
+            )}
             <div className="flex flex-wrap gap-2 justify-center">
               <Button size="sm" onClick={() => setSourceOpen(true)} data-tv-autofocus>Trocar fonte</Button>
               <Button size="sm" variant="ghost" className="text-white/70" onClick={() => { autoArmedRef.current = false; setResolverPaused('server-mode'); }}>Abrir servidor</Button>

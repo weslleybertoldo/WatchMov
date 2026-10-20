@@ -28,6 +28,7 @@ public class MainActivity extends BridgeActivity {
     private View customView;                              // view de fullscreen HTML5 do player
     private WebChromeClient.CustomViewCallback customViewCallback;
     private WebView sniffPopup;                           // popup oculta sniffada durante a captura
+    private final Runnable fecharPopupAoParar = () -> fecharPopup("captura parou");
 
     // Hosts cuja navegação top-frame é permitida (app + login OAuth). Qualquer outra
     // navegação de documento inteiro = popunder/redirect de anúncio → bloqueada.
@@ -112,6 +113,7 @@ public class MainActivity extends BridgeActivity {
         ProxyServer.setWebViewUserAgent(webView.getSettings().getUserAgentString());
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
         webView.getSettings().setSupportMultipleWindows(true);
+        StreamSnifferPlugin.aoParar = fecharPopupAoParar;
 
         webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
             // Popup (window.open): fora da captura recusa (anti-anúncio). DURANTE a
@@ -126,7 +128,7 @@ public class MainActivity extends BridgeActivity {
                 if (!StreamSnifferPlugin.isWatching()) return false;
                 if (!isUserGesture) return false;   // anúncio auto-aberto → bloqueia
                 try {
-                    if (sniffPopup != null) { try { sniffPopup.destroy(); } catch (Exception ignored) {} }
+                    fecharPopup("outro popup");
                     sniffPopup = new WebView(MainActivity.this);
                     android.webkit.WebSettings ps = sniffPopup.getSettings();
                     ps.setJavaScriptEnabled(true);
@@ -143,6 +145,13 @@ public class MainActivity extends BridgeActivity {
                                 StreamSnifferPlugin.inspect(u, req.getRequestHeaders());
                             }
                             return null;
+                        }
+                    });
+                    // A página fechou o popup (window.close) → a WebView oculta morre junto.
+                    sniffPopup.setWebChromeClient(new WebChromeClient() {
+                        @Override
+                        public void onCloseWindow(WebView window) {
+                            if (window == sniffPopup) fecharPopup("a página fechou");
                         }
                     });
                     FrameLayout decor = (FrameLayout) getWindow().getDecorView();
@@ -255,6 +264,26 @@ public class MainActivity extends BridgeActivity {
         // Player nativo por cima ou app pro fundo: a setinha sai e o foco volta pro Ligar.
         TvCursor.desligar("pausa");
         super.onPause();
+    }
+
+    @Override
+    public void onDestroy() {
+        if (StreamSnifferPlugin.aoParar == fecharPopupAoParar) StreamSnifferPlugin.aoParar = null;
+        fecharPopup("tela fechou");
+        super.onDestroy();
+    }
+
+    // Popup oculta da captura (estudo do Nuvio, item 6, 20/10/2026): só morria quando OUTRO popup a substituía, e
+    // mesmo assim ficava presa na tela — uma WebView inteira a mais até o app fechar, na TV de 1 GB. Agora fecha
+    // quando a página pede (window.close), quando a captura para (fechou o título ou trocou de fonte) e com a tela.
+    private void fecharPopup(String motivo) {
+        WebView p = sniffPopup;
+        sniffPopup = null;
+        if (p == null) return;
+        try { p.stopLoading(); } catch (Exception ignored) {}
+        try { if (p.getParent() instanceof android.view.ViewGroup) ((android.view.ViewGroup) p.getParent()).removeView(p); } catch (Exception ignored) {}
+        try { p.destroy(); } catch (Exception ignored) {}
+        android.util.Log.i("WatchMov", "popup oculta fechada: " + motivo);
     }
 
     // Setinha do Servidor ligada: setas e OK são dela (antes do WebView). O resto (Voltar…) segue normal.
