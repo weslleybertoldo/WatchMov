@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
+import { usePaginaVisivel } from '@/hooks/use-pagina-visivel';
 import { WatchItem } from '@/types/watch';
 import {
   MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime, getDetails,
@@ -200,7 +201,11 @@ export default function Index() {
   // fechar o player) → atalho no topo pra voltar pro episódio que está na TV.
   const [castNow, setCastNow] = useState<CastNow | null>(null);
   const [, setTvProgress] = useState(0);   // tempo da TV gravado no "continuar" → redesenha a tela do título
+  // Na TV não tem espelhar (o vídeo já está na tela grande): nada pra perguntar a cada 4 s. Com o player nativo por cima
+  // ou o app no fundo a página fica escondida → para; ao voltar, pergunta na hora (estudo do Nuvio, item 7, 20/10/2026).
+  const paginaVisivel = usePaginaVisivel();
   useEffect(() => {
+    if (isTv() || !paginaVisivel) return;
     let alive = true;
     const tick = () => {
       getCastNow().then(({ now, progressed }) => {
@@ -212,7 +217,7 @@ export default function Index() {
     tick();
     const id = window.setInterval(tick, 4000);
     return () => { alive = false; window.clearInterval(id); };
-  }, []);
+  }, [paginaVisivel]);
 
   // Toca no atalho: abre o título que está na TV já no episódio espelhado — é o
   // mesmo caminho de clicar no episódio, então o player reassume os controles.

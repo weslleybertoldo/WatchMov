@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { trendingToday, type MediaSummary } from '@/lib/tmdb';
 import { isTv } from '@/lib/device';
+import { usePaginaVisivel } from '@/hooks/use-pagina-visivel';
 
 // Cache em memória: ao voltar do detalhe o hero remonta JÁ com os itens (mesma altura
 // na hora). Antes nascia vazio (altura 0) e, quando a TMDB respondia, empurrava a
@@ -25,11 +26,13 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
     return () => { alive = false; };
   }, []);
 
+  // Com o player por cima (página escondida) o carrossel para: ninguém vê e cada troca redesenha o fundo grande.
+  const visivel = usePaginaVisivel();
   useEffect(() => {
-    if (items.length < 2) return;
+    if (items.length < 2 || !visivel) return;
     const t = setInterval(() => setI(p => (p + 1) % items.length), 5000);
     return () => clearInterval(t);
-  }, [items.length]);
+  }, [items.length, visivel]);
 
   if (!items.length) return null;
   const idx = i % items.length;
