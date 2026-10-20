@@ -10,6 +10,7 @@ import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, stre
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
 import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, proximaFonte, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
 import { resolverSerieFshd, FSHD_PRAZO_MS } from '@/lib/fshdApi';
+import { resolverMegaEmbed, MEGA_PRAZO_MS, type MegaResultado as ResultadoHttp } from '@/lib/megaembed';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -492,25 +493,32 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
       }, Math.max(budgetFor(providerId), 210000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo). 25/09/2026: 150→210 s — a opção que mostra progresso (gate da Byse) ganha até +2×30 s
     };
-    // Fonte 3 SÉRIE pela API do site (20/10/2026, pedido dele "1 e 3"): sem WebView. Achou → o link entra como o do
-    // sniffer e o (C) abre o reprodutor; "não tem" → pula pra próxima fonte; o resto (limite 429, servidor que não é o
-    // Fsplay, erro, FSHD_PRAZO_MS) → o WebView de sempre, com o motivo na aba Bugs (RESOLVER_API).
+    // Fontes por HTTP, sem WebView (20/10/2026, pedido dele "1 e 3"): a Fonte 3 na SÉRIE (API do site) e a Fonte 7
+    // (MegaEmbed, filme e série). Achou → os links entram como os do sniffer, a melhor qualidade primeiro, e o (C) abre o
+    // reprodutor nela; "não tem" → pula pra próxima fonte; o resto (limite 429, página fora do previsto, erro, prazo) → o
+    // WebView de sempre, com o motivo na aba Bugs (RESOLVER_API).
     let vivo = true;
     let prazo = 0;
     const sinal = { cancelado: false };
-    if (providerId === 'fshd' && type === 'tv' && imdbId && season != null && episode != null) {
+    const viaHttp: ((s: { cancelado: boolean }) => Promise<ResultadoHttp>) | null =
+      providerId === 'fshd' && type === 'tv' && imdbId && season != null && episode != null
+        ? s => resolverSerieFshd({ imdbId, season, episode }, s).then((r): ResultadoHttp => (r.tipo === 'achou' ? { tipo: 'achou', links: [r.link] } : r))
+        : providerId === 'megaembed' && tmdbId
+          ? s => resolverMegaEmbed({ tmdbId, type, season, episode }, s)
+          : null;
+    if (viaHttp) {
       const cair = (motivo: string) => {
         if (!vivo || sinal.cancelado) return;
         sinal.cancelado = true; window.clearTimeout(prazo);
-        logPlaybackError({ url: embedUrl!, code: 0, name: 'RESOLVER_API', cause: `fonte=fshd webview motivo=${motivo}`, title });
+        logPlaybackError({ url: embedUrl!, code: 0, name: 'RESOLVER_API', cause: `fonte=${providerId} webview motivo=${motivo}`, title });
         iniciarWebView();
       };
-      prazo = window.setTimeout(() => cair('prazo'), FSHD_PRAZO_MS);
-      resolverSerieFshd({ imdbId, season, episode }, sinal).then(r => {
+      prazo = window.setTimeout(() => cair('prazo'), providerId === 'megaembed' ? MEGA_PRAZO_MS : FSHD_PRAZO_MS);
+      viaHttp(sinal).then(r => {
         if (!vivo || sinal.cancelado) return;
         if (r.tipo === 'webview') { cair(r.motivo); return; }
         window.clearTimeout(prazo);
-        if (r.tipo === 'achou') receberLink(r.link);
+        if (r.tipo === 'achou') r.links.forEach(receberLink);
         else pularFonteRef.current(providerId, r.motivo);
       }).catch(e => cair('erro ' + String(e).slice(0, 80)));
     } else iniciarWebView();
@@ -544,7 +552,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     return () => { alive = false; handle?.remove(); };
   }, [open, providerId]);
 
-  // Pulo automático: a fonte `de` não tem o título → tenta a próxima (Fontes 1 a 4, na ordem da tela, dando a volta).
+  // Pulo automático: a fonte `de` não tem o título → tenta a próxima (Fontes 1 a 4 e a 7, na ordem da tela, dando a volta).
   // A troca NÃO vira a fonte escolhida do título (srcKey): quem escolhe é ele; o pulo só procura. Nenhuma sobrando →
   // volta pra fonte em que começou e mostra "Nenhuma fonte tem este título".
   const pularFonte = (de: string, motivo: string) => {
