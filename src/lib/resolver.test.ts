@@ -59,6 +59,122 @@ describe('resolver oculto (regras puras)', () => {
     expect(logs).toContain('WMOPT|click|k=1|name=Abyss');
   });
 
+  // 20/10/2026, emulador: o "Dublado" foi clicado 1× com a página ainda carregando (readyState=loading), antes de o
+  // filme.js ligar o clique → nunca ficou ativo, nenhum servidor foi clicado e o filme estourava os 90 s (clicks=0).
+  it('Fonte 3 (FS/HD): repete o clique no "Dublado" até a página ligar o botão', () => {
+    document.body.innerHTML = `<div class="player-options-audios">
+      <div class="audio-selector active" data-lang="2">Legendado</div>
+      <div class="audio-selector" data-lang="1">Dublado</div>
+    </div>
+    <div class="player-options-servers active" data-lang="2"><div class="server-selector" data-id="226224">FsPlay</div></div>
+    <div class="player-options-servers hidden" data-lang="1">
+      <div class="server-selector" data-id="226227">FsPlay</div>
+      <div class="server-selector" data-id="226221">Abyss</div>
+    </div>`;
+    const aud = document.querySelectorAll('.audio-selector');
+    const grupos = document.querySelectorAll('.player-options-servers');
+    const clicked: string[] = [];
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+      expect(aud[1].className).not.toContain('active');   // clicou cedo: a página ainda não tinha ligado o botão
+      // agora o JS da página liga os cliques (como o filme.js depois do carregamento)
+      aud[1].addEventListener('click', () => {
+        aud[0].className = 'audio-selector'; aud[1].className = 'audio-selector active';
+        grupos[0].className = 'player-options-servers hidden'; grupos[1].className = 'player-options-servers active';
+      });
+      document.querySelectorAll('.server-selector').forEach(o => o.addEventListener('click', () => clicked.push(o.getAttribute('data-id') || '')));
+      vi.advanceTimersByTime(6000);
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(aud[1].className).toContain('active');
+    expect(logs).toContain('WMOPT|n=2|names=FsPlay»Abyss');
+    expect(clicked).toEqual(['226227']);
+  });
+
+  it('Fonte 3 (FS/HD): título só legendado avisa "não tem" na hora (não espera os 90 s)', () => {
+    document.body.innerHTML = `<div class="audio-selector active" data-lang="2">Legendado</div>
+      <div class="player-options-servers active" data-lang="2"><div class="server-selector" data-id="1">FsPlay</div></div>`;
+    const tituloAntes = document.title;
+    document.title = 'FSHD — Filme Só Legendado';
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+      vi.advanceTimersByTime(1500);
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+      document.title = tituloAntes;
+    }
+    expect(logs.filter(l => l.startsWith('WMOPT|none'))).toEqual(['WMOPT|none|reason=f3-so-legendado|host=' + location.hostname]);
+  });
+
+  it('Fonte 3: "só legendado" vale só na página do FS/HD (outro site com .server-selector não pula)', () => {
+    document.body.innerHTML = `<div class="server-selector" data-id="1">Servidor 1</div>`;
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+      vi.advanceTimersByTime(1500);
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(logs.filter(l => l.startsWith('WMOPT|none'))).toEqual([]);
+  });
+
+  // O FsPlay do filme manda pra <n>.xyz/bounce/<hash> e esse endereço responde 404 vazio (20/10/2026, até no WebView):
+  // a opção morre na hora em vez de gastar os 30 s dela.
+  it('Fonte 3 (FS/HD): FsPlay em /bounce/ vazio (404) = opção morta na hora', () => {
+    const antes = location.pathname;
+    window.history.pushState({}, '', '/bounce/548a4c19');
+    document.body.innerHTML = '';
+    Object.defineProperty(document, 'referrer', { value: 'https://fshd.link/', configurable: true });
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '2'))();
+      vi.advanceTimersByTime(1500);
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      window.history.pushState({}, '', antes);
+      Object.defineProperty(document, 'referrer', { value: '', configurable: true });
+    }
+    expect(logs.filter(l => l.startsWith('WMOPT|dead'))).toEqual(['WMOPT|dead|k=2|reason=fsplay-404']);
+  });
+
   it('ABYS: 1 fluxo aberto (bytes=N-); os laços paralelos de pedaço fechado ficam de reserva', () => {
     const s = buildAbyssScript('abc123');
     expect(ABYSS_PUMPS).toBeGreaterThanOrEqual(2);

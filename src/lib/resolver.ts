@@ -64,6 +64,9 @@ export function clickStepsFor(providerId?: string): string[] {
 // 25/09/2026: seletor que pode precisar de mais de 1 toque (no PC o play da UPNS abriu 2 anúncios antes de tocar).
 // Toca de novo só se continuar visível, com 3 s entre toques.
 export const STEPS_REPEAT: Record<string, number> = { '#player-button': 3 };
+// 20/10/2026: "Dublado" da Fonte 3 repete o toque até a página ligar o botão (o 1º saía com a página carregando).
+export const FSDUB_TENTATIVAS = 8;
+export const FSDUB_INTERVALO_MS = 1500;
 // Clique que põe o player pra carregar (gate da Byse / play da UPNS) = progresso da opção (WMOPT|progress|stage=play).
 const STEPS_PLAY = ['.captcha-gate__play', '#player-button'];
 // Player dentro do frame (Byse / UPNS): aparecer = progresso da opção (WMOPT|progress|stage=player).
@@ -129,6 +132,12 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     // tick (não no document-start): no aparelho o #id do vídeo ainda não estava na URL quando o script começou.
     + "var upns=function(){if(done['__upns__']||!/upns/.test(location.hostname)||location.hash.length<2)return;done['__upns__']=1;var rh='';try{rh=new URL(document.referrer).hostname.replace(/^www\\./,'')}catch(_){}"
     + "fetch('/api/v1/video?id='+encodeURIComponent(location.hash.slice(1))+'&w='+innerWidth+'&h='+innerHeight+'&r='+encodeURIComponent(rh)).then(function(r){try{console.log('WMOPT|probe|k='+K+'|status='+r.status)}catch(_){}if(r.status===404){try{console.log('WMOPT|dead|k='+K+'|reason=upns-404')}catch(_){}}}).catch(function(e){try{console.log('WMOPT|probe|k='+K+'|erro='+String(e).slice(0,60))}catch(_){}});};"
+    // FsPlay do FS/HD (20/10/2026): o servidor manda pra <n>.xyz/bounce/<hash>, que responde 404 vazio (até no WebView) →
+    // a opção morre na hora (o nativo pula pra próxima, ex. Abyss) em vez de gastar os 30 s dela. Só no frame que veio
+    // do fshd.link; o status vem do PerformanceNavigationTiming (sem ele, página vazia = 404).
+    + "var fsBounce=function(){if(done['__bounce__']||location.pathname.indexOf('/bounce/')!==0||!/fshd/.test(document.referrer||'')||document.readyState!=='complete')return;"
+    + "var st=0;try{var nv=performance.getEntriesByType('navigation')[0];st=(nv&&nv.responseStatus)||0}catch(_){}var b=document.body;var vazio=!b||(!b.children.length&&!(b.textContent||'').trim());"
+    + "if(st>=400||(!st&&vazio)){done['__bounce__']=1;try{console.log('WMOPT|dead|k='+K+'|reason=fsplay-404')}catch(_){}}};"
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
@@ -144,15 +153,19 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var os=[],out=0;for(var ai=0;ai<all.length;ai++){var g=all[ai].closest?all[ai].closest('.players_select_items'):null;var gt=g?g.getAttribute('data-target'):null;if(tg===null||gt===null||gt===tg)os.push(all[ai]);else out++;}"
     + "if(dub&&String(dub.className).indexOf('active')<0&&!done['__dub__']){done['__dub__']=1;fire(dub);}return {os:os,out:out,kind:'ep'};};"
     // (C) FS/HD (Fonte 5, 25/09/2026): áudio em .audio-selector (Legendado/Dublado) e servidores em .server-selector
-    // (Abyss/Streamwish). Escolhe "Dublado" 1× e cicla os servidores visíveis; sem Dublado = só legendado → filtrado.
+    // (Abyss/Streamwish). Escolhe "Dublado" e cicla os servidores visíveis; sem Dublado = só legendado → filtrado.
+    // 20/10/2026 (emulador): o clique único no "Dublado" saía com a página ainda carregando, antes de o filme.js ligar o
+    // botão → nunca ficava ativo e o filme estourava os 90 s sem clicar servidor. Agora repete até ficar ativo
+    // (FSDUB_TENTATIVAS, FSDUB_INTERVALO_MS entre toques). Página do FS/HD só com Legendado = "não tem" na hora.
+    + "var isFS=function(){return /fshd/.test(location.hostname)||/^FSHD\\b/.test(document.title||'')};"
     + "var findFS=function(){var aud=document.querySelectorAll('.audio-selector'),srv=document.querySelectorAll('.server-selector');if(!aud.length&&!srv.length)return null;"
     + "var dub=null;for(var i=0;i<aud.length;i++){if((aud[i].textContent||'').toLowerCase().indexOf('dublado')>=0)dub=aud[i];}"
-    + "if(!dub)return {os:[],out:srv.length||1,kind:'fs'};"
-    + "if(String(dub.className).indexOf('active')<0){if(!done['__fsdub__']){done['__fsdub__']=1;fire(dub);}return {os:[],out:0,kind:'fs'};}"
+    + "if(!dub){if(!done['__fsleg__']&&aud.length&&isFS()&&document.readyState==='complete'){done['__fsleg__']=1;try{console.log('WMOPT|none|reason=f3-so-legendado|host='+location.hostname)}catch(_){}}return {os:[],out:srv.length||1,kind:'fs'};}"
+    + "if(String(dub.className).indexOf('active')<0){var nd=done['__fsdub__']||0;if(nd<" + FSDUB_TENTATIVAS + "&&Date.now()-(lastAt['__fsdub__']||0)>=" + FSDUB_INTERVALO_MS + "){done['__fsdub__']=nd+1;lastAt['__fsdub__']=Date.now();fire(dub);}return {os:[],out:0,kind:'fs'};}"
     + "var os=[];for(var j=0;j<srv.length;j++){var g=srv[j].closest?srv[j].closest('.player-options-servers'):null;if(!g||String(g.className).indexOf('hidden')<0)os.push(srv[j]);}return {os:os,out:0,kind:'fs'};};"
     // nome curto da opcao da embedplay.one: "Opção 1 (ABYS)" → "ABYS"
     + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
-    + 'var tick=function(){try{upns();'
+    + 'var tick=function(){try{upns();fsBounce();'
     + PLAY_MUTED
     + "if(!done['__pp__']&&document.querySelector(" + JSON.stringify(PLAYER_MARKERS) + ")){done['__pp__']=1;prog('player');}"
     // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
