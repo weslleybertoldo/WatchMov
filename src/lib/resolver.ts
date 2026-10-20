@@ -64,6 +64,9 @@ export function clickStepsFor(providerId?: string): string[] {
 // 25/09/2026: seletor que pode precisar de mais de 1 toque (no PC o play da UPNS abriu 2 anúncios antes de tocar).
 // Toca de novo só se continuar visível, com 3 s entre toques.
 export const STEPS_REPEAT: Record<string, number> = { '#player-button': 3 };
+// 20/10/2026: "Dublado" da Fonte 3 repete o toque até a página ligar o botão (o 1º saía com a página carregando).
+export const FSDUB_TENTATIVAS = 8;
+export const FSDUB_INTERVALO_MS = 1500;
 // Clique que põe o player pra carregar (gate da Byse / play da UPNS) = progresso da opção (WMOPT|progress|stage=play).
 const STEPS_PLAY = ['.captcha-gate__play', '#player-button'];
 // Player dentro do frame (Byse / UPNS): aparecer = progresso da opção (WMOPT|progress|stage=player).
@@ -122,13 +125,23 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
   return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
+    // 20/10/2026 (emulador): na página do FS/HD o console.log da página principal não chega ao app (some antes do
+    // onConsoleMessage — testado com log manual), só o de iframes. Os recados WMOPT vão por um iframe em branco
+    // criado na hora (mesma origem); se não der, pelo console da própria página.
+    + "var sayF=null;var say=function(m){try{if(!sayF||!sayF.contentWindow){sayF=document.createElement('iframe');sayF.style.display='none';sayF.setAttribute('aria-hidden','true');(document.body||document.documentElement).appendChild(sayF);}sayF.contentWindow.console.log(m);return}catch(_){}try{console.log(m)}catch(_){}};"
     + 'var REP=' + JSON.stringify(STEPS_REPEAT) + ',PLAY=' + JSON.stringify(STEPS_PLAY) + ',DEAD=' + JSON.stringify(DEAD_TEXTS) + ',lastAt={};'
-    + "var prog=function(s){try{console.log('WMOPT|progress|k='+K+'|stage='+s+'|host='+location.hostname)}catch(_){}};"
+    + "var prog=function(s){try{say('WMOPT|progress|k='+K+'|stage='+s+'|host='+location.hostname)}catch(_){}};"
     // UPNS: pergunta direto à API se o vídeo existe (o play dela não sai com clique automático no celular — 25/09/2026,
     // prova no aparelho: tocou o botão e nada). 404 = apagado → a opção morre na hora em vez de gastar 30 s. Roda no
     // tick (não no document-start): no aparelho o #id do vídeo ainda não estava na URL quando o script começou.
     + "var upns=function(){if(done['__upns__']||!/upns/.test(location.hostname)||location.hash.length<2)return;done['__upns__']=1;var rh='';try{rh=new URL(document.referrer).hostname.replace(/^www\\./,'')}catch(_){}"
-    + "fetch('/api/v1/video?id='+encodeURIComponent(location.hash.slice(1))+'&w='+innerWidth+'&h='+innerHeight+'&r='+encodeURIComponent(rh)).then(function(r){try{console.log('WMOPT|probe|k='+K+'|status='+r.status)}catch(_){}if(r.status===404){try{console.log('WMOPT|dead|k='+K+'|reason=upns-404')}catch(_){}}}).catch(function(e){try{console.log('WMOPT|probe|k='+K+'|erro='+String(e).slice(0,60))}catch(_){}});};"
+    + "fetch('/api/v1/video?id='+encodeURIComponent(location.hash.slice(1))+'&w='+innerWidth+'&h='+innerHeight+'&r='+encodeURIComponent(rh)).then(function(r){try{say('WMOPT|probe|k='+K+'|status='+r.status)}catch(_){}if(r.status===404){try{say('WMOPT|dead|k='+K+'|reason=upns-404')}catch(_){}}}).catch(function(e){try{say('WMOPT|probe|k='+K+'|erro='+String(e).slice(0,60))}catch(_){}});};"
+    // FsPlay do FS/HD (20/10/2026): o servidor manda pra <n>.xyz/bounce/<hash>, que responde 404 vazio (até no WebView) →
+    // a opção morre na hora (o nativo pula pra próxima, ex. Abyss) em vez de gastar os 30 s dela. Só no frame que veio
+    // do fshd.link; o status vem do PerformanceNavigationTiming (sem ele, página vazia = 404).
+    + "var fsBounce=function(){if(done['__bounce__']||location.pathname.indexOf('/bounce/')!==0||!/fshd/.test(document.referrer||'')||document.readyState!=='complete')return;"
+    + "var st=0;try{var nv=performance.getEntriesByType('navigation')[0];st=(nv&&nv.responseStatus)||0}catch(_){}var b=document.body;var vazio=!b||(!b.children.length&&!(b.textContent||'').trim());"
+    + "if(st>=400||(!st&&vazio)){done['__bounce__']=1;try{say('WMOPT|dead|k='+K+'|reason=fsplay-404')}catch(_){}}};"
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var norm=function(t){var ls=(t||'').split(String.fromCharCode(10));for(var i=0;i<ls.length;i++){var L=ls[i].split('|').join(' ').split('»').join(' ').trim();if(L)return L.slice(0,40);}return '';};"
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
@@ -144,31 +157,35 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var os=[],out=0;for(var ai=0;ai<all.length;ai++){var g=all[ai].closest?all[ai].closest('.players_select_items'):null;var gt=g?g.getAttribute('data-target'):null;if(tg===null||gt===null||gt===tg)os.push(all[ai]);else out++;}"
     + "if(dub&&String(dub.className).indexOf('active')<0&&!done['__dub__']){done['__dub__']=1;fire(dub);}return {os:os,out:out,kind:'ep'};};"
     // (C) FS/HD (Fonte 5, 25/09/2026): áudio em .audio-selector (Legendado/Dublado) e servidores em .server-selector
-    // (Abyss/Streamwish). Escolhe "Dublado" 1× e cicla os servidores visíveis; sem Dublado = só legendado → filtrado.
+    // (Abyss/Streamwish). Escolhe "Dublado" e cicla os servidores visíveis; sem Dublado = só legendado → filtrado.
+    // 20/10/2026 (emulador): o clique único no "Dublado" saía com a página ainda carregando, antes de o filme.js ligar o
+    // botão → nunca ficava ativo e o filme estourava os 90 s sem clicar servidor. Agora repete até ficar ativo
+    // (FSDUB_TENTATIVAS, FSDUB_INTERVALO_MS entre toques). Página do FS/HD só com Legendado = "não tem" na hora.
+    + "var isFS=function(){return /fshd/.test(location.hostname)||/^FSHD\\b/.test(document.title||'')};"
     + "var findFS=function(){var aud=document.querySelectorAll('.audio-selector'),srv=document.querySelectorAll('.server-selector');if(!aud.length&&!srv.length)return null;"
     + "var dub=null;for(var i=0;i<aud.length;i++){if((aud[i].textContent||'').toLowerCase().indexOf('dublado')>=0)dub=aud[i];}"
-    + "if(!dub)return {os:[],out:srv.length||1,kind:'fs'};"
-    + "if(String(dub.className).indexOf('active')<0){if(!done['__fsdub__']){done['__fsdub__']=1;fire(dub);}return {os:[],out:0,kind:'fs'};}"
+    + "if(!dub){if(!done['__fsleg__']&&aud.length&&isFS()&&document.readyState==='complete'){done['__fsleg__']=1;try{say('WMOPT|none|reason=f3-so-legendado|host='+location.hostname)}catch(_){}}return {os:[],out:srv.length||1,kind:'fs'};}"
+    + "if(String(dub.className).indexOf('active')<0){var nd=done['__fsdub__']||0;if(nd<" + FSDUB_TENTATIVAS + "&&Date.now()-(lastAt['__fsdub__']||0)>=" + FSDUB_INTERVALO_MS + "){done['__fsdub__']=nd+1;lastAt['__fsdub__']=Date.now();fire(dub);}return {os:[],out:0,kind:'fs'};}"
     + "var os=[];for(var j=0;j<srv.length;j++){var g=srv[j].closest?srv[j].closest('.player-options-servers'):null;if(!g||String(g.className).indexOf('hidden')<0)os.push(srv[j]);}return {os:os,out:0,kind:'fs'};};"
     // nome curto da opcao da embedplay.one: "Opção 1 (ABYS)" → "ABYS"
     + "var epName=function(o){var n=o.querySelector('.player_select_name');var t=norm((n||o).textContent);var a=t.indexOf('('),b=t.indexOf(')');return (a>=0&&b>a)?t.slice(a+1,b).slice(0,40):t;};"
-    + 'var tick=function(){try{upns();'
+    + 'var tick=function(){try{upns();fsBounce();'
     + PLAY_MUTED
     + "if(!done['__pp__']&&document.querySelector(" + JSON.stringify(PLAYER_MARKERS) + ")){done['__pp__']=1;prog('player');}"
     // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
-    + "if(done['__pp__']&&!done['__dead__']&&document.body){var bt=document.body.innerText||document.body.textContent||'';for(var di=0;di<DEAD.length;di++){if(bt.indexOf(DEAD[di])>=0){done['__dead__']=1;try{console.log('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}break;}}}"
+    + "if(done['__pp__']&&!done['__dead__']&&document.body){var bt=document.body.innerText||document.body.textContent||'';for(var di=0;di<DEAD.length;di++){if(bt.indexOf(DEAD[di])>=0){done['__dead__']=1;try{say('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}break;}}}"
     + "var f=findPF()||findEP()||findFS();var os=f?f.os:[],out=f?f.out:0;"
     // 17/10/2026 (pedido dele: "Deixa sempre pré selecionado a opção BYSE, se não tiver nas opções aí pode manter como
     // hoje"): na embedplay.one a BYSE vai pro topo da lista — K=1 passa a ser ela; as outras seguem na ordem de antes.
     + "if(f&&f.kind==='ep'&&os.length>1){for(var bi=1;bi<os.length;bi++){if(/byse/i.test(epName(os[bi]))){os=[os[bi]].concat(os.slice(0,bi),os.slice(bi+1));break;}}}"
     // embedplay.one esconde a lista atras de "Mostrar Opções" (.changeOptions) — revela uma vez
     + "if(f&&f.kind==='ep'){var co=document.querySelector('.changeOptions');if(co&&!done['__show__']&&vis(co)&&String(co.className).indexOf('hidden')<0){done['__show__']=1;fire(co);}}"
-    + "if(f&&!os.length&&out&&!reported){reported=true;try{console.log('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"
-    + "if(os.length){var nm=f.kind==='ep'?os.map(epName):names(os);if(!reported){reported=true;try{console.log('WMOPT|n='+os.length+'|names='+nm.join('»'));if(out)console.log('WMOPT|filtered|nao-dublado='+out+'|restou='+os.length)}catch(_){}}"
+    + "if(f&&!os.length&&out&&!reported){reported=true;try{say('WMOPT|filtered|nao-dublado='+out+'|restou=0')}catch(_){}}"
+    + "if(os.length){var nm=f.kind==='ep'?os.map(epName):names(os);if(!reported){reported=true;try{say('WMOPT|n='+os.length+'|names='+nm.join('»'));if(out)say('WMOPT|filtered|nao-dublado='+out+'|restou='+os.length)}catch(_){}}"
     + "var ki=K-1;if(ki<0)ki=0;if(ki>=os.length)ki=os.length-1;"
     + "if(!done['__opt__']){done['__opt__']=1;var emb=os[ki].getAttribute('data-embed')||'';"
-    + "if(emb.indexOf('superflixapi.')>=0){try{console.log('WMOPT|skip|k='+K+'|name='+nm[ki]+'|reason=turnstile')}catch(_){}return;}"
-    + "try{console.log('WMOPT|click|k='+K+'|name='+nm[ki])}catch(_){}fire(os[ki]);}return;}"
+    + "if(emb.indexOf('superflixapi.')>=0){try{say('WMOPT|skip|k='+K+'|name='+nm[ki]+'|reason=turnstile')}catch(_){}return;}"
+    + "try{say('WMOPT|click|k='+K+'|name='+nm[ki])}catch(_){}fire(os[ki]);}return;}"
     // 1 clique por tick; seletor do STEPS_REPEAT pode repetir (até N, 3 s entre toques, só se seguir visível)
     + 'for(var i=0;i<STEPS.length;i++){var st=STEPS[i];var dn=done[st]||0;if(dn>=(REP[st]||1)||(dn&&Date.now()-(lastAt[st]||0)<3000))continue;var el=null;'
     + "if(st.indexOf('text:')===0){el=byText(st.slice(5));}else{var l=document.querySelectorAll(st);for(var j=0;j<l.length;j++){if(vis(l[j])){el=l[j];break;}}}"

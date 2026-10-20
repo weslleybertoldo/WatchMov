@@ -9,6 +9,7 @@ import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
 import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl, isExpiredUrl, canRecaptureAgain } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
 import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, proximaFonte, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
+import { resolverSerieFshd, FSHD_PRAZO_MS } from '@/lib/fshdApi';
 import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
@@ -306,6 +307,22 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     return () => { dead = true; handle?.remove(); awaitingNextRef.current = false; };
   }, [open]);
 
+  // Link achado AO VIVO — pelo sniffer do WebView (B) ou por uma fonte resolvida por HTTP (R, Fonte 3 série) — entra
+  // na lista do título, no cache e conta pro auto-abrir (C).
+  const receberLink = (rr: SniffResult) => {
+    // Carimba o PROVEDOR ativo na captura (o link nasceu do iframe deste provedor):
+    // é o que a tag do picker mostra (SuperFlix/EmbedPlay), mais confiável que
+    // adivinhar pelo host (que rotaciona).
+    const r = { ...rr, provider: rr.provider || providerId, option: rr.option };
+    // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar, SEM perder
+    // headers/quality (os headers levam o UA real do WebView pro replay do proxy; 14/09/2026).
+    // + COMPLETO sintetizado (par vídeo/áudio do mesmo player, ver capturedList.ts): entra
+    // na própria lista; recaptura do par ATUALIZA a entrada (mesma chave) em vez de duplicar.
+    setCapturedList(prev => withCompletos(mergeCaptured(prev, r)));
+    if (!r.ephemeral) addStreams([r], tmdbId, type, season, episode);   // efêmero (/abyss/) nunca persiste
+    freshKeysRef.current.add(streamKey(r.url));   // capturado AO VIVO (conta pro auto-abrir)
+  };
+
   // (B) Lista salva + captura passiva — roda também ao trocar de provedor (embedUrl),
   // acumulando links sem mexer no que já está tocando/escolhido.
   useEffect(() => {
@@ -315,17 +332,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     let stop = () => {};
     watchStream(rr => {
       if (!alive) return;
-      // Carimba o PROVEDOR ativo na captura (o link nasceu do iframe deste provedor):
-      // é o que a tag do picker mostra (SuperFlix/EmbedPlay), mais confiável que
-      // adivinhar pelo host (que rotaciona).
-      const r = { ...rr, provider: rr.provider || providerId, option: rr.option };
-      // dedup pela chave (token muda) — atualiza a URL fresca em vez de duplicar, SEM perder
-      // headers/quality (os headers levam o UA real do WebView pro replay do proxy; 14/09/2026).
-      // + COMPLETO sintetizado (par vídeo/áudio do mesmo player, ver capturedList.ts): entra
-      // na própria lista; recaptura do par ATUALIZA a entrada (mesma chave) em vez de duplicar.
-      setCapturedList(prev => withCompletos(mergeCaptured(prev, r)));
-      if (!r.ephemeral) addStreams([r], tmdbId, type, season, episode);   // efêmero (/abyss/) nunca persiste
-      freshKeysRef.current.add(streamKey(r.url));   // capturado AO VIVO (conta pro auto-abrir)
+      receberLink(rr);
     }, ({ url, quality }) => { if (alive) rotularQualidade(url, quality); })   // a resolução chega depois do link (20/10/2026)
       .then(fn => { if (alive) stop = fn; else fn(); });
     return () => { alive = false; stop(); };
@@ -469,21 +476,46 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     setResolverPaused(null);
     resolveTriedRef.current = embedUrl!;
     setResolving(true); setOptProgress(null);
-    startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, startOpt: (() => {
-      // EmbedPlay: começa SEMPRE pela 1ª da lista, que agora é a BYSE quando ela existe (pedido dele 17/10/2026); a opção
-      // que venceu antes neste título não vale aqui (ela falava da ordem antiga, ABYS antes da BYSE).
-      if (providerId === 'embedplayapi') return undefined;
-      try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; }
-    })() }).catch(() => setResolving(false));
     buscaRef.current = { fonte: providerId, t0: Date.now(), url: embedUrl! };
-    const t = window.setTimeout(() => {
-      if (!resolvingRef.current) return;
-      registrarBusca('estourou');
-      setResolving(false); stopResolver(); noteResolverResult(providerId, false);
-      setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
-    }, Math.max(budgetFor(providerId), 210000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo). 25/09/2026: 150→210 s — a opção que mostra progresso (gate da Byse) ganha até +2×30 s
+    let t = 0;
+    const iniciarWebView = () => {
+      startResolver({ url: embedUrl!, referer: window.location.origin + '/', providerId, key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, startOpt: (() => {
+        // EmbedPlay: começa SEMPRE pela 1ª da lista, que agora é a BYSE quando ela existe (pedido dele 17/10/2026); a opção
+        // que venceu antes neste título não vale aqui (ela falava da ordem antiga, ABYS antes da BYSE).
+        if (providerId === 'embedplayapi') return undefined;
+        try { const v = parseInt(localStorage.getItem(optKey) || '', 10); return v > 0 ? v : undefined; } catch { return undefined; }
+      })() }).catch(() => setResolving(false));
+      t = window.setTimeout(() => {
+        if (!resolvingRef.current) return;
+        registrarBusca('estourou');
+        setResolving(false); stopResolver(); noteResolverResult(providerId, false);
+        setResolverPaused('tried');   // "Não achou o vídeo sozinho · Tentar de novo"
+      }, Math.max(budgetFor(providerId), 210000) + 1500);   // v4.57: backstop; o fim real vem do resolverEvent{type:'timeout'} nativo (ciclo de opções pode passar do budget fixo). 25/09/2026: 150→210 s — a opção que mostra progresso (gate da Byse) ganha até +2×30 s
+    };
+    // Fonte 3 SÉRIE pela API do site (20/10/2026, pedido dele "1 e 3"): sem WebView. Achou → o link entra como o do
+    // sniffer e o (C) abre o reprodutor; "não tem" → pula pra próxima fonte; o resto (limite 429, servidor que não é o
+    // Fsplay, erro, FSHD_PRAZO_MS) → o WebView de sempre, com o motivo na aba Bugs (RESOLVER_API).
+    let vivo = true;
+    let prazo = 0;
+    const sinal = { cancelado: false };
+    if (providerId === 'fshd' && type === 'tv' && imdbId && season != null && episode != null) {
+      const cair = (motivo: string) => {
+        if (!vivo || sinal.cancelado) return;
+        sinal.cancelado = true; window.clearTimeout(prazo);
+        logPlaybackError({ url: embedUrl!, code: 0, name: 'RESOLVER_API', cause: `fonte=fshd webview motivo=${motivo}`, title });
+        iniciarWebView();
+      };
+      prazo = window.setTimeout(() => cair('prazo'), FSHD_PRAZO_MS);
+      resolverSerieFshd({ imdbId, season, episode }, sinal).then(r => {
+        if (!vivo || sinal.cancelado) return;
+        if (r.tipo === 'webview') { cair(r.motivo); return; }
+        window.clearTimeout(prazo);
+        if (r.tipo === 'achou') receberLink(r.link);
+        else pularFonteRef.current(providerId, r.motivo);
+      }).catch(e => cair('erro ' + String(e).slice(0, 80)));
+    } else iniciarWebView();
     // keep = o reprodutor abriu por link efêmero (/abyss/): a página oculta segue viva como motor.
-    return () => { window.clearTimeout(t); stopResolver(keepEngineRef.current); };
+    return () => { vivo = false; sinal.cancelado = true; window.clearTimeout(prazo); window.clearTimeout(t); stopResolver(keepEngineRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, embedUrl, ownStream, preferIframe, resolverRetry]);
 
