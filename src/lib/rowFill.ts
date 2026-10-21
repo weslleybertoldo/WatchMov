@@ -1,37 +1,38 @@
-// Linhas de gênero da home (filmes/séries/animes) com tamanho garantido.
+// Linhas de gênero da home (filmes/séries/animes) sem título repetido.
 //
-// A regra "cada título só na linha do seu gênero predominante" (pra não repetir
-// Superman em Ação+Aventura+Ficção) deixava linhas quase vazias na página 1 da TMDB:
-// Fantasia (filmes) ficava com 2 cards, Família/Mistério (séries) com 2–3, Aventura e
-// Romance com 6 (medido em 07/09/2026 com a chave do app). Aqui: busca até
-// ROW_MAX_PAGES páginas enquanto faltam títulos "primários" e, se mesmo assim não fecha
-// ROW_MIN, completa com os títulos do gênero que também moram em outra linha — repetir
-// um card é melhor que uma linha com 2. Linhas que já fecham na página 1 não mudam.
+// Cada título aparece só na linha da sua categoria principal (`isPrimaryGenre`) e a
+// linha nunca é completada com título de outra categoria (pedido dele 20/10/2026 —
+// antes completava, e Doraemon aparecia em Ação & Aventura e em Família). A página 1
+// da TMDB não basta pros gêneros menos comuns (Mistério e Família, em séries, fecham
+// 10 só na página 4–5, medido em 20/10/2026): busca até ROW_MAX_PAGES páginas enquanto
+// faltam títulos. Linha que nem assim chega a ROW_MIN_SHOW volta vazia e a MediaRow
+// não desenha (em animes, Guerra & Política tem 1 título).
 
 export const ROW_MIN = 10;        // a MediaRow mostra 10 cards
-export const ROW_MAX_PAGES = 3;
+export const ROW_MIN_SHOW = 5;    // menos que isso a linha some
+export const ROW_MAX_PAGES = 5;
 
 export async function fillRow<T extends { tmdbId: number }>(
   fetchPage: (page: number) => Promise<T[]>,
   keep: (item: T) => boolean,
   min = ROW_MIN,
   maxPages = ROW_MAX_PAGES,
+  minShow = ROW_MIN_SHOW,
 ): Promise<T[]> {
-  const primary: T[] = [];
-  const extra: T[] = [];
+  const out: T[] = [];
   const seen = new Set<number>();
-  for (let page = 1; page <= maxPages && primary.length < min; page++) {
+  for (let page = 1; page <= maxPages && out.length < min; page++) {
     let items: T[];
     try { items = await fetchPage(page); }
     catch (e) { if (page === 1) throw e; break; }   // página extra falhou: fica com o que tem
     if (!items.length) break;
     for (const m of items) {
-      if (seen.has(m.tmdbId)) continue;
+      if (seen.has(m.tmdbId) || !keep(m)) continue;
       seen.add(m.tmdbId);
-      (keep(m) ? primary : extra).push(m);
+      out.push(m);
     }
   }
-  return primary.length >= min ? primary : [...primary, ...extra];
+  return out.length >= minShow ? out : [];
 }
 
 /** O título pertence à linha `genreId` quando esse é o 1º gênero DELE que tem linha
