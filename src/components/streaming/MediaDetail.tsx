@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast } from 'lucide-react';
-import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress } from '@/lib/watchProgress';
+import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress, continuarDe } from '@/lib/watchProgress';
+import { latestPosition } from '@/lib/streamCache';
 import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
 import type { DownloadItem } from '@/lib/downloader';
@@ -302,18 +303,10 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [details, autoPlay, isSeries]);
 
-  // Próximo episódio não assistido (continuar de onde parou, séries).
-  const nextSeriesEp = (): { season: number; episode: number } => {
-    const seasons = liveItem?.seasons ? [...liveItem.seasons].sort((a, b) => a.number - b.number) : [];
-    for (const s of seasons) {
-      const watched = episodesWatched(s);
-      for (let ep = 1; ep <= s.totalEpisodes; ep++) if (!watched.includes(ep)) return { season: s.number, episode: ep };
-    }
-    return { season: 1, episode: 1 };
-  };
-  // Botão principal = servidores embed (filme retoma via resumeAt; série continua no próximo ep).
+  // Botão principal = servidores embed (filme retoma via resumeAt; série abre onde parou — `continuarDe`: o ep em
+  // andamento ou o seguinte ao último assistido, mesmo com um sem ✓ lá atrás).
   const playMain = async () => {
-    if (isSeries) { const c = nextSeriesEp(); await playEpisode(c.season, c.episode); }
+    if (isSeries) { const c = continuarDe(liveItem, latestPosition(media.tmdbId)); await playEpisode(c.season, c.episode); }
     else { await playMovie(); }
   };
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isSeriesFinished, sortByLastWatched } from './watchProgress';
+import { isSeriesFinished, sortByLastWatched, continuarDe } from './watchProgress';
 import type { WatchItem, Season } from '@/types/watch';
 
 const season = (number: number, total: number, watched: number[] | number): Season => ({
@@ -61,5 +61,45 @@ describe('sortByLastWatched — histórico começa pelo último assistido', () =
     const lista = [visto('a', '2026-01-01', '2026-01-02'), visto('b', '2026-01-01', '2026-01-03')];
     sortByLastWatched(lista);
     expect(lista.map(i => i.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('continuarDe — o Continuar abre onde parou (20/10/2026)', () => {
+  const serie = (seasons: Season[], lastWatchedAt?: string): WatchItem => ({ ...item('series', seasons), lastWatchedAt });
+  const semO = (n: number, fora: number) => range(n).filter(e => e !== fora);
+
+  it('último assistido 93 → abre o 94, mesmo com o 40 sem ✓', () => {
+    expect(continuarDe(serie([season(1, 120, semO(93, 40))]))).toEqual({ season: 1, episode: 94 });
+  });
+  it('Dois Homens e Meio: T4 com ✓ até o 15 e buraco no 11 → T4E16 (antes abria o E11)', () => {
+    const it = serie([season(1, 24, range(24)), season(2, 24, range(24)), season(3, 24, range(24)),
+      season(4, 24, semO(15, 11)), season(5, 19, [])]);
+    expect(continuarDe(it)).toEqual({ season: 4, episode: 16 });
+  });
+  it('último da temporada assistido → 1º da próxima', () => {
+    expect(continuarDe(serie([season(1, 10, range(10)), season(2, 8, [])]))).toEqual({ season: 2, episode: 1 });
+  });
+  it('episódio em andamento (sem ✓) neste aparelho → abre ele', () => {
+    const it = serie([season(1, 20, range(5))], '2026-10-20T20:00:00Z');
+    const agora = Date.parse('2026-10-20T20:10:00Z');
+    expect(continuarDe(it, { season: 1, episode: 6, ts: agora })).toEqual({ season: 1, episode: 6 });
+  });
+  it('em andamento já com ✓ → o seguinte ao último assistido', () => {
+    const it = serie([season(1, 20, range(6))], '2026-10-20T20:00:00Z');
+    expect(continuarDe(it, { season: 1, episode: 6, ts: Date.parse('2026-10-20T20:10:00Z') })).toEqual({ season: 1, episode: 7 });
+  });
+  it('em andamento velho (outro aparelho andou depois) → vale o banco', () => {
+    const it = serie([season(1, 120, range(93))], '2026-10-20T20:00:00Z');
+    const ontem = Date.parse('2026-10-19T20:00:00Z');
+    expect(continuarDe(it, { season: 1, episode: 40, ts: ontem })).toEqual({ season: 1, episode: 94 });
+  });
+  it('em andamento fora da ficha (temporada/ep que não existe) → ignora', () => {
+    expect(continuarDe(serie([season(1, 10, range(3))]), { season: 9, episode: 1 })).toEqual({ season: 1, episode: 4 });
+  });
+  it('nada assistido → 1º episódio; série toda vista → 1º sem ✓, senão o começo', () => {
+    expect(continuarDe(serie([season(1, 10, [])]))).toEqual({ season: 1, episode: 1 });
+    expect(continuarDe(serie([season(1, 3, [1, 3]), season(2, 2, [1, 2])]))).toEqual({ season: 1, episode: 2 });
+    expect(continuarDe(serie([season(1, 2, [1, 2])]))).toEqual({ season: 1, episode: 1 });
+    expect(continuarDe(null)).toEqual({ season: 1, episode: 1 });
   });
 });

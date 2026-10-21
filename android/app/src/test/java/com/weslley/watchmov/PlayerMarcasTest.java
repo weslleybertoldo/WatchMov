@@ -222,4 +222,15 @@ public class PlayerMarcasTest {
         c.rearmar();
         assertEquals(PlayerMarcas.CONTAGEM_NADA, c.tique(ini + 6_000, ini, true, false, 7_000));
     }
+
+    @Test public void proximoFaltandoAte2MinMarcaAssistido() {
+        long dur = 1_305_000;   // 21:45, Dois Homens e Meio (sem créditos mapeados)
+        assertTrue(PlayerMarcas.VAZIO.proximoMarcaAssistido(dur - 61_000, dur));    // créditos, 1:01 faltando (o caso dele)
+        assertTrue(PlayerMarcas.VAZIO.proximoMarcaAssistido(dur - 120_000, dur));
+        assertFalse(PlayerMarcas.VAZIO.proximoMarcaAssistido(dur - 120_001, dur));
+        assertFalse(PlayerMarcas.VAZIO.proximoMarcaAssistido(600_000, dur));          // no meio: só pula
+        assertTrue(PlayerMarcas.VAZIO.proximoMarcaAssistido(dur - 30_000, dur));     // contagem (últimos 40 s)
+        assertFalse(PlayerMarcas.VAZIO.proximoMarcaAssistido(1_000, Long.MIN_VALUE + 1));   // duração desconhecida
+        assertFalse(PlayerMarcas.VAZIO.proximoMarcaAssistido(60_000, 70_000));        // vídeo de até 80 s: sem contagem nem 2 min
+    }
 }

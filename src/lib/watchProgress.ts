@@ -21,6 +21,44 @@ export function lastStopped(item: WatchItem): { season: number; episode: number 
   return { season: s.number, episode: Math.max(...episodesWatched(s)) };
 }
 
+// Folga do relógio entre aparelhos: a posição deste aparelho vale se não for mais velha que a última atividade
+// gravada no banco (outro aparelho pode ter andado depois).
+const FOLGA_ENTRE_APARELHOS_MS = 5 * 60_000;
+
+// Onde o Continuar abre (pedido dele 20/10/2026: "se o último assistido foi o 93 ele vai abrir o 94 … mesmo que
+// tenha um não assistido no 40"). Antes abria o 1º episódio sem ✓ da série inteira: um buraco no meio (o T4E11 de
+// Dois Homens e Meio) puxava pra trás quem já estava no E16.
+// 1) o episódio EM ANDAMENTO — o último que tocou neste aparelho, ainda sem ✓ (o player retoma no ponto salvo);
+// 2) senão, o seguinte ao último assistido (maior episódio com ✓ da maior temporada), virando a temporada no fim;
+// 3) senão (nada assistido, ou o último assistido é o fim da série), o 1º sem ✓ — e o 1º episódio se não houver.
+export function continuarDe(
+  item: WatchItem | null | undefined,
+  emAndamento?: { season: number; episode: number; ts?: number } | null,
+): { season: number; episode: number } {
+  const seasons = [...(item?.seasons || [])].sort((a, b) => a.number - b.number);
+  if (item && emAndamento) {
+    const s = seasons.find(x => x.number === emAndamento.season);
+    const existe = !!s && emAndamento.episode >= 1 && emAndamento.episode <= s.totalEpisodes;
+    const noBanco = item.lastWatchedAt ? new Date(item.lastWatchedAt).getTime() || 0 : 0;
+    const recente = !emAndamento.ts || !noBanco || emAndamento.ts >= noBanco - FOLGA_ENTRE_APARELHOS_MS;
+    if (existe && recente && !isEpisodeWatched(item, emAndamento.season, emAndamento.episode)) {
+      return { season: emAndamento.season, episode: emAndamento.episode };
+    }
+  }
+  const ultimo = item ? lastStopped(item) : null;
+  if (ultimo) {
+    const i = seasons.findIndex(x => x.number === ultimo.season);
+    if (ultimo.episode < seasons[i].totalEpisodes) return { season: ultimo.season, episode: ultimo.episode + 1 };
+    const proxima = seasons.slice(i + 1).find(x => x.totalEpisodes > 0);
+    if (proxima) return { season: proxima.number, episode: 1 };
+  }
+  for (const s of seasons) {
+    const vistos = episodesWatched(s);
+    for (let ep = 1; ep <= s.totalEpisodes; ep++) if (!vistos.includes(ep)) return { season: s.number, episode: ep };
+  }
+  return { season: seasons[0]?.number ?? 1, episode: 1 };
+}
+
 // Total de episódios marcados como assistidos no item (todas as temporadas).
 export function totalEpisodesWatched(item: WatchItem): number {
   return (item.seasons || []).reduce((sum, s) => sum + episodesWatched(s).length, 0);
