@@ -135,6 +135,19 @@ final class PlayerMarcas {
         return ini >= 0 && posMs >= ini;
     }
 
+    /** Pedir o próximo faltando até isso também marca o atual como assistido (fora da contagem). */
+    static final long PROXIMO_MARCA_FALTANDO_MS = 120_000;
+
+    /**
+     * O pedido do próximo episódio marca o atual como assistido? Na contagem (créditos ou últimos 40 s) ou faltando
+     * até 2 min (pedido dele 20/10/2026: apertava "próx eps" nos créditos de Dois Homens e Meio, que não tem créditos
+     * mapeados, com pouco mais de 1 min faltando — o ep ficava sem ✓). Antes disso pular não é ter assistido.
+     */
+    boolean proximoMarcaAssistido(long posMs, long durMs) {
+        if (naJanelaDaContagem(posMs, durMs)) return true;
+        return durMs > PROXIMO_MARCA_FALTANDO_MS && posMs >= durMs - PROXIMO_MARCA_FALTANDO_MS;
+    }
+
     /** O "Assistido" sem próximo episódio pula pra faltar 1 min (como sempre foi). */
     static final long ASSISTIDO_FALTANDO_MS = 60_000;
 

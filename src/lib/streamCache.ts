@@ -144,7 +144,8 @@ export function setServerMode(tmdbId?: number, type?: string, season?: number, e
 
 // Última posição salva de um título (o episódio mais recente, no caso de série):
 // usado no card "Continuar assistindo" pra mostrar o progresso do EP atual.
-export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number; durationMs?: number } | null {
+// `ts` = quando a entrada mexeu por último neste aparelho (o Continuar compara com a última atividade gravada no banco).
+export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number; durationMs?: number; ts: number } | null {
   if (tmdbId == null) return null;
   const d = read();
   let best: { season: number; episode: number; positionMs: number; durationMs?: number; ts: number } | null = null;
@@ -153,7 +154,7 @@ export function latestPosition(tmdbId?: number): { season: number; episode: numb
     if (tid !== String(tmdbId) || !e.positionMs) continue;   // posição não expira (só os links)
     if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, durationMs: e.durationMs, ts: e.ts };
   }
-  return best ? { season: best.season, episode: best.episode, positionMs: best.positionMs, durationMs: best.durationMs } : null;
+  return best;
 }
 
 // Posição SEM TTL: o link expira em 12h, mas "onde parei" não pode sumir (o

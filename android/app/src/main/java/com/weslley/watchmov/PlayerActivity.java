@@ -2671,6 +2671,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // cai no fluxo antigo (fechar o player e abrir o servidor) — fica no episódio.
     private void requestNext(boolean fromCast, boolean auto) {
         if (awaitingNext) return;
+        // Qualquer pedido do próximo (⏭ da barra, "Próximo episódio" do espelhamento, notificação) faltando até 2 min
+        // marca o atual — o Continuar voltava num ep visto até os créditos (20/10/2026). Desmarcado à mão fica.
+        if (!watched && !userUnwatched && marcas.proximoMarcaAssistido(curPosMs(), curDurMs())) setWatched(true);
         if (fromCast) {
             castMsg(auto ? "Avançando pro próximo episódio na TV…" : "Trocando de episódio na TV…", 4000);
             NativePlayerPlugin.reportError(currentUrl, 0, 0, "NEXT_CAST_CLICADO",
