@@ -53,7 +53,9 @@ function MultiSelect({ label, options, selected, onToggle }: {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          {/* Só pega o toque fora pra fechar. aria-hidden: na TV o tvNav trata camada fixa de tela cheia como
+              diálogo e prende o foco nela — vazia, as setas não entravam na lista (Categorias, 20/10/2026). */}
+          <div aria-hidden="true" className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute z-40 mt-1 max-h-64 w-44 overflow-y-auto rounded-lg border border-border bg-background shadow-lg p-1">
             {options.map(o => {
               const on = selected.includes(o.value);
