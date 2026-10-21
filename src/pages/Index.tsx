@@ -6,7 +6,7 @@ import { usePaginaVisivel } from '@/hooks/use-pagina-visivel';
 import { WatchItem } from '@/types/watch';
 import {
   MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime, getDetails,
-  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, belongsToAnimeRow, type TmdbMediaType,
+  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, ANIME_GENRES, type TmdbMediaType,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
 import { getCastNow, closeNativePlayer, type CastNow } from '@/lib/nativePlayer';
@@ -62,18 +62,16 @@ const isAnime = (i: WatchItem): boolean =>
 
 const MOVIE_ROW_IDS = MOVIE_GENRES.map(g => g.id);
 const TV_ROW_IDS = TV_GENRES.map(g => g.id);
+const ANIME_ROW_IDS = ANIME_GENRES.map(g => g.id);
 
-// Loader de linha de gênero SEM repetição: cada título aparece só na sua categoria
-// predominante (1º gênero dele que tem linha) — evita Superman em Ação+Aventura+Ficção.
-// Aba Animes tem regra própria (`belongsToAnimeRow`, em tmdb.ts): como o discover exige
-// o gênero 16 (animação) e quase todo anime também é Ação e/ou Fantasia, "1 linha por
-// título" deixava Fantasia/Mistério VAZIAS e Família com 1 item. Cada título entra nas
-// 2 linhas mais específicas dos gêneros que tem.
+// Loader de linha de gênero SEM repetição, nas 3 abas: cada título aparece só na sua
+// categoria principal (1º gênero dele que tem linha, ordem da TMDB) — evita Superman em
+// Ação+Aventura+Ficção e Naruto em Ação+Fantasia.
 // Os dois passam pelo `fillRow` (rowFill.ts): busca mais páginas da TMDB enquanto a
-// linha não fecha 10 títulos "primários" e, se ainda faltar, completa com os do gênero
-// que também moram em outra linha — Fantasia (filmes) ficava com 2 cards (07/09/2026).
+// linha não fecha 10 títulos e esconde a que não chega a 5 — nunca completa com título
+// de outra categoria.
 const animeRowLoader = (rowId: number | null) => () =>
-  fillRow(p => discoverAnime(p, rowId), m => rowId == null || belongsToAnimeRow(m.genreIds, rowId));   // "Populares" mostra tudo
+  fillRow(p => discoverAnime(p, rowId), m => rowId == null || isPrimaryGenre(m.genreIds, rowId, ANIME_ROW_IDS));   // "Populares" mostra tudo
 
 const genreRowLoader = (type: TmdbMediaType, genreId: number, rowIds: number[]) => () =>
   fillRow(p => discoverByGenre(type, genreId, p), m => isPrimaryGenre(m.genreIds, genreId, rowIds));

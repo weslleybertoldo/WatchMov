@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { ANIME_ROWS, ANIME_GENRES, belongsToAnimeRow, recent } from './tmdb';
+import { ANIME_ROWS, ANIME_GENRES, recent } from './tmdb';
+import { isPrimaryGenre } from './rowFill';
 
 const ACAO = 10759, FANTASIA = 10765, COMEDIA = 35, DRAMA = 18, MISTERIO = 9648, CRIME = 80, FAMILIA = 10751;
+const ANIME_ROW_IDS = ANIME_GENRES.map(g => g.id);
+// Em quais linhas da aba Animes o título (com estes gêneros, na ordem da TMDB) aparece.
+const linhasDe = (genreIds: number[] | undefined) => ANIME_ROW_IDS.filter(id => isPrimaryGenre(genreIds, id, ANIME_ROW_IDS));
 
-describe('aba Animes — linhas e regra "título em até 2 linhas"', () => {
+describe('aba Animes — linhas e regra "título só na categoria principal"', () => {
   it('sem as linhas mortas: "Animação" (gênero base) e "Romance" (gênero de filme, 0 em TV)', () => {
     const ids = ANIME_ROWS.map(r => r.id);
     expect(ids).not.toContain(16);
@@ -13,33 +17,28 @@ describe('aba Animes — linhas e regra "título em até 2 linhas"', () => {
   it('Procurar usa os mesmos gêneros das linhas (sem Populares)', () => {
     expect(ANIME_GENRES.map(g => g.id)).toEqual(ANIME_ROWS.filter(r => r.id != null).map(r => r.id));
   });
-  it('Bleach (Ação+Fantasia) fica em Ação e Fantasia', () => {
-    const g = [16, ACAO, FANTASIA];
-    expect(belongsToAnimeRow(g, ACAO)).toBe(true);
-    expect(belongsToAnimeRow(g, FANTASIA)).toBe(true);
+  // Gêneros na ordem que a TMDB devolveu em 20/10/2026.
+  it('Naruto [Animação, Ação, Fantasia] fica só em Ação (antes também em Fantasia)', () => {
+    expect(linhasDe([16, ACAO, FANTASIA])).toEqual([ACAO]);
   });
-  it('Ação+Fantasia+Comédia: Comédia é a 3ª mais genérica → fica de fora', () => {
-    const g = [16, ACAO, FANTASIA, COMEDIA];
-    expect(belongsToAnimeRow(g, ACAO)).toBe(true);
-    expect(belongsToAnimeRow(g, FANTASIA)).toBe(true);
-    expect(belongsToAnimeRow(g, COMEDIA)).toBe(false);
+  it('Jujutsu Kaisen [Animação, Fantasia, Ação] fica só em Fantasia', () => {
+    expect(linhasDe([16, FANTASIA, ACAO])).toEqual([FANTASIA]);
   });
-  it('Detetive Conan (Crime+Mistério+Comédia) fica em Crime e Mistério, não em Comédia', () => {
-    const g = [16, CRIME, MISTERIO, COMEDIA];
-    expect(belongsToAnimeRow(g, CRIME)).toBe(true);
-    expect(belongsToAnimeRow(g, MISTERIO)).toBe(true);
-    expect(belongsToAnimeRow(g, COMEDIA)).toBe(false);
+  it('Ação com Comédia de sub-gênero fica só em Ação', () => {
+    expect(linhasDe([16, ACAO, COMEDIA])).toEqual([ACAO]);
   });
-  it('Doraemon (Família+Ação+Comédia) fica em Família e Ação', () => {
-    const g = [16, FAMILIA, ACAO, COMEDIA];
-    expect(belongsToAnimeRow(g, FAMILIA)).toBe(true);
-    expect(belongsToAnimeRow(g, ACAO)).toBe(true);
-    expect(belongsToAnimeRow(g, COMEDIA)).toBe(false);
+  it('Detetive Conan [Animação, Crime, Mistério, Comédia] fica só em Crime', () => {
+    expect(linhasDe([16, CRIME, MISTERIO, COMEDIA])).toEqual([CRIME]);
   });
-  it('título só com Drama fica em Drama; sem gênero de linha fica onde o discover devolveu', () => {
-    expect(belongsToAnimeRow([16, DRAMA], DRAMA)).toBe(true);
-    expect(belongsToAnimeRow([16], ACAO)).toBe(true);
-    expect(belongsToAnimeRow(undefined, ACAO)).toBe(true);
+  it('Diários de uma Apotecária [Animação, Drama, Mistério] fica só em Drama', () => {
+    expect(linhasDe([16, DRAMA, MISTERIO])).toEqual([DRAMA]);
+  });
+  it('Doraemon [Ação, Animação, Comédia, Fantasia, Kids, Família] fica só em Ação', () => {
+    expect(linhasDe([ACAO, 16, COMEDIA, FANTASIA, 10762, FAMILIA])).toEqual([ACAO]);
+  });
+  it('sem gênero de linha fica onde o discover devolveu', () => {
+    expect(isPrimaryGenre([16], ACAO, ANIME_ROW_IDS)).toBe(true);
+    expect(isPrimaryGenre(undefined, ACAO, ANIME_ROW_IDS)).toBe(true);
   });
 });
 
