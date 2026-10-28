@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast } from 'lucide-react';
-import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress, continuarDe } from '@/lib/watchProgress';
+import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress, continuarDe, proximoEpisodio } from '@/lib/watchProgress';
 import { latestPosition } from '@/lib/streamCache';
 import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
@@ -373,9 +373,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const advanceEpisode = (markCurrent: boolean) => {
     if (!player?.season || !liveItem) { setPlayer(null); return; }
     if (markCurrent) store.setEpisodeWatched(liveItem.id, player.season, player.episode || 1, true);
-    const season = liveItem.seasons?.find(s => s.number === player.season);
-    const nextEp = (player.episode || 1) + 1;
-    if (season && nextEp <= season.totalEpisodes) playEpisode(player.season, nextEp);
+    const seguinte = proximoEpisodio(liveItem.seasons, player.season, player.episode || 1);
+    if (seguinte) playEpisode(seguinte.season, seguinte.episode);   // último da temporada → 1º da próxima
     else setPlayer(null);
   };
   const onSeriesCompleted = () => advanceEpisode(true);   // vídeo acabou → marca e segue
@@ -408,9 +407,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   const lastWatchedLabel = liveItem?.lastWatchedAt
     ? new Date(liveItem.lastWatchedAt).toLocaleDateString('pt-BR')
     : null;
-  // Há próximo episódio na temporada atual do player?
-  const curPlayerSeason = liveItem?.seasons?.find(s => s.number === player?.season);
-  const hasNextEp = !!(player?.season && curPlayerSeason && (player.episode || 1) < curPlayerSeason.totalEpisodes);
+  // Há próximo episódio pro player? Na mesma temporada ou, no último dela, o 1º da próxima (27/10/2026: no T4 E24
+  // de Dois Homens e Meio o player ficava sem "próximo" e parava no fim).
+  const hasNextEp = !!(player?.season && proximoEpisodio(liveItem?.seasons, player.season, player.episode || 1));
 
   return (
     <div className="animate-fade-in pb-8">
