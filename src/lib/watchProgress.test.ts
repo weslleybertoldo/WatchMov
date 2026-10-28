@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isSeriesFinished, sortByLastWatched, continuarDe } from './watchProgress';
+import { isSeriesFinished, sortByLastWatched, continuarDe, proximoEpisodio } from './watchProgress';
 import type { WatchItem, Season } from '@/types/watch';
 
 const season = (number: number, total: number, watched: number[] | number): Season => ({
@@ -101,5 +101,27 @@ describe('continuarDe — o Continuar abre onde parou (20/10/2026)', () => {
     expect(continuarDe(serie([season(1, 3, [1, 3]), season(2, 2, [1, 2])]))).toEqual({ season: 1, episode: 2 });
     expect(continuarDe(serie([season(1, 2, [1, 2])]))).toEqual({ season: 1, episode: 1 });
     expect(continuarDe(null)).toEqual({ season: 1, episode: 1 });
+  });
+});
+
+describe('proximoEpisodio — o "próximo" do player vira a temporada (27/10/2026)', () => {
+  const dhm = [season(1, 24, []), season(2, 24, []), season(3, 24, []), season(4, 24, []), season(5, 19, [])];
+
+  it('no meio da temporada → o seguinte', () => {
+    expect(proximoEpisodio(dhm, 4, 23)).toEqual({ season: 4, episode: 24 });
+  });
+  it('Dois Homens e Meio: fim do T4 E24 → T5 E1 (antes o player parava)', () => {
+    expect(proximoEpisodio(dhm, 4, 24)).toEqual({ season: 5, episode: 1 });
+  });
+  it('fim da última temporada → null (série acabou)', () => {
+    expect(proximoEpisodio(dhm, 5, 19)).toBeNull();
+  });
+  it('pula temporada sem episódio e não depende da ordem da ficha', () => {
+    expect(proximoEpisodio([season(3, 0, []), season(1, 10, []), season(4, 8, []), season(2, 12, [])], 2, 12))
+      .toEqual({ season: 4, episode: 1 });
+  });
+  it('temporada fora da ficha ou ficha vazia → null', () => {
+    expect(proximoEpisodio(dhm, 9, 1)).toBeNull();
+    expect(proximoEpisodio(undefined, 1, 1)).toBeNull();
   });
 });

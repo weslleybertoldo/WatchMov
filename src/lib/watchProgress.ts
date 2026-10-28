@@ -21,6 +21,20 @@ export function lastStopped(item: WatchItem): { season: number; episode: number 
   return { season: s.number, episode: Math.max(...episodesWatched(s)) };
 }
 
+// O episódio depois deste: o seguinte na mesma temporada ou, no último dela, o 1º da próxima temporada com episódio.
+// null = fim da série (ou temporada fora da ficha). Pedido dele 27/10/2026: no fim do T4 E24 de Dois Homens e Meio o
+// player parava em vez de abrir o T5 E1 — o "próximo" só procurava na mesma temporada.
+export function proximoEpisodio(
+  seasons: Season[] | undefined, season: number, episode: number,
+): { season: number; episode: number } | null {
+  const ordem = [...(seasons || [])].sort((a, b) => a.number - b.number);
+  const i = ordem.findIndex(s => s.number === season);
+  if (i < 0) return null;
+  if (episode < ordem[i].totalEpisodes) return { season, episode: episode + 1 };
+  const proxima = ordem.slice(i + 1).find(s => s.totalEpisodes > 0);
+  return proxima ? { season: proxima.number, episode: 1 } : null;
+}
+
 // Folga do relógio entre aparelhos: a posição deste aparelho vale se não for mais velha que a última atividade
 // gravada no banco (outro aparelho pode ter andado depois).
 const FOLGA_ENTRE_APARELHOS_MS = 5 * 60_000;
@@ -46,12 +60,8 @@ export function continuarDe(
     }
   }
   const ultimo = item ? lastStopped(item) : null;
-  if (ultimo) {
-    const i = seasons.findIndex(x => x.number === ultimo.season);
-    if (ultimo.episode < seasons[i].totalEpisodes) return { season: ultimo.season, episode: ultimo.episode + 1 };
-    const proxima = seasons.slice(i + 1).find(x => x.totalEpisodes > 0);
-    if (proxima) return { season: proxima.number, episode: 1 };
-  }
+  const seguinte = ultimo ? proximoEpisodio(seasons, ultimo.season, ultimo.episode) : null;
+  if (seguinte) return seguinte;
   for (const s of seasons) {
     const vistos = episodesWatched(s);
     for (let ep = 1; ep <= s.totalEpisodes; ep++) if (!vistos.includes(ep)) return { season: s.number, episode: ep };
