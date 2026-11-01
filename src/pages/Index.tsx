@@ -18,7 +18,11 @@ import CategoryView from '@/components/streaming/CategoryView';
 import MediaDetail from '@/components/streaming/MediaDetail';
 import SearchView, { clearSearchCache } from '@/components/streaming/SearchView';
 import BrowseView from '@/components/streaming/BrowseView';
-import MediaCard from '@/components/streaming/MediaCard';
+import MediaCard, { isUpcoming } from '@/components/streaming/MediaCard';
+import FavoriteMenu from '@/components/streaming/FavoriteMenu';
+import { chavesDosFavoritos, ehFavorito, fichaDaBiblioteca, publicarFavoritos, registrarMenuFavorito } from '@/lib/favorites';
+import { gravarFavorito } from '@/lib/gravarFavorito';
+import { toast } from 'sonner';
 import ContinueView from '@/components/streaming/ContinueView';
 import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
 import TvDevicesView from '@/components/streaming/TvDevicesView';
@@ -41,9 +45,9 @@ import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Home, Film, Tv, Sparkles, RadioTower, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, RadioTower, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
 
-type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'procurar';
+type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'favoritos' | 'procurar';
 
 function itemToSummary(i: WatchItem): MediaSummary {
   return {
@@ -82,6 +86,8 @@ const TABS: { key: Tab; label: string; icon: typeof Home }[] = [
   { key: 'series', label: 'Séries', icon: Tv },
   { key: 'animes', label: 'Animes', icon: Sparkles },
   { key: 'aovivo', label: 'Ao Vivo', icon: RadioTower },
+  // Favoritos ao lado de Ao Vivo (pedido dele 01/11/2026): era a "Minha Lista" de dentro do Painel.
+  { key: 'favoritos', label: 'Favoritos', icon: Bookmark },
   { key: 'procurar', label: 'Procurar', icon: Compass },
 ];
 
@@ -152,9 +158,21 @@ export default function Index() {
   const [serversOpen, setServersOpen] = useState(false);    // aba Servidores (favorito do Assistir)
   const [tvOpen, setTvOpen] = useState(false);              // aba Entrar na TV (TVs conectadas + Conectar)
   const [bugsOpen, setBugsOpen] = useState(false);
-  const [listOpen, setListOpen] = useState(false);          // Minha Lista (agora dentro do Painel)
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null); // canal ao vivo tocando
   const [exitAsk, setExitAsk] = useState(false);            // "Deseja sair?" do Voltar na aba Início
+  // Menu de segurar a capa (favoritos). O alvo fica guardado depois de fechar pra animação de saída.
+  const [menuFavAberto, setMenuFavAberto] = useState(false);
+  const [menuFavAlvo, setMenuFavAlvo] = useState<{ media: MediaSummary; favorito: boolean } | null>(null);
+  useEffect(() => {
+    registrarMenuFavorito((m) => {
+      setMenuFavAlvo({ media: m, favorito: ehFavorito(m.type, m.tmdbId) });
+      setMenuFavAberto(true);
+    });
+    return () => registrarMenuFavorito(null);
+  }, []);
+  // Selo de pastinha nas capas: as chaves dos favoritos saem daqui a cada mudança da biblioteca.
+  const bibItems = store.data.items;
+  useEffect(() => { publicarFavoritos(chavesDosFavoritos(bibItems)); }, [bibItems]);
 
   // Push: registra o device e carrega os sinos; tocar na notificação abre o título.
   useEffect(() => {
@@ -282,6 +300,7 @@ export default function Index() {
     openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
   const handleBack = useCallback(async (): Promise<boolean> => {
+    if (menuFavAberto) { setMenuFavAberto(false); return true; }
     if (exitAsk) { setExitAsk(false); return true; }
     if (liveChannel) { setLiveChannel(null); return true; }
     if (selected) { closeDetail(); return true; }
@@ -291,7 +310,6 @@ export default function Index() {
     if (tvOpen) { setTvOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
     if (listFilter) { setListFilter(null); return true; }
-    if (listOpen) { setListOpen(false); return true; }
     if (noticesOpen) { setNoticesOpen(false); return true; }
     if (settingsOpen) { setSettingsOpen(false); return true; }
     if (searchOpen) { setSearchOpen(false); clearSearchCache(); return true; }
@@ -301,15 +319,15 @@ export default function Index() {
     // Aba Início sem nada aberto: antes saía direto (pedido dele 26/09/2026: perguntar "Deseja sair?").
     setExitAsk(true);
     return true;
-  }, [exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, listOpen, category, tab]);
+  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, category, tab]);
   useAndroidBackButton(handleBack);
 
   // TV: o celular mandou abrir um título (enviar pra TV). Fecha o que estiver por cima e mostra a página dele.
   const openFromRemote = useCallback((m: MediaSummary) => {
     homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
     setExitAsk(false); setLiveChannel(null); setSettingsOpen(false); setNoticesOpen(false); setHistoryOpen(false);
-    setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListOpen(false);
-    setListFilter(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setCategory(null);
+    setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false);
+    setMenuFavAberto(false); setListFilter(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setCategory(null);
     setAutoPlay(null);
     setSelected(m);
     window.scrollTo(0, 0);
@@ -377,7 +395,7 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setListOpen(false); setLiveChannel(null); };
+  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); };
 
   // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
   // eram interruptores e a lupa nem aparecia com um título, os avisos ou o Painel por cima. A engrenagem sempre cai
@@ -386,8 +404,24 @@ export default function Index() {
     homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
     closeDetail(); setCategory(null);
     setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
-    setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListOpen(false); setListFilter(null);
+    setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListFilter(null);
   };
+  // Menu de segurar a capa → põe/tira dos favoritos. Título que ainda não está na biblioteca ganha a ficha completa
+  // da TMDB (o gênero separa Séries de Animes; as temporadas), igual ao botão de pastinha da página dele.
+  const alternarFavorito = async (m: MediaSummary, favoritar: boolean) => {
+    const tipo: 'movie' | 'series' = m.type === 'tv' ? 'series' : 'movie';
+    let item = store.data.items.find(i => i.tmdbId === m.tmdbId && i.type === tipo) ?? null;
+    const precisaDetalhes = !item || (favoritar && m.type === 'movie' && !m.date);   // filme: a data decide o sino
+    const detalhes = precisaDetalhes ? await getDetails(m.tmdbId, m.type).catch(() => null) : null;
+    if (!item) item = await store.upsertLibraryItem(fichaDaBiblioteca(m, detalhes));
+    if (!item) { toast.error('Não deu pra salvar agora. Tente de novo.'); return; }
+    gravarFavorito(store.updateItem, item, favoritar, {
+      tmdbId: m.tmdbId, type: m.type, title: item.title, posterUrl: item.posterUrl ?? m.posterUrl,
+      emBreve: isUpcoming(m.date ?? detalhes?.releaseDate),
+    });
+    toast.success(favoritar ? 'Adicionado aos favoritos' : 'Removido dos favoritos');
+  };
+
   // Busca já na tela: a lupa leva pro campo (na TV o OK solto nele abre o teclado do Fire TV).
   const abrirBusca = () => {
     if (searchOpen && !selected && !noticesOpen && !settingsOpen) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
@@ -476,28 +510,8 @@ export default function Index() {
             <TvDevicesView onBack={() => setTvOpen(false)} />
           ) : bugsOpen ? (
             <BugsView onBack={() => setBugsOpen(false)} />
-          ) : listOpen ? (
-            <div className="space-y-6 animate-fade-in">
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { if (listFilter) setListFilter(null); else setListOpen(false); }}><ArrowLeft className="w-5 h-5" /></Button>
-                <h1 className="text-xl font-bold">{listFilter ? listTitle : 'Minha Lista'}</h1>
-              </div>
-              {listFilter ? (
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
-                </div>
-              ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
-                <p className="text-sm text-muted-foreground py-8 text-center">Sua lista está vazia. Toque no marcador ao lado do título pra salvar.</p>
-              ) : (
-                <>
-                  {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
-                  {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
-                  {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
-                </>
-              )}
-            </div>
           ) : (
-            <SettingsView stats={watchedStats} onList={() => setListOpen(true)} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
           )
         ) : searchOpen ? (
           <SearchView onOpen={openMedia} />
@@ -557,6 +571,32 @@ export default function Index() {
                 onSeeAll={() => openCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
             ))}
           </div>
+        ) : tab === 'favoritos' ? (
+          <div className="space-y-6 animate-fade-in">
+            {listFilter ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setListFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
+                  <h1 className="text-xl font-bold">{listTitle}</h1>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                  {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
+                </div>
+              </>
+            ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
+              <div className="py-12 text-center space-y-2">
+                <Bookmark className="w-8 h-8 mx-auto text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Nenhum favorito ainda.</p>
+                <p className="text-xs text-muted-foreground">Segure a capa de um filme ou série pra salvar aqui (na TV, segure o OK).</p>
+              </div>
+            ) : (
+              <>
+                {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
+                {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
+                {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
+              </>
+            )}
+          </div>
         ) : tab === 'procurar' ? (
           <BrowseView onOpen={openMedia} />
         ) : (
@@ -575,6 +615,9 @@ export default function Index() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <FavoriteMenu aberto={menuFavAberto} alvo={menuFavAlvo} onFechar={() => setMenuFavAberto(false)}
+        onAlternar={(m, favoritar) => { void alternarFavorito(m, favoritar); }} />
 
       {/* Bottom nav (mobile) */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 backdrop-blur border-t border-border flex">

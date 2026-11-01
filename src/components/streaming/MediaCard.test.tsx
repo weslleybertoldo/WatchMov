@@ -1,8 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, fireEvent, act } from "@testing-library/react";
 import MediaCard from "./MediaCard";
 import type { MediaSummary } from "@/lib/tmdb";
 import { isTv } from "@/lib/device";
+import { publicarFavoritos, registrarMenuFavorito } from "@/lib/favorites";
+import { SEGURAR_TOQUE_MS } from "@/hooks/use-segurar";
 
 vi.mock("@/lib/device", () => ({ isTv: vi.fn(() => false) }));
 
@@ -51,5 +53,88 @@ describe("MediaCard — cartaz que já carregou não pisca", () => {
     vi.mocked(isTv).mockReturnValue(true);
     const tv = render(<MediaCard media={cartaz(6)} onClick={() => {}} />);
     expect(tv.getByAltText("Cartaz 6")).not.toHaveClass("transition-opacity");
+  });
+});
+
+// O jsdom 20 não tem PointerEvent: sem ele o React recebe o toque sem botão nem posição.
+if (!("PointerEvent" in window)) {
+  class PointerEventFake extends MouseEvent {
+    pointerType: string;
+    constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerType = init.pointerType ?? "touch"; }
+  }
+  Object.assign(window, { PointerEvent: PointerEventFake });
+}
+
+// Favoritos (pedido dele 01/11/2026): pastinha na capa de quem é favorito; segurar a capa abre o menu de pôr/tirar.
+describe("MediaCard — favoritos", () => {
+  const abrirMenu = vi.fn();
+  beforeEach(() => {
+    vi.mocked(isTv).mockReturnValue(false);
+    abrirMenu.mockClear();
+    registrarMenuFavorito(abrirMenu);
+    act(() => publicarFavoritos(new Set()));
+  });
+  afterEach(() => { registrarMenuFavorito(null); vi.useRealTimers(); });
+
+  it("a pastinha aparece só na capa que é favorita, e some quando sai", () => {
+    const fav = render(<MediaCard media={cartaz(20)} onClick={() => {}} />);
+    const outro = render(<MediaCard media={cartaz(21)} onClick={() => {}} />);
+    expect(fav.container.querySelector("[data-favorito]")).toBeNull();
+    act(() => publicarFavoritos(new Set(["movie-20"])));
+    expect(fav.container.querySelector("[data-favorito]")).not.toBeNull();
+    expect(outro.container.querySelector("[data-favorito]")).toBeNull();
+    act(() => publicarFavoritos(new Set()));
+    expect(fav.container.querySelector("[data-favorito]")).toBeNull();
+  });
+
+  it("toque normal abre o título; segurar abre o menu e NÃO abre o título", () => {
+    vi.useFakeTimers();
+    const abrir = vi.fn();
+    const { getByRole } = render(<MediaCard media={cartaz(22)} onClick={abrir} />);
+    const capa = getByRole("button");
+    fireEvent.pointerDown(capa, { button: 0, clientX: 10, clientY: 10 });
+    vi.advanceTimersByTime(120);
+    fireEvent.pointerUp(capa, { button: 0 });
+    fireEvent.click(capa);
+    expect(abrir).toHaveBeenCalledTimes(1);
+    expect(abrirMenu).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(capa, { button: 0, clientX: 10, clientY: 10 });
+    act(() => { vi.advanceTimersByTime(SEGURAR_TOQUE_MS); });
+    expect(abrirMenu).toHaveBeenCalledTimes(1);
+    expect(abrirMenu.mock.calls[0][0]).toMatchObject({ tmdbId: 22, type: "movie" });
+    fireEvent.pointerUp(capa, { button: 0 });
+    fireEvent.click(capa);                         // o clique que vem depois de segurar
+    expect(abrir).toHaveBeenCalledTimes(1);
+  });
+
+  it("arrastar (rolar a fileira) cancela o segurar", () => {
+    vi.useFakeTimers();
+    const { getByRole } = render(<MediaCard media={cartaz(23)} onClick={() => {}} />);
+    const capa = getByRole("button");
+    fireEvent.pointerDown(capa, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(capa, { clientX: 40, clientY: 12 });
+    act(() => { vi.advanceTimersByTime(SEGURAR_TOQUE_MS * 2); });
+    expect(abrirMenu).not.toHaveBeenCalled();
+  });
+
+  it("toque longo do Android (contextmenu) abre o menu uma vez só, sem o menu do sistema", () => {
+    vi.useFakeTimers();
+    const { getByRole } = render(<MediaCard media={cartaz(24)} onClick={() => {}} />);
+    const capa = getByRole("button");
+    fireEvent.pointerDown(capa, { button: 0, clientX: 10, clientY: 10 });
+    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    act(() => { capa.dispatchEvent(ev); });
+    expect(ev.defaultPrevented).toBe(true);
+    act(() => { vi.advanceTimersByTime(SEGURAR_TOQUE_MS); });
+    expect(abrirMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("TV: segurar o OK (aviso do tvNav) abre o menu da capa", () => {
+    const { getByRole } = render(<MediaCard media={cartaz(25)} onClick={() => {}} />);
+    const capa = getByRole("button");
+    expect(capa).toHaveAttribute("data-tv-hold");
+    act(() => { capa.dispatchEvent(new CustomEvent("tv-segurar", { bubbles: true })); });
+    expect(abrirMenu).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 25 }));
   });
 });

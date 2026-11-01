@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
 import { isTv } from '@/lib/device';
-import { Star, Film, Tv } from 'lucide-react';
+import { useEhFavorito, pedirMenuFavorito } from '@/lib/favorites';
+import { useSegurar } from '@/hooks/use-segurar';
+import { Star, Film, Tv, Bookmark } from 'lucide-react';
 
 interface MediaCardProps {
   media: MediaSummary;
@@ -37,12 +39,29 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   const [loaded, setLoaded] = useState(() => !!media.posterUrl && carregados.has(media.posterUrl));
   const upcoming = isUpcoming(media.date);
   const fresh = isNew(media.date);
+  // Favoritos (pedido dele 01/11/2026): pastinha no canto de cima, à direita; segurar a capa abre o menu de pôr/tirar.
+  const favorito = useEhFavorito(media.type, media.tmdbId);
+  const mediaRef = useRef(media);
+  mediaRef.current = media;
+  const { handlers: segurar, engolirClique } = useSegurar(() => { pedirMenuFavorito(mediaRef.current); });
+  // TV: o tvNav avisa quando o OK foi segurado nesta capa (data-tv-hold).
+  const btnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const el = btnRef.current;
+    if (!el) return;
+    const aoSegurarOk = () => { pedirMenuFavorito(mediaRef.current); };
+    el.addEventListener('tv-segurar', aoSegurarOk);
+    return () => el.removeEventListener('tv-segurar', aoSegurarOk);
+  }, []);
   return (
     <button
-      onClick={onClick}
+      ref={btnRef}
+      onClick={() => { if (!engolirClique()) onClick(); }}
+      {...segurar}
       data-tv-card
+      data-tv-hold
       data-tv-key={`${media.type}-${media.tmdbId}`}
-      className="relative shrink-0 w-28 sm:w-32 text-left group"
+      className="relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
     >
       {rank !== undefined && (
         <span className="absolute -left-1 top-0 z-10 text-4xl font-black text-primary/80 drop-shadow [-webkit-text-stroke:1px_hsl(var(--background))]">
@@ -58,12 +77,19 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
           Novo
         </span>
       ) : null}
+      {favorito && (
+        <span data-favorito title="Nos favoritos"
+          className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-md shadow-black/50">
+          <Bookmark className="w-3.5 h-3.5 fill-white text-white" />
+        </span>
+      )}
       <div className={`tv-poster rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>
         {media.posterUrl ? (
           <img
             src={media.posterUrl}
             alt={media.title}
             loading="lazy"
+            draggable={false}
             onLoad={() => { if (media.posterUrl) carregados.add(media.posterUrl); setLoaded(true); }}
             className={`w-full h-full object-cover ${isTv() ? '' : 'transition-opacity duration-500'} ${loaded ? 'opacity-100' : 'opacity-0'}`}
           />

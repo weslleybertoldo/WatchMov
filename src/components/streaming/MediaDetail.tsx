@@ -14,7 +14,9 @@ import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDo
 import { useMp4All } from '@/lib/mp4Download';
 import type { DownloadItem } from '@/lib/downloader';
 import { toast } from 'sonner';
-import { useNotify, setNotify, clearNotify } from '@/lib/notifications';
+import { useNotify, setNotify } from '@/lib/notifications';
+import { fichaDaBiblioteca } from '@/lib/favorites';
+import { gravarFavorito } from '@/lib/gravarFavorito';
 import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
 import type { CastNow } from '@/lib/nativePlayer';
 import { isTv } from '@/lib/device';
@@ -238,34 +240,13 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
   }, [player, closePlayer]);
   useAndroidBackButton(handlePlayerBack);
 
-  const seasonsFromDetails = useCallback((): Season[] => {
-    return (details?.seasons || []).map(s => ({
-      id: generateId(),
-      number: s.number,
-      totalEpisodes: s.totalEpisodes,
-      watchedEpisodes: 0,
-      episodeDuration: s.episodeDuration,
-    }));
-  }, [details]);
-
   const ensureLib = useCallback(async (): Promise<WatchItem | null> => {
     if (libItem) return libItem;
-    const created = await store.upsertLibraryItem({
-      tmdbId: media.tmdbId,
-      type: storeType,
-      title: details?.title || media.title,
-      imdbId: details?.imdbId,
-      posterUrl: details?.posterUrl || media.posterUrl,
-      synopsis: details?.synopsis,
-      genre: details?.genre,
-      rating: details?.rating ?? media.rating,
-      votes: details?.votes ?? media.votes,
-      totalDuration: details?.runtime,
-      seasons: isSeries ? seasonsFromDetails() : undefined,
-    });
+    // A mesma ficha do menu de segurar a capa (favorites.ts).
+    const created = await store.upsertLibraryItem(fichaDaBiblioteca(media, details));
     if (created) setLibItem(created);
     return created;
-  }, [libItem, store, media, details, storeType, isSeries, seasonsFromDetails]);
+  }, [libItem, store, media, details]);
 
   // Marca o item como "assistido agora" pra entrar em Continuar assistindo
   // (players BR não disparam evento de progresso).
@@ -310,22 +291,22 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
     else { await playMovie(); }
   };
 
+  // Pastinha ao lado do título = favoritos. O sino segue a regra de sempre (gravarFavorito.ts): entrar LIGA (série
+  // sempre; filme só antes da estreia), sair APAGA a inscrição. O estado vem do store (o menu de segurar a capa
+  // também muda o favorito).
   const toggleList = async () => {
     const it = await ensureLib();
     if (!it) return;
-    const next = !it.favorite;
-    store.updateItem(it.id, { favorite: next });
+    const next = !(liveItem?.favorite ?? it.favorite);
+    gravarFavorito(store.updateItem, it, next, {
+      tmdbId: media.tmdbId, type: media.type, title: media.title, posterUrl: media.posterUrl,
+      emBreve: isUpcoming(details?.releaseDate),
+    });
     setLibItem({ ...it, favorite: next });
-    // Entrar na lista LIGA o sino; sair APAGA a inscrição (re-adicionar volta a ligar).
-    // FILME já lançado não liga: não tem episódio novo pra avisar, então o aviso só
-    // faz sentido enquanto a estreia não chegou (data futura). Série sempre liga.
-    const worthNotifying = isSeries || isUpcoming(details?.releaseDate);
-    if (next && worthNotifying) setNotify({ tmdbId: media.tmdbId, type: media.type, enabled: true, title: media.title, posterUrl: media.posterUrl });
-    else if (!next) clearNotify(media.tmdbId, media.type);
   };
 
   // Sino manual: funciona dentro ou fora da lista; desligar aqui mantém desligado
-  // mesmo com o título na Minha Lista.
+  // mesmo com o título nos Favoritos.
   const toggleNotify = () => {
     const on = !notifyOn;
     setNotify({ tmdbId: media.tmdbId, type: media.type, enabled: on, title: media.title, posterUrl: media.posterUrl });
@@ -433,7 +414,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
           <h1 className="flex-1 min-w-0 text-2xl font-bold text-foreground">{details?.title || media.title}</h1>
           <Button variant="ghost" size="icon" onClick={toggleList} data-inlist={inList ? '1' : undefined}
             className={`h-9 w-9 shrink-0 rounded-full bg-background/60 backdrop-blur ${inList ? 'text-primary' : 'text-foreground/80'}`}
-            title={inList ? 'Na Minha Lista — toque pra remover' : 'Salvar na Minha Lista'} aria-label={inList ? 'Remover da Minha Lista' : 'Salvar na Minha Lista'}>
+            title={inList ? 'Nos favoritos — toque pra remover' : 'Salvar nos favoritos'} aria-label={inList ? 'Remover dos favoritos' : 'Salvar nos favoritos'}>
             <Bookmark className={`w-5 h-5 ${inList ? 'fill-current' : ''}`} />
           </Button>
           <Button variant="ghost" size="icon" onClick={toggleNotify} data-notify={notifyOn ? '1' : undefined}
