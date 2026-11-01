@@ -323,9 +323,11 @@ public class MainActivity extends BridgeActivity {
     }
 
     // Setinha do Servidor ligada: setas e OK são dela (antes do WebView). O resto (Voltar…) segue normal.
+    // TV com a setinha desligada: o OK seguro chega no web só como apertar e soltar (TvCursor.repeticaoDoOk).
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (TvCursor.onKey(event)) return true;
+        if (TvCursor.repeticaoDoOk(event.getKeyCode(), event.getAction(), event.getRepeatCount()) && TvMode.isTv(this)) return true;
         return super.dispatchKeyEvent(event);
     }
 

@@ -44,6 +44,23 @@ final class TvCursor {
         return rolado > 0 ? ROLA_CIMA : SAI;
     }
 
+    /** O OK do controle: centro do direcional, Enter (teclado e numérico) e o A do controle de jogo. */
+    static boolean ehOk(int k) {
+        return k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
+            || k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A;
+    }
+
+    /**
+     * OK seguro na TV com a setinha desligada (01/11/2026, "segurar o OK no cartaz"): o Android repete a tecla a cada
+     * ~50 ms e o WebView entrega cada repetição ao JavaScript como um aperto NOVO (sem a marca de repetição), então o
+     * tvNav não tinha como separar "continua seguro" de "apertou de novo" — a repetição que chegava depois de o menu
+     * dos favoritos abrir apertava o botão do menu. true = engolir: o web só vê o apertar e o soltar, e quem decide
+     * o segurar é o tvNav (500 ms sem soltar).
+     */
+    static boolean repeticaoDoOk(int keyCode, int acao, int repeticao) {
+        return acao == KeyEvent.ACTION_DOWN && repeticao > 0 && ehOk(keyCode);
+    }
+
     /** Seta ou OK apertado: escondida, o toque só traz a setinha de volta (não anda nem clica no escuro). */
     static int aoApertar(boolean escondida, boolean ok, int repeticao) {
         if (escondida) return MOSTRA;
@@ -113,8 +130,7 @@ final class TvCursor {
         int k = e.getKeyCode();
         boolean seta = k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN
             || k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT;
-        boolean ok = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER
-            || k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A;
+        boolean ok = ehOk(k);
         if (!seta && !ok) return false;
         if (e.getAction() != KeyEvent.ACTION_DOWN) return true;   // o soltar da tecla também é da setinha
         int efeito = aoApertar(ponteiro.getVisibility() != View.VISIBLE, ok, e.getRepeatCount());
