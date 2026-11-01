@@ -83,6 +83,28 @@ describe('tvNav — segurar o OK na capa', () => {
     expect(chegou).toHaveBeenCalledTimes(1);
   });
 
+  // 01/11/2026 (pedido dele: "quando eu clico e seguro ele trava"): desenhar o menu travou a página ~1 s (emulador:
+  // repetição seguinte chegou 940 ms depois) — passava do REPETICAO_MS, virava "OK novo" e apertava sozinha o botão
+  // do menu (o título entrava/saía dos favoritos e o menu fechava). Repetição é do MESMO aperto: sempre engolida.
+  it('repetição atrasada (a TV travou desenhando o menu) não aperta o botão do menu', () => {
+    ok(capa, 'keydown');
+    vi.advanceTimersByTime(SEGURAR_MS);
+    expect(segurou).toBe(1);
+    outro.focus();
+    const chegou = vi.fn();
+    outro.addEventListener('keydown', chegou);
+    vi.advanceTimersByTime(320);
+    expect(ok(outro, 'keydown', true).defaultPrevented).toBe(true);
+    vi.advanceTimersByTime(940);                 // a página ficou presa desenhando o menu
+    expect(ok(outro, 'keydown', true).defaultPrevented).toBe(true);
+    vi.advanceTimersByTime(50);
+    expect(ok(outro, 'keydown', true).defaultPrevented).toBe(true);
+    expect(chegou).not.toHaveBeenCalled();
+    ok(outro, 'keyup');
+    expect(ok(outro, 'keydown').defaultPrevented).toBe(false);   // soltou: o próximo OK no menu vale normal
+    expect(chegou).toHaveBeenCalledTimes(1);
+  });
+
   it('o soltar se perdeu: depois de uma pausa sem repetição, o próximo OK vale normal', () => {
     ok(capa, 'keydown');
     vi.advanceTimersByTime(SEGURAR_MS);

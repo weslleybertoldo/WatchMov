@@ -224,7 +224,11 @@ function okApertado(e: KeyboardEvent) {
   if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey) return;
   if (engolirOk) {
     const agora = Date.now();
-    if (agora - ultimoEngolido < REPETICAO_MS) {
+    // Repetição do MESMO aperto (e.repeat: o OK continua seguro) é sempre engolida, por mais atrasada que chegue —
+    // desenhar o menu trava a página (~1 s no emulador, mais na Fire TV) e a repetição seguinte chegava depois do
+    // REPETICAO_MS, virava "OK novo" e apertava sozinha o botão do menu (01/11/2026: "quando eu clico e seguro ele
+    // trava"). A pausa só decide quando a tecla vem sem a marca de repetição (o soltar se perdeu).
+    if (e.repeat || agora - ultimoEngolido < REPETICAO_MS) {
       ultimoEngolido = agora;
       e.preventDefault();
       e.stopPropagation();
