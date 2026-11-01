@@ -147,3 +147,17 @@ html.tv [data-tv-card]:focus .tv-poster {
 html.tv [data-row-key="hero"]:focus {
   outline-offset: -5px;
 }
+/* W4 das quedas na Fire TV (01/11/2026): na TV de 1 GB o desfoque refaz a imagem de trás a cada quadro da rolagem, e a
+   pulsação infinita (cartaz carregando, esqueleto) põe cada cartão numa camada própria da GPU. Na TV saem os dois: o que
+   era translúcido com desfoque fica sem desfoque (o cabeçalho, com o fundo cheio); o que pulsava fica parado. */
+html.tv [class*="backdrop-blur"],
+html.tv .glass-card {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html.tv header[class*="backdrop-blur"] {
+  background-color: hsl(var(--background));
+}
+html.tv .animate-pulse {
+  animation: none;
+}

@@ -27,9 +27,11 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
   }, []);
 
   // Com o player por cima (página escondida) o carrossel para: ninguém vê e cada troca redesenha o fundo grande.
+  // W4 das quedas na Fire TV (01/11/2026): na TV ele não gira sozinho — cada troca decodifica e redesenha a imagem
+  // grande enquanto a pessoa navega pelas fileiras. As setas ← → no destaque continuam trocando.
   const visivel = usePaginaVisivel();
   useEffect(() => {
-    if (items.length < 2 || !visivel) return;
+    if (items.length < 2 || !visivel || isTv()) return;
     const t = setInterval(() => setI(p => (p + 1) % items.length), 5000);
     return () => clearInterval(t);
   }, [items.length, visivel]);

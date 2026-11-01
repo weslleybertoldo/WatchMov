@@ -3,6 +3,7 @@ import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { ChevronLeft, ChevronRight, Plus, Loader2 } from 'lucide-react';
 import { isTv } from '@/lib/device';
+import { naFilaDoOcioso } from '@/lib/ocioso';
 
 interface MediaRowProps {
   title: string;
@@ -18,19 +19,55 @@ interface MediaRowProps {
 const rowCache = new Map<string, MediaSummary[]>();
 // posição do scroll horizontal por linha (sobrevive remontagem ao abrir detalhe)
 const scrollCache = new Map<string, number>();
+// W4 das quedas na Fire TV (01/11/2026): na TV a aba não monta todos os cartões de uma vez (a Filmes montava ~110 na
+// TV de 1 GB e levava ~1,2 s pra aparecer). Monta na hora só a fileira perto da tela; as outras entram no tempo OCIOSO,
+// uma por vez e de cima pra baixo, depois que a aba assentou. Medido na Fire TV: montar a fileira só quando a rolagem
+// chegava nela pesava a descida (17 × 10 quadros acima de 50 ms), e montar no ocioso logo na troca comia o ganho da troca.
+// Até montar fica um espaço do mesmo tamanho (sem pulo). Fileira que já APARECEU na tela fica nesta lista: ao voltar do
+// detalhe ela remonta JÁ com os cartões (a âncora do scroll da home não se mexe). A montada só no ocioso não entra: o
+// Início e a aba Filmes dividem as fileiras de gênero, e elas chegariam montadas na Filmes (a troca voltava a ~1,1 s).
+const fileirasVistas = new Set<string>();
+const PERTO_DA_TELA = '600px 0px';   // ~1 tela da TV (540 CSS px) acima e abaixo
+const ESPERA_OCIOSO_MS = 1500;       // a aba aparece primeiro; o resto monta depois, antes de a pessoa descer
 
 export default function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll }: MediaRowProps) {
   const [data, setData] = useState<MediaSummary[]>(() => items ?? (cacheKey ? rowCache.get(cacheKey) ?? [] : []));
   const [loading, setLoading] = useState(!items && !(cacheKey && rowCache.has(cacheKey)));
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
   const scrollKey = cacheKey || title;
+  const [perto, setPerto] = useState(() => !isTv() || fileirasVistas.has(scrollKey));
+
+  // TV: chegou perto da tela = vista (monta já, e remonta com os cartões depois). Segue olhando mesmo depois de o ocioso
+  // montar a fileira, pra ela virar "vista" quando a pessoa descer até ela.
+  useEffect(() => {
+    if (!isTv() || fileirasVistas.has(scrollKey)) return;
+    const el = rowRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') { setPerto(true); return; }
+    const io = new IntersectionObserver((es) => {
+      if (!es.some(e => e.isIntersecting)) return;
+      fileirasVistas.add(scrollKey);
+      setPerto(true);
+      io.disconnect();
+    }, { rootMargin: PERTO_DA_TELA });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [scrollKey]);
+
+  // TV: a que não apareceu monta no tempo ocioso, depois que a aba assentou.
+  useEffect(() => {
+    if (perto) return;
+    let desistir = () => {};
+    const espera = setTimeout(() => { desistir = naFilaDoOcioso(() => setPerto(true)); }, ESPERA_OCIOSO_MS);
+    return () => { clearTimeout(espera); desistir(); };
+  }, [perto]);
 
   // Restaura a posição horizontal ao (re)montar com os dados já carregados.
   useEffect(() => {
-    if (!loading && scrollRef.current && scrollCache.has(scrollKey)) {
+    if (!loading && perto && scrollRef.current && scrollCache.has(scrollKey)) {
       scrollRef.current.scrollLeft = scrollCache.get(scrollKey)!;
     }
-  }, [loading, scrollKey, data.length]);
+  }, [loading, perto, scrollKey, data.length]);
 
   useEffect(() => {
     if (items) { setData(items); return; }
@@ -55,7 +92,7 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
   return (
     // data-row-key: âncora do scroll da home — ao voltar do detalhe, a página é
     // recolocada com ESTA linha no mesmo lugar da tela (ver Index.tsx).
-    <div className="space-y-2" data-row-key={scrollKey}>
+    <div ref={rowRef} className="space-y-2" data-row-key={scrollKey}>
       <div className="flex items-center justify-between px-1">
         <h2 className="text-base sm:text-lg font-bold text-foreground">{title}</h2>
         {onSeeAll && (
@@ -72,6 +109,13 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
           {loading ? (
             <div className="flex items-center gap-2 text-muted-foreground py-10 px-2">
               <Loader2 className="w-4 h-4 animate-spin" /> Carregando…
+            </div>
+          ) : !perto ? (
+            // Espaço do tamanho de um cartão (pôster + título + ano): a fileira entra sem empurrar nada.
+            <div data-fileira-reservada aria-hidden="true" className="shrink-0 w-28 sm:w-32">
+              <div className="rounded-lg bg-muted/40 aspect-[2/3]" />
+              <p className="mt-1 text-xs">&nbsp;</p>
+              <div className="text-[10px]">&nbsp;</div>
             </div>
           ) : (
             <>
