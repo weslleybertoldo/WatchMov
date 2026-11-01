@@ -189,6 +189,15 @@ public class ResolverPlugin extends Plugin {
                         maybeHop(mySession, req);
                         return null;
                     }
+                    // 01/11/2026 (quedas na Fire TV): o processo de página morreu (falta de memória) → esta WebView
+                    // (busca ou motor ABYS) é descartada sem derrubar o app; o player nativo segue com o que já tem.
+                    @android.annotation.TargetApi(26)
+                    @Override
+                    public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail d) {
+                        final boolean crash = d != null && d.didCrash();
+                        ui.post(() -> paginaCaiu(v, crash));
+                        return true;
+                    }
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
                         // Só http(s) navega; esquema de app externo (intent://, market://) = anúncio → aborta.
@@ -750,6 +759,16 @@ public class ResolverPlugin extends Plugin {
             report("RESOLVER_MOTOR_MOVER", "falhou: " + t);
             android.util.Log.w("WatchMov", "motor ABYS não mudou de tela: " + t);
         }
+    }
+
+    /** Processo de página morto (01/11/2026): renderer morto não aceita mais nada além de destroy() — nada de
+     *  loadUrl/stopLoading nela. O resto da limpeza é a do stop (sessão nova, motor solto no proxy). */
+    private void paginaCaiu(WebView v, boolean crash) {
+        android.util.Log.w("WatchMov", "página da busca/motor caiu (crash=" + crash + ", motor=" + engine + ")");
+        report("RESOLVER_RENDER_GONE", "crash=" + crash + " motor=" + engine);
+        if (web == v) { web = null; stopInternal(); }
+        try { if (v.getParent() instanceof ViewGroup) ((ViewGroup) v.getParent()).removeView(v); } catch (Throwable ignored) {}
+        try { v.destroy(); } catch (Throwable ignored) {}
     }
 
     private void stopInternal() {
