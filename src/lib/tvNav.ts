@@ -197,6 +197,68 @@ function setaDentroDoTexto(el: Element | null, dir: Dir): boolean {
 
 const NATIVO_CLICA = 'button, a[href], input, select, textarea, summary';
 
+// Segurar o OK num item marcado com data-tv-hold (a capa → menu dos favoritos; pedido dele 01/11/2026). O clique de
+// um <button> sai no APERTAR do OK; num item que dá pra segurar ele passa pro SOLTAR: soltou antes de SEGURAR_MS =
+// clique normal; segurou = evento 'tv-segurar' no item. Com o OK ainda apertado depois disso as repetições da tecla
+// (o Android repete a cada ~50 ms) não valem — senão a 1ª apertaria o botão do menu que acabou de abrir com o foco
+// nele. Pausa maior que REPETICAO_MS sem repetição = o soltar se perdeu: o próximo OK vale normal.
+export const SEGURAR_MS = 500;
+const REPETICAO_MS = 400;
+let segurando: { el: HTMLElement; timer: ReturnType<typeof setTimeout>; disparou: boolean } | null = null;
+let engolirOk = false;
+let ultimoEngolido = 0;
+
+function zerarSegurar() {
+  if (segurando) clearTimeout(segurando.timer);
+  segurando = null;
+  engolirOk = false;
+}
+
+function okApertado(e: KeyboardEvent) {
+  if (e.key !== 'Enter' || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (engolirOk) {
+    const agora = Date.now();
+    if (agora - ultimoEngolido < REPETICAO_MS) {
+      ultimoEngolido = agora;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    engolirOk = false;
+  }
+  const a = document.activeElement as HTMLElement | null;
+  if (!a || !a.hasAttribute('data-tv-hold')) return;
+  e.preventDefault();          // sem o clique do apertar: ele sai no soltar (ou vira o menu)
+  e.stopPropagation();
+  if (segurando || e.repeat) return;
+  const chave = a.getAttribute('data-tv-key');
+  if (chave) ultimoCartaz = chave;
+  const s = {
+    el: a,
+    disparou: false,
+    timer: setTimeout(() => {
+      s.disparou = true;
+      engolirOk = true;
+      ultimoEngolido = Date.now();
+      a.dispatchEvent(new CustomEvent('tv-segurar', { bubbles: true }));
+    }, SEGURAR_MS),
+  };
+  segurando = s;
+}
+
+function okSolto(e: KeyboardEvent) {
+  if (e.key !== 'Enter') return;
+  const s = segurando;
+  const engolia = engolirOk;
+  zerarSegurar();
+  if (s) {
+    e.preventDefault();
+    if (!s.disparou && s.el.isConnected) s.el.click();
+  } else if (engolia) {
+    e.preventDefault();
+  }
+}
+
 export function startTvNav(): () => void {
   // Foco posto sozinho (tela nova): enquanto ninguém apertar nada ele acompanha o que vai
   // carregando (ex.: o destaque chega depois das fileiras e passa a ser o 1º item).
@@ -245,7 +307,20 @@ export function startTvNav(): () => void {
       if (ini && ini !== document.activeElement) { focar(ini); automatico = ini; }
     }, 150);
   });
+  // Segurar o OK: na CAPTURA, antes do React e do clique nativo do botão.
+  const aoEsconder = () => { if (document.hidden) zerarSegurar(); };
+  window.addEventListener('keydown', okApertado, true);
+  window.addEventListener('keyup', okSolto, true);
+  window.addEventListener('blur', zerarSegurar);
+  document.addEventListener('visibilitychange', aoEsconder);
   window.addEventListener('keydown', onKey);
   obs.observe(document.body, { childList: true, subtree: true });
-  return () => { window.removeEventListener('keydown', onKey); obs.disconnect(); clearTimeout(t); pararDeOuvir(); };
+  return () => {
+    window.removeEventListener('keydown', okApertado, true);
+    window.removeEventListener('keyup', okSolto, true);
+    window.removeEventListener('blur', zerarSegurar);
+    document.removeEventListener('visibilitychange', aoEsconder);
+    zerarSegurar();
+    window.removeEventListener('keydown', onKey); obs.disconnect(); clearTimeout(t); pararDeOuvir();
+  };
 }

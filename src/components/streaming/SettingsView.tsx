@@ -1,4 +1,4 @@
-import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Bookmark, Server } from 'lucide-react';
+import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { isTv } from '@/lib/device';
 
@@ -32,7 +32,6 @@ function StatCard({ icon: Icon, label, count, episodes }: StatCardProps) {
 
 interface SettingsViewProps {
   stats: WatchedStats;
-  onList: () => void;
   onHistory: () => void;
   onDownload: () => void;
   onServers: () => void;
@@ -42,7 +41,7 @@ interface SettingsViewProps {
   onBack: () => void;
 }
 
-export default function SettingsView({ stats, onList, onHistory, onDownload, onServers, onBugs, onTv, onSignOut, onBack }: SettingsViewProps) {
+export default function SettingsView({ stats, onHistory, onDownload, onServers, onBugs, onTv, onSignOut, onBack }: SettingsViewProps) {
   return (
     <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -58,10 +57,6 @@ export default function SettingsView({ stats, onList, onHistory, onDownload, onS
 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onHistory}>
         <History className="w-4 h-4" /> Histórico
-      </Button>
-
-      <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onList}>
-        <Bookmark className="w-4 h-4" /> Minha Lista
       </Button>
 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onDownload}>
