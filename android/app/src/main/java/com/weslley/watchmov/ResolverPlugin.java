@@ -176,9 +176,10 @@ public class ResolverPlugin extends Plugin {
                     public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
                         String u = req.getUrl() != null ? req.getUrl().toString() : null;
                         if (StreamSnifferPlugin.shouldBlockResource(u)) return StreamSnifferPlugin.blockedResponse();
-                        // 01/11/2026 (quedas na Fire TV): com o motor ABYS ligado a página só serve pra passar o vídeo —
-                        // imagem e fonte (anúncio, capa, ícone do player) não carregam mais na TV.
-                        if (engine && tvMode && recursoDispensavelNoMotor(u, req.getRequestHeaders() != null ? req.getRequestHeaders().get("Accept") : null)) return StreamSnifferPlugin.blockedResponse();
+                        // 01/11/2026 (quedas na Fire TV): na TV a página escondida só serve pra achar e passar o vídeo —
+                        // imagem e fonte (anúncio, capa, ícone do player) não carregam. W1: com o motor ABYS ligado;
+                        // W3: a busca inteira (ela divide o processo de página, e a memória, com a tela do app).
+                        if (tvMode && recursoDispensavelNaTv(u, req.getRequestHeaders() != null ? req.getRequestHeaders().get("Accept") : null)) return StreamSnifferPlugin.blockedResponse();
                         if (u != null && StreamSnifferPlugin.isWatching()) StreamSnifferPlugin.inspect(u, req.getRequestHeaders());
                         // 25/09/2026: o vídeo passou pela rede = a opção ACHOU → segura o cronômetro pro app abrir o
                         // player (no emulador o m3u8 da Byse saiu no mesmo segundo em que a opção ia ser trocada).
@@ -224,7 +225,11 @@ public class ResolverPlugin extends Plugin {
                 w.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 FrameLayout root = act.findViewById(android.R.id.content);
                 // Tamanho REAL (players medem o viewport antes de iniciar), ATRÁS do WebView do app.
-                root.addView(w, 0, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+                // 01/11/2026 (W3 das quedas na Fire TV): na TV, metade da tela em cada lado (960×540 px = 480×270 CSS na
+                // Fire TV) — o Chromium desenha 1/4 dos pixels da página escondida. No celular, a tela toda (como antes).
+                android.util.DisplayMetrics dm = act.getResources().getDisplayMetrics();
+                int[] lado = tamanhoDaBusca(tvMode, dm.widthPixels, dm.heightPixels);
+                root.addView(w, 0, new FrameLayout.LayoutParams(lado[0], lado[1]));
                 web = w;
                 // Injeta em TODOS os frames (inclusive cross-origin) no document-start: cada frame clica sua
                 // opção/gate/play. O gate da Byse (.captcha-gate__play) só renderiza DENTRO do iframe f7hyg4q
@@ -502,12 +507,25 @@ public class ResolverPlugin extends Plugin {
 
     private String substK(String t, int k) { return t == null ? "" : t.replace("__OPT_K__", String.valueOf(k)); }
 
-    /** Imagem ou fonte = dispensável na página do motor ABYS (01/11/2026). Vídeo, script, CSS e chamadas do player passam. */
-    static boolean recursoDispensavelNoMotor(String url, String accept) {
+    /** Janela escondida da busca (01/11/2026, W3 das quedas na Fire TV): na TV, metade da tela em cada lado; no celular
+     *  (ou sem medida), a tela toda. Devolve {largura, altura} pro FrameLayout.LayoutParams. */
+    static int[] tamanhoDaBusca(boolean tv, int larguraTela, int alturaTela) {
+        if (!tv || larguraTela <= 0 || alturaTela <= 0) {
+            return new int[] { FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT };
+        }
+        return new int[] { Math.max(1, larguraTela / 2), Math.max(1, alturaTela / 2) };
+    }
+
+    /** Imagem ou fonte = dispensável na página escondida da TV (busca e motor ABYS, 01/11/2026). Vídeo (inclusive o
+     *  pré-roll: bloquear trava o JW, 14/09/2026), script, CSS e chamadas do player passam — e o desafio da Cloudflare
+     *  (`/cdn-cgi/`, challenges.cloudflare.com) também, pra a verificação nunca depender de uma imagem barrada. */
+    static boolean recursoDispensavelNaTv(String url, String accept) {
         if (url == null || url.startsWith("http://127.0.0.1:")) return false;
+        String low = url.toLowerCase(java.util.Locale.ROOT);
+        if (low.contains("/cdn-cgi/") || low.contains("challenges.cloudflare.com")) return false;
         String a = accept != null ? accept.toLowerCase(java.util.Locale.ROOT) : "";
         if (a.startsWith("image/")) return true;
-        String p = url.toLowerCase(java.util.Locale.ROOT);
+        String p = low;
         int q = p.indexOf('?');
         if (q >= 0) p = p.substring(0, q);
         int h = p.indexOf('#');
