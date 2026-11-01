@@ -462,6 +462,30 @@ interface RawDetails {
   seasons?: { season_number: number; episode_count: number }[];
 }
 
+// ── Elenco (pedido dele 01/11/2026, foto aprovada): fileira de fotos redondas embaixo da sinopse ──
+export interface TmdbCastMember { id: number; name: string; character?: string; profileUrl?: string }
+
+export const ELENCO_MAX = 15;
+
+interface RawCast { id: number; name: string; character?: string; profile_path?: string | null; roles?: { character?: string; episode_count?: number }[] }
+
+// Filme: /credits (já vem na ordem de importância). Série/anime: /aggregate_credits = elenco de TODAS as temporadas;
+// o personagem vem em roles[] — fica o papel com mais episódios.
+export async function getCredits(tmdbId: number, type: TmdbMediaType): Promise<TmdbCastMember[]> {
+  const path = type === 'movie' ? `/movie/${tmdbId}/credits` : `/tv/${tmdbId}/aggregate_credits`;
+  const d = await tmdbFetch<{ cast?: RawCast[] }>(path);
+  return (d.cast || []).slice(0, ELENCO_MAX).map(c => {
+    const papel = c.character
+      || [...(c.roles || [])].sort((a, b) => (b.episode_count || 0) - (a.episode_count || 0))[0]?.character;
+    return {
+      id: c.id,
+      name: c.name,
+      character: papel?.trim() || undefined,
+      profileUrl: c.profile_path ? `${IMG_BASE}/w185${c.profile_path}` : undefined,
+    };
+  });
+}
+
 export async function getDetails(tmdbId: number, type: TmdbMediaType): Promise<TmdbDetails> {
   const d = await tmdbFetch<RawDetails>(`/${type}/${tmdbId}`, { append_to_response: 'external_ids' });
   const genre = (d.genres || []).map((g) => g.name).join(', ') || undefined;
