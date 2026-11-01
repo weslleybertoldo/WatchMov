@@ -146,6 +146,14 @@ public class MainActivity extends BridgeActivity {
                             }
                             return null;
                         }
+
+                        // 01/11/2026: processo de página morto → o popup oculto só fecha (sem derrubar o app).
+                        @android.annotation.TargetApi(26)
+                        @Override
+                        public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail d) {
+                            runOnUiThread(() -> { if (v == sniffPopup) fecharPopup("a página caiu"); });
+                            return true;
+                        }
                     });
                     // A página fechou o popup (window.close) → a WebView oculta morre junto.
                     sniffPopup.setWebChromeClient(new WebChromeClient() {
@@ -228,6 +236,14 @@ public class MainActivity extends BridgeActivity {
                 }
                 return super.shouldInterceptRequest(view, request);
             }
+
+            // 01/11/2026: o processo de página morreu (falta de memória na TV) → o app NÃO cai; a tela é recriada.
+            @android.annotation.TargetApi(26)
+            @Override
+            public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                paginaCaiu(detail != null && detail.didCrash());
+                return true;
+            }
         });
 
         // Muitos players buscam o stream via SERVICE WORKER — que não passa pelo
@@ -252,6 +268,12 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {   // BridgeActivity declara public
         super.onResume();
+        naFrente = true;
+        if (paginaMorreu) {   // a página caiu com o player na frente: a tela volta recriada
+            paginaMorreu = false;
+            recreate();
+            return;
+        }
         // App (re)aberto: se a TV ainda está tocando o que espelhamos antes de fechar o
         // app, religa o proxy e o serviço headless já aqui — antes da web perguntar no
         // castStatus (4 s). Idempotente; sem sessão gravada não faz nada.
@@ -262,6 +284,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPause() {
         // Player nativo por cima ou app pro fundo: a setinha sai e o foco volta pro Ligar.
+        naFrente = false;
         TvCursor.desligar("pausa");
         super.onPause();
     }
@@ -276,6 +299,19 @@ public class MainActivity extends BridgeActivity {
     // Popup oculta da captura (estudo do Nuvio, item 6, 20/10/2026): só morria quando OUTRO popup a substituía, e
     // mesmo assim ficava presa na tela — uma WebView inteira a mais até o app fechar, na TV de 1 GB. Agora fecha
     // quando a página pede (window.close), quando a captura para (fechou o título ou trocou de fonte) e com a tela.
+    // 01/11/2026 (quedas na Fire TV): todas as WebViews do app dividem UM processo de página (renderer). Na TV de 1 GB
+    // o Android mata esse processo quando falta memória; sem tratar o onRenderProcessGone o Android derrubava o app
+    // inteiro junto — inclusive o player nativo com o filme. Agora a tela é recriada: na hora, se ela está na frente;
+    // ao voltar do player, se o filme estava tocando (o player nativo não depende da página e segue).
+    private boolean naFrente = false, paginaMorreu = false;
+
+    private void paginaCaiu(boolean crash) {
+        runOnUiThread(() -> {
+            android.util.Log.w("WatchMov", "página do app caiu (crash=" + crash + ", na frente=" + naFrente + ") → recriar a tela");
+            if (naFrente && !isFinishing()) recreate(); else paginaMorreu = true;
+        });
+    }
+
     private void fecharPopup(String motivo) {
         WebView p = sniffPopup;
         sniffPopup = null;
