@@ -21,6 +21,7 @@ import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
 import type { CastNow } from '@/lib/nativePlayer';
 import { isTv } from '@/lib/device';
 import SendToTvDialog from '@/components/streaming/SendToTvDialog';
+import CastRow from '@/components/streaming/CastRow';
 
 interface StoreLike {
   data: { items: WatchItem[] };
@@ -504,6 +505,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
             )}
           </div>
         )}
+
+        {/* Elenco embaixo da sinopse (pedido dele 01/11/2026, foto aprovada). */}
+        <CastRow tmdbId={media.tmdbId} type={media.type} />
 
         {loading && <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Carregando detalhes…</div>}
 

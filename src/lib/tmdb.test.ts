@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ANIME_ROWS, ANIME_GENRES, recent } from './tmdb';
+import { ANIME_ROWS, ANIME_GENRES, recent, getCredits, ELENCO_MAX } from './tmdb';
 import { isPrimaryGenre } from './rowFill';
 
 const ACAO = 10759, FANTASIA = 10765, COMEDIA = 35, DRAMA = 18, MISTERIO = 9648, CRIME = 80, FAMILIA = 10751;
@@ -60,5 +60,42 @@ describe('recent() — "Carregar mais" da aba Lançamentos', () => {
       expect(new URL(calls[2]).searchParams.get('page')).toBe('2');
       expect(new URL(calls[2]).pathname).toContain('/tv/on_the_air');
     } finally { globalThis.fetch = orig; }
+  });
+});
+
+describe('getCredits() — elenco da página do título', () => {
+  const comFetch = async (resposta: unknown, fn: (calls: string[]) => Promise<void>) => {
+    const calls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (u: string | URL | Request) => {
+      calls.push(String(u));
+      return { ok: true, json: async () => resposta } as unknown as Response;
+    }) as typeof fetch;
+    try { await fn(calls); } finally { globalThis.fetch = orig; }
+  };
+
+  it('filme: /movie/{id}/credits, foto w185, personagem e no máximo 15', async () => {
+    const cast = Array.from({ length: 20 }, (_, i) => ({ id: i, name: `Ator ${i}`, character: i === 1 ? '  ' : `Papel ${i}`, profile_path: i === 2 ? null : `/f${i}.jpg` }));
+    await comFetch({ cast }, async (calls) => {
+      const r = await getCredits(39254, 'movie');
+      expect(new URL(calls[0]).pathname).toContain('/movie/39254/credits');
+      expect(r).toHaveLength(ELENCO_MAX);
+      expect(r[0]).toEqual({ id: 0, name: 'Ator 0', character: 'Papel 0', profileUrl: 'https://image.tmdb.org/t/p/w185/f0.jpg' });
+      expect(r[1].character).toBeUndefined();        // personagem em branco não vira linha vazia
+      expect(r[2].profileUrl).toBeUndefined();       // sem foto: a fileira mostra as iniciais
+    });
+  });
+
+  it('série: /tv/{id}/aggregate_credits e o papel com mais episódios', async () => {
+    const cast = [{ id: 7, name: 'Bryan Cranston', profile_path: '/b.jpg', roles: [{ character: 'Ponta', episode_count: 1 }, { character: 'Walter White', episode_count: 62 }] }];
+    await comFetch({ cast }, async (calls) => {
+      const r = await getCredits(1396, 'tv');
+      expect(new URL(calls[0]).pathname).toContain('/tv/1396/aggregate_credits');
+      expect(r[0].character).toBe('Walter White');
+    });
+  });
+
+  it('sem elenco na TMDB: lista vazia', async () => {
+    await comFetch({}, async () => { expect(await getCredits(1, 'movie')).toEqual([]); });
   });
 });
