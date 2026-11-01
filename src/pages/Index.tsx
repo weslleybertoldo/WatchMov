@@ -6,15 +6,18 @@ import { usePaginaVisivel } from '@/hooks/use-pagina-visivel';
 import { WatchItem } from '@/types/watch';
 import {
   MediaSummary, trendingWeek, recent, discoverByGenre, discoverAnime, getDetails,
-  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, ANIME_GENRES, type TmdbMediaType,
+  MOVIE_GENRES, TV_GENRES, ANIME_ROWS, ANIME_GENRES, type TmdbMediaType, type TmdbCollectionRef,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
 import { getCastNow, closeNativePlayer, type CastNow } from '@/lib/nativePlayer';
 import { App as CapApp } from '@capacitor/app';
 import { appNaFrente, isTv } from '@/lib/device';
 import { listenAsTv, sessionIdOf } from '@/lib/tvRemote';
+import { lembrarCartaz } from '@/lib/tvNav';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
+import { CollectionRow, type ColecaoAbrir } from '@/components/streaming/CollectionCard';
+import { CollectionView, CollectionsGrid } from '@/components/streaming/CollectionView';
 import MediaDetail from '@/components/streaming/MediaDetail';
 import SearchView, { clearSearchCache } from '@/components/streaming/SearchView';
 import BrowseView from '@/components/streaming/BrowseView';
@@ -48,6 +51,7 @@ import {
 import { Home, Film, Tv, Sparkles, RadioTower, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'favoritos' | 'procurar';
+type ScrollPos = { y: number; rowKey?: string; rowTop?: number };
 
 function itemToSummary(i: WatchItem): MediaSummary {
   return {
@@ -135,6 +139,11 @@ export default function Index() {
   const [tab, setTab] = useState<Tab>('inicio');
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]>; cacheKey?: string }>(null);
+  // Coleções (pedido dele 01/11/2026): a pasta aberta e a grade do "Ver tudo". Pasta aberta pela página de um
+  // filme ("Faz parte da coleção X") guarda o filme e o lugar da home: o Voltar da pasta devolve a página do
+  // filme, e o Voltar dela, o lugar de onde ele tinha saído.
+  const [colecao, setColecao] = useState<null | (ColecaoAbrir & { origem?: MediaSummary; origemScroll?: ScrollPos })>(null);
+  const [colecoesTudo, setColecoesTudo] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
@@ -299,11 +308,57 @@ export default function Index() {
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
     openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
+  // Coleções: pasta e grade nascem no TOPO; o Voltar recoloca a tela de onde saiu (a linha da aba Filmes ou o
+  // lugar da grade), igual ao "Ver tudo" das categorias.
+  const gradeScrollRef = useRef<ScrollPos>({ y: 0 });
+  const colecaoVoltaRef = useRef<ScrollPos | null>(null);
+  const openColecao = useCallback((c: ColecaoAbrir) => {
+    const aqui = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
+    if (colecoesTudo) gradeScrollRef.current = aqui; else homeReturnRef.current = aqui;
+    setColecao({ id: c.id, nome: c.nome });
+  }, [colecoesTudo]);
+  const openColecoesTudo = useCallback(() => {
+    homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
+    setColecoesTudo(true);
+  }, []);
+  const openColecaoDoFilme = useCallback((c: TmdbCollectionRef) => {
+    if (!selected) return;
+    // O filme foi aberto DESTA pasta (ela está embaixo): é só voltar pra ela, no mesmo lugar.
+    if (colecao?.id === c.id) { closeDetail(); return; }
+    setColecao({ id: c.id, nome: c.name, origem: selected, origemScroll: homeScrollRef.current });
+    homeScrollRef.current = { y: 0 };   // o detalhe fecha agora: a pasta nasce no topo, não no lugar da home
+    closeDetail();
+  }, [selected, colecao, closeDetail]);
+  const fecharColecao = useCallback(() => {
+    if (!colecao) return;
+    if (colecao.origem) {
+      homeScrollRef.current = colecao.origemScroll ?? { y: 0 };
+      setAutoPlay(null);
+      setSelected(colecao.origem);
+    } else {
+      colecaoVoltaRef.current = colecoesTudo ? gradeScrollRef.current : homeReturnRef.current;
+      lembrarCartaz(`col-${colecao.id}`);   // TV: o foco volta na pasta de onde ele entrou
+    }
+    setColecao(null);
+  }, [colecao, colecoesTudo]);
+  const fecharColecoesTudo = useCallback(() => {
+    colecaoVoltaRef.current = homeReturnRef.current;
+    setColecoesTudo(false);
+  }, []);
+  useEffect(() => {
+    const volta = colecaoVoltaRef.current;
+    colecaoVoltaRef.current = null;
+    if (volta) return restoreScroll(volta);
+    if (colecao || colecoesTudo) window.scrollTo(0, 0);
+  }, [colecao, colecoesTudo]);
+
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (menuFavAberto) { setMenuFavAberto(false); return true; }
     if (exitAsk) { setExitAsk(false); return true; }
     if (liveChannel) { setLiveChannel(null); return true; }
     if (selected) { closeDetail(); return true; }
+    if (colecao) { fecharColecao(); return true; }
+    if (colecoesTudo) { fecharColecoesTudo(); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
     if (serversOpen) { setServersOpen(false); return true; }
@@ -319,7 +374,7 @@ export default function Index() {
     // Aba Início sem nada aberto: antes saía direto (pedido dele 26/09/2026: perguntar "Deseja sair?").
     setExitAsk(true);
     return true;
-  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, category, tab]);
+  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, colecao, colecoesTudo, fecharColecao, fecharColecoesTudo, category, tab]);
   useAndroidBackButton(handleBack);
 
   // TV: o celular mandou abrir um título (enviar pra TV). Fecha o que estiver por cima e mostra a página dele.
@@ -328,6 +383,7 @@ export default function Index() {
     setExitAsk(false); setLiveChannel(null); setSettingsOpen(false); setNoticesOpen(false); setHistoryOpen(false);
     setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false);
     setMenuFavAberto(false); setListFilter(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setCategory(null);
+    setColecao(null); setColecoesTudo(false);
     setAutoPlay(null);
     setSelected(m);
     window.scrollTo(0, 0);
@@ -395,14 +451,14 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); };
+  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setColecoesTudo(false); };
 
   // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
   // eram interruptores e a lupa nem aparecia com um título, os avisos ou o Painel por cima. A engrenagem sempre cai
   // na tela principal do Painel (não no Histórico/Downloads onde ele parou).
   const abrirDoTopo = (alvo: 'busca' | 'avisos' | 'painel') => {
     homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
-    closeDetail(); setCategory(null);
+    closeDetail(); setCategory(null); setColecao(null); setColecoesTudo(false);
     setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
     setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListFilter(null);
   };
@@ -493,10 +549,16 @@ export default function Index() {
              do título anterior (ficha, temporada, aba de episódios, autoPlay já usado)
              não vaza pro novo. */
           <MediaDetail key={`${selected.type}-${selected.tmdbId}`} media={selected} store={store} autoPlay={autoPlay} castNow={castNow}
-            onBack={closeDetail}
+            onBack={closeDetail} onOpenCollection={openColecaoDoFilme}
             /* Relacionado NÃO passa pelo openMedia: ele grava o scroll da HOME, e aqui
                estamos dentro do detalhe — sobrescrever bagunçaria a volta. */
             onOpen={(m) => { setAutoPlay(null); setSelected(m); window.scrollTo(0, 0); }} />
+        ) : colecao ? (
+          /* Pasta e grade logo depois do detalhe: a pasta aberta pela página de um filme (que pode ter vindo da
+             busca, do histórico…) aparece por cima da tela de onde o filme saiu, e o Voltar devolve tudo em ordem. */
+          <CollectionView key={colecao.id} colecao={colecao} onOpen={openMedia} onBack={fecharColecao} />
+        ) : colecoesTudo ? (
+          <CollectionsGrid onOpen={openColecao} onBack={fecharColecoesTudo} />
         ) : noticesOpen ? (
           <NoticesView onBack={() => setNoticesOpen(false)} />
         ) : settingsOpen ? (
@@ -549,6 +611,7 @@ export default function Index() {
           </div>
         ) : tab === 'filmes' ? (
           <div className="space-y-6">
+            <CollectionRow onOpen={openColecao} onSeeAll={openColecoesTudo} />
             {MOVIE_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
                 loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}

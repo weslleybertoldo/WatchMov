@@ -127,6 +127,12 @@ function focar(el: HTMLElement) {
 // Cartaz aberto por último (data-tv-key): ao voltar do detalhe o foco volta nele.
 let ultimoCartaz = '';
 
+// Tela que fecha e devolve o foco pra um cartaz certo: ao sair da pasta de uma coleção o foco volta na pasta,
+// mesmo que o último OK tenha sido num filme lá dentro (Coleções, 01/11/2026).
+export function lembrarCartaz(chave: string) {
+  ultimoCartaz = chave;
+}
+
 // Onde o foco começa: o item marcado (ex.: "Assistir" no detalhe), o cartaz aberto por
 // último, o 1º destaque/cartaz na tela ou o 1º item visível do conteúdo (sem o cabeçalho).
 function focoInicial(): HTMLElement | null {

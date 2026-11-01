@@ -48,8 +48,42 @@ export interface TmdbDetails {
   releaseDate?: string; // data completa YYYY-MM-DD (lançamento / 1ª exibição)
   // movie
   runtime?: number; // minutos
+  collection?: TmdbCollectionRef; // saga/trilogia da TMDB de que o filme faz parte ("Faz parte da coleção X")
   // tv
   seasons?: TmdbSeasonInfo[];
+}
+
+// ── Coleções (pedido dele 01/11/2026): sagas e trilogias, cada uma com os filmes na ordem de lançamento ──
+export interface TmdbCollectionRef { id: number; name: string; posterUrl?: string }
+
+export interface TmdbCollection extends TmdbCollectionRef {
+  overview?: string;
+  parts: MediaSummary[]; // na ordem de lançamento; anúncio sem data vai pro fim
+}
+
+// A TMDB põe "Coleção" no nome de todas ("Vingadores: Coleção", "Missão: Impossível - Coleção",
+// "Homem-Aranha (Vingadores) Coleção") — na tela já está dentro da aba Coleções, fica só o nome da saga.
+export function nomeDaColecao(nome: string): string {
+  const limpo = (nome || '')
+    .replace(/\s*[-–:]?\s*\(?\b(?:cole[çc][ãa]o|collection)\)?\s*$/i, '')
+    .replace(/^\s*(?:cole[çc][ãa]o|collection)\b\s*[-–:]?\s*/i, '')
+    .trim();
+  return limpo || (nome || '').trim() || 'Coleção';
+}
+
+// Ordem de lançamento: data crescente (lançamento futuro fica no fim, com a tag "Em breve" do cartaz);
+// sem data nenhuma vai pro fim de tudo, na ordem em que a TMDB mandou.
+export function ordemDeLancamento<T extends { date?: string }>(itens: T[]): T[] {
+  return itens
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => {
+      const da = a.m.date, db = b.m.date;
+      if (da && db && da !== db) return da < db ? -1 : 1;
+      if (da && !db) return -1;
+      if (!da && db) return 1;
+      return a.i - b.i;
+    })
+    .map(x => x.m);
 }
 
 function posterUrl(path: string | null | undefined, size = 'w500'): string | undefined {
@@ -460,6 +494,35 @@ interface RawDetails {
   genres?: { id: number; name: string }[];
   external_ids?: { imdb_id?: string | null };
   seasons?: { season_number: number; episode_count: number }[];
+  belongs_to_collection?: { id: number; name?: string; poster_path?: string | null } | null; // só filme
+}
+
+interface RawCollection {
+  id: number;
+  name?: string;
+  overview?: string;
+  poster_path?: string | null;
+  parts?: RawListItem[];
+}
+
+// Filmes da coleção na ordem de lançamento. Fica de fora só o anúncio sem data E sem capa (ex.: "Jurassic World
+// Liberation", 01/11/2026): não tem o que mostrar nem o que assistir. Lançamento futuro fica, como "Em breve".
+export async function getCollection(id: number): Promise<TmdbCollection> {
+  const d = await tmdbFetch<RawCollection>(`/collection/${id}`);
+  const vistos = new Set<number>();
+  const parts: MediaSummary[] = [];
+  for (const p of d.parts || []) {
+    if (vistos.has(p.id) || (!p.release_date && !p.poster_path)) continue;
+    vistos.add(p.id);
+    parts.push(toSummary(p, 'movie'));
+  }
+  return {
+    id: d.id ?? id,
+    name: nomeDaColecao(d.name || ''),
+    overview: d.overview || undefined,
+    posterUrl: posterUrl(d.poster_path, 'w342'),
+    parts: ordemDeLancamento(parts),
+  };
 }
 
 // ── Elenco (pedido dele 01/11/2026, foto aprovada): fileira de fotos redondas embaixo da sinopse ──
@@ -506,6 +569,8 @@ export async function getDetails(tmdbId: number, type: TmdbMediaType): Promise<T
 
   if (type === 'movie') {
     details.runtime = d.runtime || undefined;
+    const col = d.belongs_to_collection;
+    if (col?.id) details.collection = { id: col.id, name: nomeDaColecao(col.name || ''), posterUrl: posterUrl(col.poster_path, 'w154') };
   } else {
     const epDur = (d.episode_run_time && d.episode_run_time[0]) || 24;
     details.seasons = (d.seasons || [])

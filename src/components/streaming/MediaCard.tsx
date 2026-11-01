@@ -39,6 +39,9 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
   const [loaded, setLoaded] = useState(() => !!media.posterUrl && carregados.has(media.posterUrl));
   const upcoming = isUpcoming(media.date);
   const fresh = isNew(media.date);
+  // Cartaz numerado (Top 10, filmes de uma coleção): a tag "Em breve"/"Novo" desce pra baixo do número — no
+  // canto de cima as duas ficavam uma em cima da outra (ex.: o 5 e o 6 dos Vingadores, que ainda vão estrear).
+  const tagTopo = rank !== undefined ? 'top-10' : 'top-1';
   // Favoritos (pedido dele 01/11/2026): pastinha no canto de cima, à direita; segurar a capa abre o menu de pôr/tirar.
   const favorito = useEhFavorito(media.type, media.tmdbId);
   const mediaRef = useRef(media);
@@ -69,11 +72,11 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
         </span>
       )}
       {upcoming ? (
-        <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-black/70 text-white/90 backdrop-blur-sm">
+        <span className={`absolute ${tagTopo} left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-black/70 text-white/90 backdrop-blur-sm`}>
           {upcomingLabel(media.date)}
         </span>
       ) : fresh ? (
-        <span className="absolute top-1 left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-primary text-primary-foreground">
+        <span className={`absolute ${tagTopo} left-1 z-10 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-primary text-primary-foreground`}>
           Novo
         </span>
       ) : null}

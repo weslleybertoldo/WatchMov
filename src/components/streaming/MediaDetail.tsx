@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
-import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, type TmdbDetails, type TmdbEpisodeInfo } from '@/lib/tmdb';
+import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, type TmdbDetails, type TmdbEpisodeInfo, type TmdbCollectionRef } from '@/lib/tmdb';
 import { WatchItem, Season } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
@@ -7,7 +7,7 @@ import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpi
 import { Button } from '@/components/ui/button';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
-import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast } from 'lucide-react';
+import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast, Folder } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress, continuarDe, proximoEpisodio } from '@/lib/watchProgress';
 import { latestPosition } from '@/lib/streamCache';
 import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
@@ -84,11 +84,12 @@ interface MediaDetailProps {
   store: StoreLike;
   onBack: () => void;
   onOpen?: (m: MediaSummary) => void;   // abrir um relacionado
+  onOpenCollection?: (c: TmdbCollectionRef) => void;   // "Faz parte da coleção X" → abre a pasta da saga
   autoPlay?: null | { season: number; episode: number };  // atalho "espelhando na TV"
   castNow?: CastNow | null;             // o que está espelhando agora (tag "Espelhado")
 }
 
-export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, castNow }: MediaDetailProps) {
+export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollection, autoPlay, castNow }: MediaDetailProps) {
   const storeType: 'movie' | 'series' = media.type === 'tv' ? 'series' : 'movie';
   const isSeries = storeType === 'series';
 
@@ -508,6 +509,26 @@ export default function MediaDetail({ media, store, onBack, onOpen, autoPlay, ca
 
         {/* Elenco embaixo da sinopse (pedido dele 01/11/2026, foto aprovada). */}
         <CastRow tmdbId={media.tmdbId} type={media.type} />
+
+        {/* Coleção (pedido dele 01/11/2026): filme de uma saga/trilogia → a pasta com todos, na ordem de lançamento. */}
+        {!isSeries && details?.collection && onOpenCollection && (() => {
+          const col = details.collection;
+          return (
+            <button type="button" onClick={() => onOpenCollection(col)} data-faz-parte={col.id}
+              className="w-full flex items-center gap-3 rounded-lg border border-border bg-muted/40 p-2 text-left hover:border-primary transition">
+              <div className="w-10 shrink-0 aspect-[2/3] rounded overflow-hidden bg-muted flex items-center justify-center">
+                {col.posterUrl
+                  ? <img src={col.posterUrl} alt="" loading="lazy" draggable={false} className="w-full h-full object-cover" />
+                  : <Folder className="w-4 h-4 text-muted-foreground" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Folder className="w-3 h-3" /> Faz parte da coleção</p>
+                <p className="text-sm font-semibold text-foreground truncate">{col.name}</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+            </button>
+          );
+        })()}
 
         {loading && <div className="flex items-center gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Carregando detalhes…</div>}
 
