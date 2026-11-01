@@ -219,7 +219,7 @@ export const ABYSS_PIECE_TIMEOUT_MS = 20000;
 export function buildAbyssScript(sid: string, port = PROXY_PORT): string {
   return `(function(){try{
 if(!/(^|\\.)(abysscdn|abyssplayer)\\.com$/.test(location.hostname)||window.__wmAbys)return;window.__wmAbys=1;
-var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${abyssPumps()},LATE=${ABYSS_LATE_MS},PT=${ABYSS_PIECE_TIMEOUT_MS};
+var SID=${JSON.stringify(sid)},BASE='http://127.0.0.1:${port}/',lastKA=0,PUMPS=${abyssPumps()},LATE=${ABYSS_LATE_MS},PT=${ABYSS_PIECE_TIMEOUT_MS},TV=${isTv() ? 1 : 0},av1s=0;
 var log=function(m){try{console.log('WMABYS '+m)}catch(_){}};
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=frame').then(function(r){log('frame '+location.hostname+' progress '+r.status)}).catch(function(e){log('progress-err '+e)});
 var srcs=null,tries=0;
@@ -232,8 +232,11 @@ function cancelBody(r){try{r.body&&r.body.cancel()}catch(_){}}
 /* Motor pronto (26/09/2026): os pedaços saem pelo SW com o vídeo do JW PARADO. Pausa o <video> que estiver tocando a
    cada volta do pump — o player do Abyss (ou o play da busca) não deixa o 360p escondido tocar o filme inteiro. */
 function hush(){document.querySelectorAll('video').forEach(function(v){try{if(!v.paused)v.pause()}catch(_){}})}
-function firstChunk(r){var rd=r.body&&r.body.getReader?r.body.getReader():null;if(!rd)return r.arrayBuffer().then(function(b){return b.byteLength});return rd.read().then(function(c){try{rd.cancel()}catch(_){}return c.value?c.value.byteLength:0})}
-function meta(s){return fetch(s.u,{headers:{Range:'bytes=0-1023'}}).then(function(r){var cr=r.headers.get('content-range')||'';var m=/\\/(\\d+)\\s*$/.exec(cr);s.total=m?+m[1]:(r.status==200?+(r.headers.get('content-length')||0):0);s.type=r.type;s.status=r.status;return firstChunk(r)}).then(function(n){s.ok=s.total>0&&n>0;log('meta q='+s.q+' status='+s.status+' total='+s.total+' type='+s.type+' first='+n+' ok='+s.ok);return s.ok}).catch(function(e){log('meta-err q='+s.q+' '+e);return false})}
+function firstChunk(r){var rd=r.body&&r.body.getReader?r.body.getReader():null;if(!rd)return r.arrayBuffer().then(function(b){return new Uint8Array(b)});return rd.read().then(function(c){try{rd.cancel()}catch(_){}return c.value||new Uint8Array(0)})}
+/* 01/11/2026: AV1 no começo do MP4 (caixa ftyp/stsd com 'av01' e sem 'avc1'/'hvc1'/'hev1'). A Fire TV não decodifica
+   AV1: tocava só o som e caía pra 360p depois (VIDEO_SEM_IMAGEM). Na TV essa qualidade nem entra na lista. */
+function isAv1(b){var t='';for(var i=0;i<b.length&&i<4096;i++)t+=String.fromCharCode(b[i]);return t.indexOf('av01')>=0&&!/avc1|hvc1|hev1/.test(t)}
+function meta(s){return fetch(s.u,{headers:{Range:'bytes=0-1023'}}).then(function(r){var cr=r.headers.get('content-range')||'';var m=/\\/(\\d+)\\s*$/.exec(cr);s.total=m?+m[1]:(r.status==200?+(r.headers.get('content-length')||0):0);s.type=r.type;s.status=r.status;return firstChunk(r)}).then(function(b){var n=b.byteLength;s.av1=isAv1(b);s.ok=s.total>0&&n>0&&!(TV&&s.av1);log('meta q='+s.q+' status='+s.status+' total='+s.total+' type='+s.type+' first='+n+(s.av1?' av1':'')+' ok='+s.ok);return s.ok}).catch(function(e){log('meta-err q='+s.q+' '+e);return false})}
 function pump(rel){hush();fetch(BASE+'abyss/next?sid='+SID+(rel?'&rel='+rel:'')).then(function(r){return r.json()}).then(function(n){
 if(n&&n.gone){log('gone');return}
 if(!n||n.off==null){var now=Date.now();if(now-lastKA>20000){lastKA=now;fetch(srcs[0].u,{headers:{Range:'bytes=0-1023'}}).then(cancelBody).catch(function(){})}return pump()}
@@ -287,10 +290,12 @@ clearInterval(iv);log('sources '+s.map(function(x){return x.q}).join(','));
 fetch(BASE+'abyss/progress?sid='+SID+'&stage=sources').catch(function(){});
 var okq=[],sent=false,pend=s.length,lt=null;srcs=[];
 var lst=function(l){return encodeURIComponent(JSON.stringify(l.map(function(x){return{q:x.q,total:x.total}})))};
-var send=function(){if(sent)return;sent=true;if(lt)clearTimeout(lt);if(!okq.length){log('sem meta');return}
+var send=function(){if(sent)return;sent=true;if(lt)clearTimeout(lt);if(!okq.length){log('sem meta'+(av1s?' (só AV1 na TV)':''));
+/* Só AV1 na TV: a opção morre na hora (o nativo pula pra próxima) em vez de esperar o prazo do ABYS. */
+if(TV&&av1s){try{console.log('WMOPT|dead|k=__OPT_K__|reason=av1-tv')}catch(_){}}return}
 for(var i=0;i<okq.length;i++)srcs.push(okq[i]);window.__wmNoPlay=1;try{var p=jwplayer();p.pause&&p.pause()}catch(_){}hush();
 fetch(BASE+'abyss/ready?sid='+SID+'&list='+lst(okq)).then(function(r){log('ready '+r.status+' q='+okq.map(function(x){return x.q}).join(',')+(FLOW?' fluxo':' pedaços'));if(FLOW)flow();else for(var w=0;w<PUMPS;w++)pump()}).catch(function(e){log('ready-err '+e)})};
-s.forEach(function(x){meta(x).then(function(ok){pend--;
+s.forEach(function(x){meta(x).then(function(ok){pend--;if(TV&&x.av1)av1s++;
 if(ok){if(!sent){okq.push(x);if(okq.length===1)lt=setTimeout(send,LATE)}
 else{srcs.push(x);fetch(BASE+'abyss/add?sid='+SID+'&list='+lst([x])).then(function(r){log('add q='+x.q+' '+r.status)}).catch(function(e){log('add-err '+e)})}}
 if(!pend&&!sent)send()})})},700);

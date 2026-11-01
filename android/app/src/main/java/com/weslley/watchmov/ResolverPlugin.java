@@ -71,6 +71,7 @@ public class ResolverPlugin extends Plugin {
     private ScriptHandler injectHandler;
     private String abyssSid = "", injectAlt = "", startUrl = "";
     private boolean abyssReady = false, engine = false, abyssExtended = false;
+    private volatile boolean tvMode = false;   // 01/11/2026: motor leve só na TV (lido no shouldInterceptRequest, outra thread)
     private Runnable abyssFallback;
     // v4.57: ciclo de opcoes (playerflix / Fonte 6). O console WMOPT diz N/nomes; o nativo troca o K e recarrega.
     private String referer = "";
@@ -96,6 +97,7 @@ public class ResolverPlugin extends Plugin {
     @Override
     public void load() {
         instance = this;
+        tvMode = TvMode.isTv(getContext());
         // O proxy avisa quando o JS do frame abysscdn leu as qualidades → emitimos os 3 links ao app.
         ProxyServer.onAbyssReady = (sid, qs) -> ui.post(() -> onAbyssReady(sid, qs));
         // Qualidade que terminou de medir depois (a 1ª pronta já abriu o filme) → menu do player + troca pra maior.
@@ -174,6 +176,9 @@ public class ResolverPlugin extends Plugin {
                     public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
                         String u = req.getUrl() != null ? req.getUrl().toString() : null;
                         if (StreamSnifferPlugin.shouldBlockResource(u)) return StreamSnifferPlugin.blockedResponse();
+                        // 01/11/2026 (quedas na Fire TV): com o motor ABYS ligado a página só serve pra passar o vídeo —
+                        // imagem e fonte (anúncio, capa, ícone do player) não carregam mais na TV.
+                        if (engine && tvMode && recursoDispensavelNoMotor(u, req.getRequestHeaders() != null ? req.getRequestHeaders().get("Accept") : null)) return StreamSnifferPlugin.blockedResponse();
                         if (u != null && StreamSnifferPlugin.isWatching()) StreamSnifferPlugin.inspect(u, req.getRequestHeaders());
                         // 25/09/2026: o vídeo passou pela rede = a opção ACHOU → segura o cronômetro pro app abrir o
                         // player (no emulador o m3u8 da Byse saiu no mesmo segundo em que a opção ia ser trocada).
@@ -488,6 +493,21 @@ public class ResolverPlugin extends Plugin {
 
     private String substK(String t, int k) { return t == null ? "" : t.replace("__OPT_K__", String.valueOf(k)); }
 
+    /** Imagem ou fonte = dispensável na página do motor ABYS (01/11/2026). Vídeo, script, CSS e chamadas do player passam. */
+    static boolean recursoDispensavelNoMotor(String url, String accept) {
+        if (url == null || url.startsWith("http://127.0.0.1:")) return false;
+        String a = accept != null ? accept.toLowerCase(java.util.Locale.ROOT) : "";
+        if (a.startsWith("image/")) return true;
+        String p = url.toLowerCase(java.util.Locale.ROOT);
+        int q = p.indexOf('?');
+        if (q >= 0) p = p.substring(0, q);
+        int h = p.indexOf('#');
+        if (h >= 0) p = p.substring(0, h);
+        return p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".gif") || p.endsWith(".webp")
+                || p.endsWith(".svg") || p.endsWith(".ico") || p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf")
+                || p.endsWith(".otf");
+    }
+
     private String tailLog() { String x = abysLog.toString(); return x.length() > 180 ? x.substring(x.length() - 180) : x; }
 
     // Console do WebView (todos os frames): WMABYS = diagnostico do pump ABYS; WMOPT = lista de opcoes do playerflix.
@@ -719,7 +739,10 @@ public class ResolverPlugin extends Plugin {
         try {
             if (w.getParent() != alvo) {
                 if (w.getParent() instanceof ViewGroup) ((ViewGroup) w.getParent()).removeView(w);
-                alvo.addView(w, 0, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+                // 01/11/2026 (quedas na Fire TV): na TV o motor fica com 1×1 px atrás do player em vez de tela cheia — a
+                // página continua "visível" (o JS não congela), mas o Chromium deixa de desenhar 1920×1080 o filme inteiro.
+                int lado = TvMode.isTv(destino) ? 1 : FrameLayout.LayoutParams.MATCH_PARENT;
+                alvo.addView(w, 0, new FrameLayout.LayoutParams(lado, lado));
             }
             hostMotor = novoHost;
             android.util.Log.i("WatchMov", "motor ABYS na tela " + destino.getClass().getSimpleName() + (this == instance ? "" : " (plugin anterior)"));
