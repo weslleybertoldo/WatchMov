@@ -353,6 +353,14 @@ export function buildBloggerScript(): string {
     + '}catch(_){}})();';
 }
 
+// 01/11/2026 (W3 das quedas na Fire TV): o leitor do Blogger põe um gancho em fetch/XHR que lê TODA resposta como texto,
+// em todo frame (anúncio inclusive), durante a busca inteira. Em 45 dias de `RESOLVER_BLOGGER` só a Fonte 1
+// (myembed.biz → playerflix) entregou link do Blogger → na TV ele vai só nela; no celular, como antes.
+export const BLOGGER_PROVIDERS = ['embedmovies'];
+export function bloggerNaBusca(providerId?: string, tv: boolean = isTv()): boolean {
+  return !tv || (!!providerId && BLOGGER_PROVIDERS.includes(providerId));
+}
+
 // "Esta fonte não tem o título" em 1–2 s (estudo do Nuvio, item 1, 20/10/2026). Antes o resolvedor esperava o prazo
 // inteiro (45 s, ou 90 s na Pomfy e no ABYS) numa página que já tinha dito que não tem. Roda em todo frame junto dos
 // cliques e avisa o nativo pelo console (`WMOPT|none|reason=…`), que encerra a busca na hora. Sinais testados em
@@ -500,7 +508,7 @@ export async function startResolver(o: { url: string; referer?: string; provider
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
     // v4.64: Fonte 1 também roda o ciclo de opções (lista REAL da embedplay.one) + o pump do ABYS; o antigo par
     // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
-    injectScript: (abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript(clickStepsFor(o.providerId)) + buildBloggerScript())
+    injectScript: (abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript(clickStepsFor(o.providerId)) + (bloggerNaBusca(o.providerId) ? buildBloggerScript() : ''))
       + buildSemTituloScript(),
     injectScriptAlt: '',
     abyssSid: sid, key: o.key ?? '', fallbackMs: 0,

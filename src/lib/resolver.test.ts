@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, ABYSS_PIECE_TIMEOUT_MS, STEPS_REPEAT, DEAD_TEXTS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, ABYSS_PIECE_TIMEOUT_MS, STEPS_REPEAT, DEAD_TEXTS, bloggerNaBusca, BLOGGER_PROVIDERS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   // __wmNoPlay: o motor ABYS marca o frame no ready — não pode vazar de um teste pro outro.
@@ -860,5 +860,25 @@ describe('resolver oculto (regras puras)', () => {
     } finally {
       delete w.__wmNoPlay; document.body.innerHTML = '';
     }
+  });
+});
+
+// 01/11/2026 (W3 das quedas na Fire TV): o leitor do Blogger (gancho em fetch/XHR em todo frame) só vai na busca da
+// Fonte 1 quando é TV — em 45 dias só ela entregou link do Blogger. No celular nada muda.
+describe('busca leve na TV: leitor do Blogger só na Fonte 1', () => {
+  it('na TV: só a Fonte 1 (embedmovies) leva o leitor do Blogger', () => {
+    expect(BLOGGER_PROVIDERS).toEqual(['embedmovies']);
+    expect(bloggerNaBusca('embedmovies', true)).toBe(true);
+    for (const id of ['megaembed', 'pomfy', 'superflix', 'warezcdn', 'embedplayapi', 'fshd']) expect(bloggerNaBusca(id, true)).toBe(false);
+    expect(bloggerNaBusca(undefined, true)).toBe(false);
+  });
+
+  it('no celular: todas as fontes seguem com o leitor (como antes)', () => {
+    for (const id of ['embedmovies', 'megaembed', 'pomfy', 'superflix', 'warezcdn']) expect(bloggerNaBusca(id, false)).toBe(true);
+    expect(bloggerNaBusca(undefined, false)).toBe(true);
+  });
+
+  it('sem dizer o aparelho, segue o isTv() do app (fora da TV = celular)', () => {
+    expect(bloggerNaBusca('megaembed')).toBe(true);
   });
 });
