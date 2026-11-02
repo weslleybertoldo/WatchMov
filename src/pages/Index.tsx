@@ -17,7 +17,8 @@ import { lembrarCartaz } from '@/lib/tvNav';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import { CollectionRow, type ColecaoAbrir } from '@/components/streaming/CollectionCard';
-import { CollectionView, CollectionsGrid } from '@/components/streaming/CollectionView';
+import { CollectionView, CollectionsGrid, UniversoView } from '@/components/streaming/CollectionView';
+import { universoPorId, type UniversoId } from '@/lib/colecoes';
 import MediaDetail from '@/components/streaming/MediaDetail';
 import SearchView, { clearSearchCache } from '@/components/streaming/SearchView';
 import BrowseView from '@/components/streaming/BrowseView';
@@ -144,6 +145,9 @@ export default function Index() {
   // filme, e o Voltar dela, o lugar de onde ele tinha saído.
   const [colecao, setColecao] = useState<null | (ColecaoAbrir & { origem?: MediaSummary; origemScroll?: ScrollPos })>(null);
   const [colecoesTudo, setColecoesTudo] = useState(false);
+  // W5 (pedido dele 01/11/2026): pasta Marvel/DC aberta (as pastas das sagas do universo). Fica embaixo da pasta da
+  // saga aberta de dentro dela: o Voltar da saga devolve o universo, e o do universo, a fileira (ou o "Ver tudo").
+  const [universo, setUniverso] = useState<UniversoId | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [continueFilter, setContinueFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
@@ -308,14 +312,22 @@ export default function Index() {
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
     openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
-  // Coleções: pasta e grade nascem no TOPO; o Voltar recoloca a tela de onde saiu (a linha da aba Filmes ou o
-  // lugar da grade), igual ao "Ver tudo" das categorias.
+  // Coleções: pasta, universo e grade nascem no TOPO; o Voltar recoloca a tela de onde saiu (a linha da aba Filmes,
+  // o lugar da grade ou o da pasta do universo), igual ao "Ver tudo" das categorias.
   const gradeScrollRef = useRef<ScrollPos>({ y: 0 });
+  const universoScrollRef = useRef<ScrollPos>({ y: 0 });
   const colecaoVoltaRef = useRef<ScrollPos | null>(null);
   const openColecao = useCallback((c: ColecaoAbrir) => {
     const aqui = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
-    if (colecoesTudo) gradeScrollRef.current = aqui; else homeReturnRef.current = aqui;
+    if (universo) universoScrollRef.current = aqui;
+    else if (colecoesTudo) gradeScrollRef.current = aqui;
+    else homeReturnRef.current = aqui;
     setColecao({ id: c.id, nome: c.nome });
+  }, [universo, colecoesTudo]);
+  const openUniverso = useCallback((u: UniversoId) => {
+    const aqui = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
+    if (colecoesTudo) gradeScrollRef.current = aqui; else homeReturnRef.current = aqui;
+    setUniverso(u);
   }, [colecoesTudo]);
   const openColecoesTudo = useCallback(() => {
     homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
@@ -336,11 +348,17 @@ export default function Index() {
       setAutoPlay(null);
       setSelected(colecao.origem);
     } else {
-      colecaoVoltaRef.current = colecoesTudo ? gradeScrollRef.current : homeReturnRef.current;
+      colecaoVoltaRef.current = universo ? universoScrollRef.current : colecoesTudo ? gradeScrollRef.current : homeReturnRef.current;
       lembrarCartaz(`col-${colecao.id}`);   // TV: o foco volta na pasta de onde ele entrou
     }
     setColecao(null);
-  }, [colecao, colecoesTudo]);
+  }, [colecao, universo, colecoesTudo]);
+  const fecharUniverso = useCallback(() => {
+    if (!universo) return;
+    colecaoVoltaRef.current = colecoesTudo ? gradeScrollRef.current : homeReturnRef.current;
+    lembrarCartaz(`uni-${universo}`);   // TV: o foco volta na pasta Marvel/DC
+    setUniverso(null);
+  }, [universo, colecoesTudo]);
   const fecharColecoesTudo = useCallback(() => {
     colecaoVoltaRef.current = homeReturnRef.current;
     setColecoesTudo(false);
@@ -349,8 +367,8 @@ export default function Index() {
     const volta = colecaoVoltaRef.current;
     colecaoVoltaRef.current = null;
     if (volta) return restoreScroll(volta);
-    if (colecao || colecoesTudo) window.scrollTo(0, 0);
-  }, [colecao, colecoesTudo]);
+    if (colecao || universo || colecoesTudo) window.scrollTo(0, 0);
+  }, [colecao, universo, colecoesTudo]);
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (menuFavAberto) { setMenuFavAberto(false); return true; }
@@ -358,6 +376,7 @@ export default function Index() {
     if (liveChannel) { setLiveChannel(null); return true; }
     if (selected) { closeDetail(); return true; }
     if (colecao) { fecharColecao(); return true; }
+    if (universo) { fecharUniverso(); return true; }
     if (colecoesTudo) { fecharColecoesTudo(); return true; }
     if (historyOpen) { setHistoryOpen(false); return true; }
     if (downloadOpen) { setDownloadOpen(false); return true; }
@@ -374,7 +393,7 @@ export default function Index() {
     // Aba Início sem nada aberto: antes saía direto (pedido dele 26/09/2026: perguntar "Deseja sair?").
     setExitAsk(true);
     return true;
-  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, colecao, colecoesTudo, fecharColecao, fecharColecoesTudo, category, tab]);
+  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, colecao, universo, colecoesTudo, fecharColecao, fecharUniverso, fecharColecoesTudo, category, tab]);
   useAndroidBackButton(handleBack);
 
   // TV: o celular mandou abrir um título (enviar pra TV). Fecha o que estiver por cima e mostra a página dele.
@@ -383,7 +402,7 @@ export default function Index() {
     setExitAsk(false); setLiveChannel(null); setSettingsOpen(false); setNoticesOpen(false); setHistoryOpen(false);
     setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false);
     setMenuFavAberto(false); setListFilter(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setCategory(null);
-    setColecao(null); setColecoesTudo(false);
+    setColecao(null); setUniverso(null); setColecoesTudo(false);
     setAutoPlay(null);
     setSelected(m);
     window.scrollTo(0, 0);
@@ -451,14 +470,14 @@ export default function Index() {
   const histSeries = watchedSeries.map(itemToSummary);
   const histAnimes = watchedAnimes.map(itemToSummary);
 
-  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setColecoesTudo(false); };
+  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setUniverso(null); setColecoesTudo(false); };
 
   // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
   // eram interruptores e a lupa nem aparecia com um título, os avisos ou o Painel por cima. A engrenagem sempre cai
   // na tela principal do Painel (não no Histórico/Downloads onde ele parou).
   const abrirDoTopo = (alvo: 'busca' | 'avisos' | 'painel') => {
     homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
-    closeDetail(); setCategory(null); setColecao(null); setColecoesTudo(false);
+    closeDetail(); setCategory(null); setColecao(null); setUniverso(null); setColecoesTudo(false);
     setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
     setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListFilter(null);
   };
@@ -557,8 +576,10 @@ export default function Index() {
           /* Pasta e grade logo depois do detalhe: a pasta aberta pela página de um filme (que pode ter vindo da
              busca, do histórico…) aparece por cima da tela de onde o filme saiu, e o Voltar devolve tudo em ordem. */
           <CollectionView key={colecao.id} colecao={colecao} onOpen={openMedia} onBack={fecharColecao} />
+        ) : universo && universoPorId(universo) ? (
+          <UniversoView key={universo} universo={universoPorId(universo)!} onOpen={openColecao} onBack={fecharUniverso} />
         ) : colecoesTudo ? (
-          <CollectionsGrid onOpen={openColecao} onBack={fecharColecoesTudo} />
+          <CollectionsGrid onOpen={openColecao} onOpenUniverso={openUniverso} onBack={fecharColecoesTudo} />
         ) : noticesOpen ? (
           <NoticesView onBack={() => setNoticesOpen(false)} />
         ) : settingsOpen ? (
@@ -611,7 +632,7 @@ export default function Index() {
           </div>
         ) : tab === 'filmes' ? (
           <div className="space-y-6">
-            <CollectionRow onOpen={openColecao} onSeeAll={openColecoesTudo} />
+            <CollectionRow onOpen={openColecao} onOpenUniverso={openUniverso} onSeeAll={openColecoesTudo} />
             {MOVIE_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
                 loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import type { TmdbCollection, MediaSummary } from '@/lib/tmdb';
-import { carregarColecao, carregarColecoes } from '@/lib/colecoes';
-import { CollectionCard, CollectionRow } from './CollectionCard';
-import { CollectionView, CollectionsGrid } from './CollectionView';
+import { DESTAQUES, SECOES, UNIVERSOS, carregarColecao, carregarColecoes, idsDe } from '@/lib/colecoes';
+import { CollectionCard, CollectionRow, UniversoCard } from './CollectionCard';
+import { CollectionView, CollectionsGrid, UniversoView } from './CollectionView';
 import MediaCard from './MediaCard';
 
 vi.mock('@/lib/device', () => ({ isTv: vi.fn(() => false) }));
@@ -41,29 +41,65 @@ describe('CollectionCard — a pasta', () => {
   });
 });
 
+describe('UniversoCard — a pasta Marvel/DC (pasta de pastas)', () => {
+  it('nome grande, "N coleções"; foco da TV como cartaz; sem TMDB', () => {
+    const onClick = vi.fn();
+    render(<UniversoCard universo={UNIVERSOS[0]} onClick={onClick} />);
+    const btn = screen.getByRole('button');
+    expect(btn).toHaveAttribute('data-tv-card');
+    expect(btn).toHaveAttribute('data-tv-key', 'uni-marvel');
+    expect(btn).not.toHaveAttribute('data-tv-hold');
+    expect(screen.getAllByText('Marvel')).toHaveLength(2);   // na capa e embaixo
+    expect(screen.getByText(`${UNIVERSOS[0].colecoes.length} coleções`)).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(carregarColecoes).not.toHaveBeenCalled();
+  });
+});
+
 describe('CollectionRow — fileira "Coleções" no topo da aba Filmes', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('mostra as pastas na ordem; tocar abre a pasta; "Ver tudo" e "Ver mais" abrem a grade', async () => {
+  it('Marvel e DC primeiro, depois os destaques; tocar abre; "Ver tudo" e "Ver mais" abrem a grade', async () => {
     vi.mocked(carregarColecoes).mockResolvedValue([harryPotter, senhor]);
-    const onOpen = vi.fn(), onSeeAll = vi.fn();
-    render(<CollectionRow onOpen={onOpen} onSeeAll={onSeeAll} />);
+    const onOpen = vi.fn(), onOpenUniverso = vi.fn(), onSeeAll = vi.fn();
+    render(<CollectionRow onOpen={onOpen} onOpenUniverso={onOpenUniverso} onSeeAll={onSeeAll} />);
     expect(screen.getByText('Coleções')).toBeInTheDocument();
+    // as pastas dos universos aparecem na hora, antes da TMDB responder
+    expect([...document.querySelectorAll('[data-universo]')].map(el => el.getAttribute('data-universo'))).toEqual(['marvel', 'dc']);
     await screen.findByText('Harry Potter');
-    const pastas = [...document.querySelectorAll('[data-colecao]')].map(el => el.getAttribute('data-colecao'));
-    expect(pastas).toEqual(['1241', '119']);
-    expect(vi.mocked(carregarColecoes).mock.calls[0][0]).toHaveLength(10);   // só as 10 da fileira
+    const pastas = [...document.querySelectorAll('[data-tv-card]')].map(el => el.getAttribute('data-tv-key'));
+    expect(pastas).toEqual(['uni-marvel', 'uni-dc', 'col-1241', 'col-119']);
+    expect(vi.mocked(carregarColecoes).mock.calls[0][0]).toEqual(DESTAQUES);   // só os 10 destaques
     fireEvent.click(screen.getByText('O Senhor dos Anéis'));
     expect(onOpen).toHaveBeenCalledWith({ id: 119, nome: 'O Senhor dos Anéis' });
+    fireEvent.click(document.querySelector('[data-universo="dc"]')!);
+    expect(onOpenUniverso).toHaveBeenCalledWith('dc');
     fireEvent.click(screen.getByText('Ver tudo'));
     fireEvent.click(screen.getByText('Ver mais'));
     expect(onSeeAll).toHaveBeenCalledTimes(2);
   });
 
-  it('TMDB fora: a fileira some', async () => {
+  it('as pastas vão aparecendo de lote em lote', async () => {
+    let terminar: (l: TmdbCollection[]) => void = () => {};
+    vi.mocked(carregarColecoes).mockImplementation((_ids, _lote, aoLote) => {
+      aoLote?.([harryPotter]);
+      return new Promise(r => { terminar = r; });
+    });
+    render(<CollectionRow onOpen={vi.fn()} onOpenUniverso={vi.fn()} onSeeAll={vi.fn()} />);
+    await screen.findByText('Harry Potter');
+    expect(screen.queryByText('Ver mais')).toBeNull();   // ainda carregando
+    terminar([harryPotter, senhor]);
+    await screen.findByText('O Senhor dos Anéis');
+    expect(screen.getByText('Ver mais')).toBeInTheDocument();
+  });
+
+  it('TMDB fora: ficam só as pastas Marvel e DC', async () => {
     vi.mocked(carregarColecoes).mockResolvedValue([]);
-    const { container } = render(<CollectionRow onOpen={vi.fn()} onSeeAll={vi.fn()} />);
-    await waitFor(() => expect(container.querySelector('[data-row-key="colecoes"]')).toBeNull());
+    const { container } = render(<CollectionRow onOpen={vi.fn()} onOpenUniverso={vi.fn()} onSeeAll={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('Ver mais')).toBeInTheDocument());
+    expect(container.querySelectorAll('[data-universo]')).toHaveLength(2);
+    expect(container.querySelector('[data-colecao]')).toBeNull();
   });
 });
 
@@ -96,17 +132,71 @@ describe('CollectionView — a pasta aberta', () => {
   });
 });
 
+describe('UniversoView — a pasta Marvel aberta', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('as pastas das sagas do universo numa grade; tocar abre a saga', async () => {
+    vi.mocked(carregarColecoes).mockResolvedValue([harryPotter, senhor]);
+    const onOpen = vi.fn(), onBack = vi.fn();
+    render(<UniversoView universo={UNIVERSOS[0]} onOpen={onOpen} onBack={onBack} />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Marvel');
+    await screen.findByText('Harry Potter');
+    expect(vi.mocked(carregarColecoes).mock.calls[0][0]).toEqual(idsDe(UNIVERSOS[0].colecoes));
+    expect(screen.getByText(`${UNIVERSOS[0].colecoes.length} coleções`)).toBeInTheDocument();
+    fireEvent.click(screen.getByText('O Senhor dos Anéis'));
+    expect(onOpen).toHaveBeenCalledWith({ id: 119, nome: 'O Senhor dos Anéis' });
+    fireEvent.click(screen.getAllByRole('button')[0]);   // seta de voltar
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('falhou: avisa e "Tentar de novo" busca outra vez', async () => {
+    vi.mocked(carregarColecoes).mockRejectedValueOnce(new Error('TMDB 500')).mockResolvedValueOnce([harryPotter]);
+    render(<UniversoView universo={UNIVERSOS[1]} onOpen={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.click(await screen.findByText('Tentar de novo'));
+    await screen.findByText('Harry Potter');
+    expect(carregarColecoes).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('CollectionsGrid — "Ver tudo"', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('todas as pastas da lista numa grade', async () => {
+  it('Universos (Marvel e DC) e uma fileira por gênero, cada uma com as sagas dela', async () => {
     vi.mocked(carregarColecoes).mockResolvedValue([harryPotter, senhor]);
-    const onOpen = vi.fn();
-    render(<CollectionsGrid onOpen={onOpen} onBack={vi.fn()} />);
-    await screen.findByText('Harry Potter');
-    expect(vi.mocked(carregarColecoes).mock.calls[0][0].length).toBeGreaterThan(10);
-    fireEvent.click(screen.getByText('Harry Potter'));
+    const onOpen = vi.fn(), onOpenUniverso = vi.fn();
+    render(<CollectionsGrid onOpen={onOpen} onOpenUniverso={onOpenUniverso} onBack={vi.fn()} />);
+    expect(screen.getByText('Universos')).toBeInTheDocument();
+    const fileiras = [...document.querySelectorAll('[data-row-key^="colsec-"]')].map(el => el.getAttribute('data-row-key'));
+    expect(fileiras).toEqual(['colsec-universos', ...SECOES.map(s => `colsec-${s.chave}`)]);
+    await waitFor(() => expect(carregarColecoes).toHaveBeenCalledTimes(SECOES.length));   // a de Universos não vai na TMDB
+    expect(vi.mocked(carregarColecoes).mock.calls.map(c => c[0])).toEqual(SECOES.map(s => idsDe(s.colecoes)));
+    fireEvent.click((await screen.findAllByText('Harry Potter'))[0]);
     expect(onOpen).toHaveBeenCalledWith({ id: 1241, nome: 'Harry Potter' });
+    fireEvent.click(document.querySelector('[data-universo="marvel"]')!);
+    expect(onOpenUniverso).toHaveBeenCalledWith('marvel');
+  });
+
+  it('cada fileira só vai na TMDB quando chega perto da tela', async () => {
+    const vistos: Array<(es: Array<{ isIntersecting: boolean }>) => void> = [];
+    class IOFalso {
+      cb: (es: Array<{ isIntersecting: boolean }>) => void;
+      constructor(cb: (es: Array<{ isIntersecting: boolean }>) => void) { this.cb = cb; vistos.push(cb); }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', IOFalso);
+    try {
+      vi.mocked(carregarColecoes).mockResolvedValue([harryPotter]);
+      render(<CollectionsGrid onOpen={vi.fn()} onOpenUniverso={vi.fn()} onBack={vi.fn()} />);
+      expect(document.querySelectorAll('[data-fileira-reservada]')).toHaveLength(SECOES.length);
+      expect(carregarColecoes).not.toHaveBeenCalled();
+      act(() => { vistos[0]([{ isIntersecting: true }]); });   // a 1ª fileira de gênero chegou perto
+      await screen.findByText('Harry Potter');
+      expect(carregarColecoes).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(carregarColecoes).mock.calls[0][0]).toEqual(idsDe(SECOES[0].colecoes));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
