@@ -46,7 +46,7 @@ export default function NoticesView({ onBack }: { onBack: () => void }) {
   const meta = TABS.find(t => t.key === tab)!;
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>

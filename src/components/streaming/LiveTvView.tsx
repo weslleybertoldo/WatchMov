@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, RadioTower, Search } from 'lucide-react';
+import { RadioTower, Search } from 'lucide-react';
 import { fetchChannels, categoriesOf, type Channel } from '@/lib/liveTv';
 
 interface LiveTvViewProps {
@@ -28,7 +28,7 @@ export default function LiveTvView({ onPlay }: LiveTvViewProps) {
   }, [channels, cat, q]);
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       <div className="flex items-center gap-2">
         <RadioTower className="w-5 h-5 text-primary" />
         <h1 className="text-xl font-bold">Ao Vivo</h1>
@@ -61,7 +61,15 @@ export default function LiveTvView({ onPlay }: LiveTvViewProps) {
           <button onClick={() => load(true)} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium">Tentar de novo</button>
         </div>
       ) : !channels ? (
-        <div className="py-16 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>
+        /* W4 do raio-x (02/11/2026): esqueleto dos cartões de canal no lugar do spinner. */
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3" data-esqueleto aria-busy="true" aria-label="Carregando">
+          {Array.from({ length: 12 }, (_, i) => (
+            <div key={i} className="flex flex-col gap-1.5">
+              <div className="aspect-video rounded-lg bg-muted/40 animate-pulse" />
+              <div className="h-3 w-3/4 rounded bg-muted/40 animate-pulse" />
+            </div>
+          ))}
+        </div>
       ) : filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Nenhum canal encontrado.</p>
       ) : (

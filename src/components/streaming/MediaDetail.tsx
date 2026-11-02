@@ -296,15 +296,36 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   // Pastinha ao lado do título = favoritos. O sino segue a regra de sempre (gravarFavorito.ts): entrar LIGA (série
   // sempre; filme só antes da estreia), sair APAGA a inscrição. O estado vem do store (o menu de segurar a capa
   // também muda o favorito).
+  // W4 do raio-x (02/11/2026): estado otimista — a pastinha e o olho mudam NO TOQUE; o título que ainda não está na
+  // biblioteca (ensureLib grava no banco, 0,3–0,8 s no celular) confirma depois. Falhou → volta + aviso de erro.
+  const [otimista, setOtimista] = useState<{ favorite?: boolean; completed?: boolean }>({});
   const toggleList = async () => {
+    const next = !inList;
+    setOtimista(o => ({ ...o, favorite: next }));
     const it = await ensureLib();
-    if (!it) return;
-    const next = !(liveItem?.favorite ?? it.favorite);
+    if (!it) {
+      setOtimista(o => ({ ...o, favorite: undefined }));
+      toast.error('Não deu pra salvar agora. Tente de novo.');
+      return;
+    }
     gravarFavorito(store.updateItem, it, next, {
       tmdbId: media.tmdbId, type: media.type, title: media.title, posterUrl: media.posterUrl,
       emBreve: isUpcoming(details?.releaseDate),
     });
     setLibItem({ ...it, favorite: next });
+    setOtimista(o => ({ ...o, favorite: undefined }));   // o store já tem o valor novo
+  };
+  const toggleWatchedMovie = async () => {
+    const next = !movieWatched;
+    setOtimista(o => ({ ...o, completed: next }));
+    const it = await ensureLib();
+    if (!it) {
+      setOtimista(o => ({ ...o, completed: undefined }));
+      toast.error('Não deu pra salvar agora. Tente de novo.');
+      return;
+    }
+    store.updateItem(it.id, next ? { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() } : { completed: false });
+    setOtimista(o => ({ ...o, completed: undefined }));
   };
 
   // Sino manual: funciona dentro ou fora da lista; desligar aqui mantém desligado
@@ -363,7 +384,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   const onSeriesCompleted = () => advanceEpisode(true);   // vídeo acabou → marca e segue
   const onSeriesNext = () => advanceEpisode(false);       // ⏭ → só segue
 
-  const movieWatched = !isSeries && !!liveItem?.completed;
+  const movieWatched = !isSeries && (otimista.completed ?? !!liveItem?.completed);
 
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
   // Lançamento MM/AAAA (ex 05/2026) a partir da data completa do TMDB; cai no ano.
@@ -384,7 +405,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   // Total de episódios da série (todas as temporadas da TMDB) — vai no cabeçalho de TODA
   // série, não só das já assistidas (que têm o "EP 3/24 | Temporada 1" do progresso).
   const totalEps = isSeries ? (details?.seasons ?? []).reduce((a, s) => a + s.totalEpisodes, 0) : 0;
-  const inList = !!liveItem?.favorite;
+  const inList = otimista.favorite ?? !!liveItem?.favorite;
   const resumeMins = !isSeries ? (liveItem?.watchedDuration || 0) : 0;
   const hasProgress = resumeMins > 0 || (isSeries && !!liveItem?.seasons?.some(s => episodesWatched(s).length > 0));
   const lastWatchedLabel = liveItem?.lastWatchedAt
@@ -395,7 +416,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   const hasNextEp = !!(player?.season && proximoEpisodio(liveItem?.seasons, player.season, player.episode || 1));
 
   return (
-    <div className="animate-fade-in pb-8">
+    <div className="pb-8">
       {/* Backdrop */}
       <div className="relative -mx-4 md:-mx-6 -mt-4 md:-mt-6">
         <div className="aspect-video w-full bg-muted overflow-hidden">
@@ -484,7 +505,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
             <Button variant={movieWatched ? 'default' : 'outline'} size="icon" className="shrink-0"
               title={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'}
               aria-label={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'} data-assistido-botao
-              onClick={async () => { const it = await ensureLib(); if (it) store.updateItem(it.id, it.completed ? { completed: false } : { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() }); }}>
+              onClick={() => { void toggleWatchedMovie(); }}>
               {movieWatched ? <CheckCheck className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </Button>
           )}

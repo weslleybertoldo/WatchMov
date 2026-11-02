@@ -224,7 +224,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
   const toggle = (k: string) => setSel(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const removeSel = () => { sel.forEach(k => removeDownload(k)); setSel(new Set()); setEditing(false); };
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4 animate-tela-entra">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
@@ -431,7 +431,7 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
   const deleteItem = (g: TitleGroup) => clearDownloadsFor(g.tmdbId, g.type === 'movie');
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>

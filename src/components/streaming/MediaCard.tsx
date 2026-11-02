@@ -85,7 +85,7 @@ function MediaCard({ media, onClick, onOpen, rank, prioridade }: MediaCardProps)
       data-tv-card
       data-tv-hold
       data-tv-key={`${media.type}-${media.tmdbId}`}
-      className="relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
+      className="toque relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
     >
       {rank !== undefined && (
         <span className="absolute -left-1 top-0 z-10 text-4xl font-black text-primary/80 drop-shadow [-webkit-text-stroke:1px_hsl(var(--background))]">

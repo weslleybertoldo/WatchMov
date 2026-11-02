@@ -24,7 +24,7 @@ export default function HistoryView({ movies, series, animes, onOpen, onBack }: 
   if (filter) {
     const list = filter === 'movie' ? movies : filter === 'anime' ? animes : series;
     return (
-      <div className="space-y-4 animate-fade-in">
+      <div className="space-y-4 animate-tela-entra">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
           <h1 className="text-xl font-bold">{TITLES[filter]} assistidos</h1>
@@ -37,7 +37,7 @@ export default function HistoryView({ movies, series, animes, onOpen, onBack }: 
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
         <h1 className="text-xl font-bold">Histórico</h1>

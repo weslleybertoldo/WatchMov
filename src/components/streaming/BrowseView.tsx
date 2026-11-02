@@ -4,6 +4,8 @@ import {
   MOVIE_GENRES, TV_GENRES, ANIME_GENRES, BROWSE_YEARS, BROWSE_RATINGS, BROWSE_HIGHLIGHTS,
 } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import { EsqueletoGrade } from './Esqueleto';
+import { useSaidaAnimada } from '@/hooks/use-saida-animada';
 import { Button } from '@/components/ui/button';
 import { Film, Tv, Sparkles, Loader2, ChevronDown, Check } from 'lucide-react';
 
@@ -42,21 +44,24 @@ function MultiSelect({ label, options, selected, onToggle }: {
   onToggle: (v: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // W4 do raio-x (02/11/2026): a lista abre E fecha animada (150 ms; na TV some na hora).
+  const saida = useSaidaAnimada(open);
   const text = selected.length === 0 ? label : `${label} (${selected.length})`;
   return (
     <div className="relative">
       <button onClick={() => setOpen(o => !o)}
-        className={`h-9 inline-flex items-center gap-1 rounded-lg border px-2.5 text-sm transition ${
+        className={`toque h-9 inline-flex items-center gap-1 rounded-lg border px-2.5 text-sm transition ${
           selected.length ? 'bg-primary/15 text-primary border-primary/40' : 'bg-muted/60 text-foreground border-border'
         }`}>
         {text} <ChevronDown className="w-3.5 h-3.5" />
       </button>
-      {open && (
+      {/* Só pega o toque fora pra fechar. aria-hidden: na TV o tvNav trata camada fixa de tela cheia como
+          diálogo e prende o foco nela — vazia, as setas não entravam na lista (Categorias, 20/10/2026). */}
+      {open && <div aria-hidden="true" className="fixed inset-0 z-30" onClick={() => setOpen(false)} />}
+      {saida.montado && (
         <>
-          {/* Só pega o toque fora pra fechar. aria-hidden: na TV o tvNav trata camada fixa de tela cheia como
-              diálogo e prende o foco nela — vazia, as setas não entravam na lista (Categorias, 20/10/2026). */}
-          <div aria-hidden="true" className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute z-40 mt-1 max-h-64 w-44 overflow-y-auto rounded-lg border border-border bg-background shadow-lg p-1">
+          <div data-state={saida.estado} data-menu-filtro
+            className="menu-saida absolute z-40 mt-1 max-h-64 w-44 overflow-y-auto rounded-lg border border-border bg-background shadow-lg p-1 origin-top duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:pointer-events-none">
             {options.map(o => {
               const on = selected.includes(o.value);
               return (
@@ -141,7 +146,7 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
     set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       {/* Tipos: 3 lado a lado no topo */}
       <div className="grid grid-cols-3 gap-2">
         {KINDS.map(k => {
@@ -192,7 +197,9 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
         </div>
       )}
 
-      {loading && (
+      {/* W4 do raio-x (02/11/2026): 1ª carga = esqueleto da grade; mais páginas = o spinner pequeno embaixo. */}
+      {loading && items.length === 0 && <EsqueletoGrade />}
+      {loading && items.length > 0 && (
         <div className="flex justify-center py-6 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
       )}
 

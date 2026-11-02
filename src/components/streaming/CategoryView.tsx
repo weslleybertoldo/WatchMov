@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import { EsqueletoGrade } from './Esqueleto';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 
@@ -69,7 +70,7 @@ export default function CategoryView({ title, loadPage, onOpen, onBack, cacheKey
   };
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" onClick={onBack} className="h-9 w-9"><ArrowLeft className="w-5 h-5" /></Button>
         <h1 className="text-xl font-bold">{title}</h1>
@@ -79,7 +80,10 @@ export default function CategoryView({ title, loadPage, onOpen, onBack, cacheKey
           <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />
         ))}
       </div>
-      {loading && (
+      {/* W4 do raio-x (02/11/2026): a 1ª página carregando = esqueleto do tamanho da grade; "carregar mais" = o spinner
+          pequeno embaixo da grade que já está na tela. */}
+      {loading && items.length === 0 && <EsqueletoGrade />}
+      {loading && items.length > 0 && (
         <div className="flex justify-center py-4 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
       )}
       {!loading && !done && items.length > 0 && (

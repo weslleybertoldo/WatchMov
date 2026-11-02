@@ -13,6 +13,7 @@ import {
   listTvDevices, removeTvDevice, renameTvDevice, requestTvApprove, TV_APPROVED_EVENT, TV_NAME_MAX, type TvDevice,
 } from '@/lib/tvPair';
 import { newCmdId, sendToTv } from '@/lib/tvRemote';
+import { useUltimoValor } from '@/hooks/use-saida-animada';
 
 // Painel → Entrar na TV (pedido dele 26/09/2026): as TVs conectadas nesta conta e o "Conectar +",
 // que abre o campo do código que a TV mostra. Cada TV dá pra renomear e remover.
@@ -34,6 +35,7 @@ export default function TvDevicesView({ onBack }: { onBack: () => void }) {
   const [renaming, setRenaming] = useState<TvDevice | null>(null);
   const [newName, setNewName] = useState('');
   const [removing, setRemoving] = useState<TvDevice | null>(null);
+  const removendoNaTela = useUltimoValor(removing);   // W4: o nome fica na caixa enquanto ela sai animada
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -96,7 +98,7 @@ export default function TvDevicesView({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
+    <div className="space-y-6 max-w-xl mx-auto">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
         <h1 className="text-xl font-bold">Entrar na TV</h1>
@@ -155,7 +157,7 @@ export default function TvDevicesView({ onBack }: { onBack: () => void }) {
       <AlertDialog open={!!removing} onOpenChange={(o) => { if (!o && !busy) setRemoving(null); }}>
         <AlertDialogContent className="max-w-sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Remover {removing?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>Remover {removendoNaTela?.name}?</AlertDialogTitle>
             <AlertDialogDescription>A TV sai da sua conta e volta pra tela do código.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
