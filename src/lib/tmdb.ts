@@ -94,6 +94,13 @@ function backdropUrl(path: string | null | undefined, size = 'w780'): string | u
   return path ? `${IMG_BASE}/${size}${path}` : undefined;
 }
 
+// W1 do raio-x (02/11/2026): a biblioteca guarda a capa em w500 (a da página do título); no CARTAZ (MediaCard: Continuar
+// assistindo, Favoritos, histórico) a w342 basta — o mesmo tamanho das fileiras da TMDB — e ocupa metade da memória
+// decodificada na TV. A página do título segue com a original.
+export function capaDeFileira(url?: string): string | undefined {
+  return url?.replace(`${IMG_BASE}/w500/`, `${IMG_BASE}/w342/`);
+}
+
 // ── Catálogo (browse estilo Netflix) ──
 
 export interface MediaSummary {

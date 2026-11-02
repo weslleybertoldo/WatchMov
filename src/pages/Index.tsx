@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -19,37 +19,44 @@ import CategoryView from '@/components/streaming/CategoryView';
 import { CollectionRow, type ColecaoAbrir } from '@/components/streaming/CollectionCard';
 import { CollectionView, CollectionsGrid, UniversoView } from '@/components/streaming/CollectionView';
 import { universoPorId, type UniversoId } from '@/lib/colecoes';
-import MediaDetail from '@/components/streaming/MediaDetail';
 import SearchView, { clearSearchCache } from '@/components/streaming/SearchView';
-import BrowseView from '@/components/streaming/BrowseView';
 import MediaCard, { isUpcoming } from '@/components/streaming/MediaCard';
 import FavoriteMenu from '@/components/streaming/FavoriteMenu';
 import { chavesDosFavoritos, ehFavorito, fichaDaBiblioteca, publicarFavoritos, registrarMenuFavorito } from '@/lib/favorites';
 import { gravarFavorito } from '@/lib/gravarFavorito';
 import { toast } from 'sonner';
 import ContinueView from '@/components/streaming/ContinueView';
-import SettingsView, { type WatchedStats } from '@/components/streaming/SettingsView';
-import TvDevicesView from '@/components/streaming/TvDevicesView';
-import NoticesView from '@/components/streaming/NoticesView';
+import type { WatchedStats } from '@/components/streaming/SettingsView';
 import { useNotices } from '@/lib/appNotices';
 import { startMp4Listener, useMp4All } from '@/lib/mp4Download';
 import { startPlaybackErrorLog } from '@/lib/playbackLog';
 import { useDownloadList, setWatchedBridge } from '@/lib/downloads';
-import HistoryView from '@/components/streaming/HistoryView';
 import HeroCarousel from '@/components/streaming/HeroCarousel';
-import DownloadView from '@/components/streaming/DownloadView';
-import ServersView from '@/components/streaming/ServersView';
-import BugsView from '@/components/streaming/BugsView';
-import LiveTvView from '@/components/streaming/LiveTvView';
 import type { Channel } from '@/lib/liveTv';
 import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched, sortByLastWatched } from '@/lib/watchProgress';
 import UpdateChecker from '@/components/UpdateChecker';
 import { fillRow, isPrimaryGenre } from '@/lib/rowFill';
+import { depoisDeAssentar } from '@/lib/ocioso';
+import { telaSobDemanda } from '@/lib/telaSobDemanda';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Home, Film, Tv, Sparkles, RadioTower, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
+
+// W1 do raio-x (02/11/2026): fora do JS da abertura — a página do título (com o player e o resolvedor: ~120 kB) baixa
+// no ocioso depois que o Início assentou; as telas raras (Painel e as de dentro dele, avisos, Ao Vivo, Procurar)
+// baixam quando a pessoa abre.
+const MediaDetail = telaSobDemanda(() => import('@/components/streaming/MediaDetail'));
+const SettingsView = telaSobDemanda(() => import('@/components/streaming/SettingsView'));
+const HistoryView = telaSobDemanda(() => import('@/components/streaming/HistoryView'));
+const DownloadView = telaSobDemanda(() => import('@/components/streaming/DownloadView'));
+const ServersView = telaSobDemanda(() => import('@/components/streaming/ServersView'));
+const TvDevicesView = telaSobDemanda(() => import('@/components/streaming/TvDevicesView'));
+const BugsView = telaSobDemanda(() => import('@/components/streaming/BugsView'));
+const NoticesView = telaSobDemanda(() => import('@/components/streaming/NoticesView'));
+const LiveTvView = telaSobDemanda(() => import('@/components/streaming/LiveTvView'));
+const BrowseView = telaSobDemanda(() => import('@/components/streaming/BrowseView'));
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'favoritos' | 'procurar';
 type ScrollPos = { y: number; rowKey?: string; rowTop?: number };
@@ -153,12 +160,15 @@ export default function Index() {
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [noticesOpen, setNoticesOpen] = useState(false);
-  const { unread: unreadNotices } = useNotices();
+  const { unread: unreadNotices } = useNotices({ adiarSync: true });
   useEffect(() => { startMp4Listener(); }, []);     // avisos de conversão desde o boot
   // Registro da aba Bugs desde o boot. Antes vivia dentro do VideoPlayer, que
   // episódio BAIXADO nunca monta — então erro de reprodução (e os diagnósticos de
   // cast) daquele caminho se perdiam e a aba vazia parecia "não deu erro".
-  useEffect(() => { startPlaybackErrorLog(); }, []);
+  // W1 do raio-x: espera a tela assentar (ele lê os fechamentos do app e grava no banco).
+  useEffect(() => depoisDeAssentar(() => { startPlaybackErrorLog(); }), []);
+  // W1 do raio-x: a página do título baixa no ocioso, antes de a pessoa escolher um título.
+  useEffect(() => depoisDeAssentar(() => { void MediaDetail.preparar(); }, 3000), []);
   // Badge do sino = avisos não lidos + o que está EM ANDAMENTO. Abrir o sino zera
   // os lidos, mas enquanto um download/conversão roda o número continua lá — some
   // só quando termina E o aviso de conclusão é visto.
@@ -188,9 +198,9 @@ export default function Index() {
   useEffect(() => { publicarFavoritos(chavesDosFavoritos(bibItems)); }, [bibItems]);
 
   // Push: registra o device e carrega os sinos; tocar na notificação abre o título.
+  // W1 do raio-x: o registro e os sinos esperam a tela assentar; o "tocou na notificação" fica já (abre o título).
+  useEffect(() => depoisDeAssentar(() => { void initPush(); void loadSubs(); }), []);
   useEffect(() => {
-    initPush();
-    loadSubs();
     onPushOpen(({ tmdbId, type }) => {
       getDetails(tmdbId, type === 'tv' ? 'tv' : 'movie')
         .then(d => { setAutoPlay(null); setSelected({ tmdbId, title: d.title, posterUrl: d.posterUrl, type, rating: d.rating, votes: d.votes }); })
@@ -435,6 +445,8 @@ export default function Index() {
   const continueMovies = continueAll.filter(i => i.type === 'movie').map(toCont);
   const continueAnimes = continueAll.filter(isAnime).map(toCont);
   const continueSeries = continueAll.filter(i => i.type === 'series' && !isAnime(i)).map(toCont);
+  // W1 do raio-x: a 1ª fileira do Início baixa as capas da frente já (as outras seguem no lazy).
+  const primeiraDoInicio = continueMovies.length ? 'cf' : continueSeries.length ? 'cs' : continueAnimes.length ? 'ca' : 'top10';
   const continueFiltered = continueFilter === 'movie' ? continueAll.filter(i => i.type === 'movie')
     : continueFilter === 'anime' ? continueAll.filter(isAnime)
     : continueFilter === 'series' ? continueAll.filter(i => i.type === 'series' && !isAnime(i))
@@ -508,7 +520,7 @@ export default function Index() {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-background/85 backdrop-blur-md border-b border-border/50">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-          <img src="/logo.png" alt="WatchMov" className="h-7 cursor-pointer" onClick={() => changeTab('inicio')} />
+          <img src="/logo-topo.png" alt="WatchMov" width={28} height={28} className="h-7 w-7 cursor-pointer" onClick={() => changeTab('inicio')} />
           {castNow && (
             <button onClick={openCastNow} title="Abrir o que está na TV"
               className="flex-1 mx-2 min-w-0 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/15 text-primary">
@@ -563,6 +575,8 @@ export default function Index() {
 
       {/* Conteúdo */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
+        {/* Tela que ainda não baixou (W1 do raio-x): um carregando curto no lugar do conteúdo. */}
+        <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>}>
         {selected ? (
           /* key por título: trocar de título (relacionados) REMONTA o detalhe — estado
              do título anterior (ficha, temporada, aba de episódios, autoPlay já usado)
@@ -606,16 +620,16 @@ export default function Index() {
           <div className="space-y-6">
             <HeroCarousel onOpen={openMedia} />
             {continueMovies.length > 0 && (
-              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} />
+              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} prioridade={primeiraDoInicio === 'cf'} />
             )}
             {continueSeries.length > 0 && (
-              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} />
+              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} prioridade={primeiraDoInicio === 'cs'} />
             )}
             {continueAnimes.length > 0 && (
-              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} />
+              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} prioridade={primeiraDoInicio === 'ca'} />
             )}
             <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
-              loader={() => trendingWeek('movie')} onOpen={openMedia} />
+              loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade={primeiraDoInicio === 'top10'} />
             <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
               loader={() => trendingWeek('tv')} onOpen={openMedia} />
             <MediaRow title="Lançamentos recentes" cacheKey="recent-movie"
@@ -635,7 +649,7 @@ export default function Index() {
             <CollectionRow onOpen={openColecao} onOpenUniverso={openUniverso} onSeeAll={openColecoesTudo} />
             {/* Top 10 da semana também aqui, logo abaixo de Coleções (pedido dele 01/11/2026); o mesmo cache do Início. */}
             <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
-              loader={() => trendingWeek('movie')} onOpen={openMedia} />
+              loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade />
             {MOVIE_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
                 loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
@@ -646,7 +660,7 @@ export default function Index() {
           <div className="space-y-6">
             {/* Top 10 de séries também na aba Séries, no topo (pedido dele 01/11/2026); o mesmo cache do Início. */}
             <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
-              loader={() => trendingWeek('tv')} onOpen={openMedia} />
+              loader={() => trendingWeek('tv')} onOpen={openMedia} prioridade />
             {TV_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
                 loader={genreRowLoader('tv', g.id, TV_ROW_IDS)} onOpen={openMedia}
@@ -655,9 +669,9 @@ export default function Index() {
           </div>
         ) : tab === 'animes' ? (
           <div className="space-y-6">
-            {ANIME_ROWS.map(r => (
+            {ANIME_ROWS.map((r, k) => (
               <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
-                loader={animeRowLoader(r.id)} onOpen={openMedia}
+                loader={animeRowLoader(r.id)} onOpen={openMedia} prioridade={k === 0}
                 onSeeAll={() => openCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
             ))}
           </div>
@@ -692,6 +706,7 @@ export default function Index() {
         ) : (
           <LiveTvView onPlay={setLiveChannel} />
         )}
+        </Suspense>
       </main>
 
       <AlertDialog open={exitAsk} onOpenChange={setExitAsk}>
