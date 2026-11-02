@@ -480,21 +480,23 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
           {!isSeries && (
-            <Button variant={movieWatched ? 'default' : 'outline'}
+            /* Só o olho, sem o texto "Assistido" (pedido dele 01/11/2026); o nome fica no title/aria-label. */
+            <Button variant={movieWatched ? 'default' : 'outline'} size="icon" className="shrink-0"
               title={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'}
+              aria-label={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'} data-assistido-botao
               onClick={async () => { const it = await ensureLib(); if (it) store.updateItem(it.id, it.completed ? { completed: false } : { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() }); }}>
-              {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
+              {movieWatched ? <CheckCheck className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </Button>
           )}
-          {/* Coleção ao lado do "Assistido" (pedido dele 01/11/2026, foto da TV): filme de uma saga abre a pasta dela
+          {/* Coleção ao lado do olho do "Assistido" (pedido dele 01/11/2026, foto da TV): filme de uma saga abre a pasta dela
               com os outros filmes, sem descer até o "Faz parte da coleção" (que continua embaixo do Elenco, com o nome).
-              No celular só o ícone da pasta (o nome da saga está no bloco de baixo); na TV e na tela larga, "Coleção". */}
+              Com o texto "Coleção" em todo lugar (ele: "O texto coleção pode manter"). */}
           {!isSeries && details?.collection && onOpenCollection && (() => {
             const col = details.collection;
             return (
-              <Button variant="outline" className="shrink-0 px-3 sm:px-4" onClick={() => onOpenCollection(col)} data-colecao-botao={col.id}
+              <Button variant="outline" className="shrink-0" onClick={() => onOpenCollection(col)} data-colecao-botao={col.id}
                 title={`Coleção ${col.name}`} aria-label={`Abrir a coleção ${col.name}`}>
-                <Folder className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Coleção</span>
+                <Folder className="w-4 h-4 mr-1" /> Coleção
               </Button>
             );
           })()}
