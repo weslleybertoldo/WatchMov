@@ -486,6 +486,18 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
               {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
             </Button>
           )}
+          {/* Coleção ao lado do "Assistido" (pedido dele 01/11/2026, foto da TV): filme de uma saga abre a pasta dela
+              com os outros filmes, sem descer até o "Faz parte da coleção" (que continua embaixo do Elenco, com o nome).
+              No celular só o ícone da pasta (o nome da saga está no bloco de baixo); na TV e na tela larga, "Coleção". */}
+          {!isSeries && details?.collection && onOpenCollection && (() => {
+            const col = details.collection;
+            return (
+              <Button variant="outline" className="shrink-0 px-3 sm:px-4" onClick={() => onOpenCollection(col)} data-colecao-botao={col.id}
+                title={`Coleção ${col.name}`} aria-label={`Abrir a coleção ${col.name}`}>
+                <Folder className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Coleção</span>
+              </Button>
+            );
+          })()}
           {/* Abrir na TV (pedido dele 26/09/2026): no lugar do "Baixar eps"/"Baixar" — baixar ficou só no player.
               Na TV não aparece: ela é o destino. */}
           {!isTv() && (
