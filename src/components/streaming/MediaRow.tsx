@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
-import { ChevronLeft, ChevronRight, Plus, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { isTv } from '@/lib/device';
 import { depoisDeAssentar, naFilaDoOcioso } from '@/lib/ocioso';
 import { guardarFileira, lerFileira, marcarParaAtualizar, pegarParaAtualizar } from '@/lib/fileirasGuardadas';
@@ -46,14 +46,24 @@ const scrollCache = new Map<string, number>();
 const fileirasVistas = new Set<string>();
 const PERTO_DA_TELA = '600px 0px';   // ~1 tela da TV (540 CSS px) acima e abaixo
 const ESPERA_OCIOSO_MS = 1500;       // a aba aparece primeiro; o resto monta depois, antes de a pessoa descer
+// W2 do raio-x (02/11/2026): na TV a fileira entra com os cartazes que cabem na largura da tela (960 CSS px ≈ 7,3
+// cartazes: o 8º aparece pela metade) e os de trás (+ "Ver mais") entram no tempo ocioso — menos trabalho de uma vez na
+// troca de aba. A fileira que já ficou completa remonta completa (o foco volta no cartaz aberto, que pode ser o 10º).
+const CARTAZES_DE_ENTRADA_TV = 8;
+const fileirasCompletas = new Set<string>();
 
-export default function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, prioridade }: MediaRowProps) {
-  const [data, setData] = useState<MediaSummary[]>(() => items ?? daMemoriaOuDoAparelho(cacheKey) ?? []);
+function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, prioridade }: MediaRowProps) {
+  // Fileira com a lista pronta (continuar, favoritos) desenha a lista recebida direto; a da TMDB guarda a dela no estado.
+  // W2 do raio-x (02/11/2026): antes a lista recebida era copiada pro estado num efeito — cada lista nova desenhava a
+  // fileira 2 vezes, a 1ª ainda com a lista velha.
+  const [buscada, setBuscada] = useState<MediaSummary[]>(() => (items ? [] : daMemoriaOuDoAparelho(cacheKey) ?? []));
+  const data = items ?? buscada;
   const [loading, setLoading] = useState(!items && !(cacheKey && rowCache.has(cacheKey)));
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const scrollKey = cacheKey || title;
   const [perto, setPerto] = useState(() => !isTv() || fileirasVistas.has(scrollKey));
+  const [completa, setCompleta] = useState(() => !isTv() || fileirasCompletas.has(scrollKey));
 
   // TV: chegou perto da tela = vista (monta já, e remonta com os cartões depois). Segue olhando mesmo depois de o ocioso
   // montar a fileira, pra ela virar "vista" quando a pessoa descer até ela.
@@ -79,18 +89,25 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
     return () => { clearTimeout(espera); desistir(); };
   }, [perto]);
 
+  // TV: os cartazes de trás entram no ocioso, depois dos da frente (e só depois que a fileira tem os dados). Fileira
+  // curta, sem "Ver mais", já entra inteira.
+  const faltaCompletar = !completa && (data.length > CARTAZES_DE_ENTRADA_TV || !!onSeeAll);
+  useEffect(() => {
+    if (!perto || loading || !faltaCompletar) return;
+    return naFilaDoOcioso(() => { fileirasCompletas.add(scrollKey); setCompleta(true); });
+  }, [perto, loading, faltaCompletar, scrollKey]);
+
   // Restaura a posição horizontal ao (re)montar com os dados já carregados.
   useEffect(() => {
     if (!loading && perto && scrollRef.current && scrollCache.has(scrollKey)) {
       scrollRef.current.scrollLeft = scrollCache.get(scrollKey)!;
     }
-  }, [loading, perto, scrollKey, data.length]);
+  }, [loading, perto, completa, scrollKey, data.length]);
 
   useEffect(() => {
-    if (items) { setData(items); return; }
-    if (!loader) return;
+    if (items || !loader) return;
     if (cacheKey && rowCache.has(cacheKey)) {
-      setData(rowCache.get(cacheKey)!); setLoading(false);
+      setBuscada(rowCache.get(cacheKey)!); setLoading(false);
       // Veio velha do aparelho: atualiza o guardado no ocioso (independe desta montagem — a tela pode ter mudado).
       if (pegarParaAtualizar(cacheKey)) {
         depoisDeAssentar(() => { loader().then(res => guardarFileira(cacheKey, res)).catch(() => undefined); }, ESPERA_ATUALIZAR_MS);
@@ -100,8 +117,8 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
     let alive = true;
     setLoading(true);
     loader()
-      .then(res => { if (cacheKey) { rowCache.set(cacheKey, res); guardarFileira(cacheKey, res); } if (!alive) return; setData(res); })
-      .catch(() => { if (alive) setData([]); })
+      .then(res => { if (cacheKey) { rowCache.set(cacheKey, res); guardarFileira(cacheKey, res); } if (!alive) return; setBuscada(res); })
+      .catch(() => { if (alive) setBuscada([]); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -131,8 +148,12 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
         </button>}
         <div ref={scrollRef} onScroll={() => { if (scrollRef.current) scrollCache.set(scrollKey, scrollRef.current.scrollLeft); }} className="flex gap-3 overflow-x-auto scroll-smooth snap-x pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {loading ? (
-            <div className="flex items-center gap-2 text-muted-foreground py-10 px-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> Carregando…
+            // W2 do raio-x (02/11/2026): do tamanho de um cartão (a fileira não muda de altura quando chega e a página
+            // não pula) e sem o ícone girando (na TV a pulsação também para: index.css).
+            <div data-fileira-carregando className="shrink-0 w-28 sm:w-32">
+              <div className="rounded-lg bg-muted/40 aspect-[2/3] animate-pulse" />
+              <p className="mt-1 text-xs text-muted-foreground">Carregando…</p>
+              <div className="text-[10px]">&nbsp;</div>
             </div>
           ) : !perto ? (
             // Espaço do tamanho de um cartão (pôster + título + ano): a fileira entra sem empurrar nada.
@@ -143,13 +164,13 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
             </div>
           ) : (
             <>
-              {data.slice(0, 10).map((m, i) => (
+              {data.slice(0, faltaCompletar ? CARTAZES_DE_ENTRADA_TV : 10).map((m, i) => (
                 <div key={`${m.type}-${m.tmdbId}`} className="snap-start">
-                  <MediaCard media={m} onClick={() => onOpen(m)} rank={numbered ? i + 1 : undefined}
+                  <MediaCard media={m} onOpen={onOpen} rank={numbered ? i + 1 : undefined}
                     prioridade={prioridade && i < CAPAS_PRIORITARIAS} />
                 </div>
               ))}
-              {onSeeAll && (
+              {onSeeAll && !faltaCompletar && (
                 <button
                   onClick={onSeeAll}
                   className="shrink-0 w-28 sm:w-32 aspect-[2/3] rounded-lg border border-dashed border-border flex flex-col items-center justify-center text-muted-foreground hover:text-primary hover:border-primary transition snap-start"
@@ -168,3 +189,14 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
     </div>
   );
 }
+
+// W2 do raio-x (02/11/2026): a fileira só redesenha quando os dados dela mudam — antes cada redesenho do Index (avisos,
+// downloads, biblioteca, login) redesenhava as ~13 fileiras e as ~120 capas do Início. `loader` e `onSeeAll` ficam fora
+// da comparação: quem usa passa funções escritas na hora (`() => …`, novas a cada desenho), mas elas só chamam coisas estáveis
+// (setState, useCallback) — a fileira usa as do último desenho dela. `onOpen` entra (o Index passa um useCallback).
+function mesmaFileira(a: MediaRowProps, b: MediaRowProps): boolean {
+  return a.title === b.title && a.items === b.items && a.cacheKey === b.cacheKey && a.numbered === b.numbered
+    && a.prioridade === b.prioridade && a.onOpen === b.onOpen && !!a.onSeeAll === !!b.onSeeAll;
+}
+
+export default memo(MediaRow, mesmaFileira);

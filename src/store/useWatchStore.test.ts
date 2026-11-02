@@ -126,6 +126,22 @@ describe("useWatchStore", () => {
     expect(result.current.data.sections.find(s => s.id === "sec2")?.name).toBe("Nova");
   });
 
+  // W2 do raio-x (02/11/2026): as fileiras do Início (memo) só redesenham quando a lista muda de verdade.
+  it("continueWatching e myList são as mesmas listas entre desenhos enquanto a biblioteca não muda", async () => {
+    const items = [
+      { id: "c1", user_id: USER, section_id: "sec", title: "Em andamento", type: "movie", total_duration: 90, watched_duration: 30, completed: false, favorite: true, seasons: null, comment: null, last_watched_at: "2025-01-02T00:00:00Z", created_at: "2025-01-01" },
+    ];
+    setResp("wm_sections", "select", { data: [{ id: "sec", user_id: USER, name: "S", icon: "📁", created_at: "2025-01-01" }], error: null });
+    setResp("wm_items", "select", { data: items, error: null });
+
+    const { result, rerender } = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const { continueWatching, myList } = result.current;
+    rerender();
+    expect(result.current.continueWatching).toBe(continueWatching);
+    expect(result.current.myList).toBe(myList);
+  });
+
   it("deleteSection remove section e items dela do estado (FK cascade no DB)", async () => {
     const items = [
       { id: "i1", user_id: USER, section_id: "sec", title: "x", type: "movie", total_duration: 90, watched_duration: 0, completed: false, seasons: null, comment: null, last_watched_at: null, created_at: "2025-01-01" },

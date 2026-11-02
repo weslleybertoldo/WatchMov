@@ -130,6 +130,24 @@ describe("MediaCard — favoritos", () => {
     expect(abrirMenu).toHaveBeenCalledTimes(1);
   });
 
+  it("TV: com várias capas na tela, o segurar abre o menu da capa que recebeu o aviso (um ouvinte só pra página)", () => {
+    const { getAllByRole } = render(<div>
+      <MediaCard media={cartaz(26)} onClick={() => {}} />
+      <MediaCard media={cartaz(27)} onClick={() => {}} />
+    </div>);
+    const [, segunda] = getAllByRole("button");
+    act(() => { segunda.dispatchEvent(new CustomEvent("tv-segurar", { bubbles: true })); });
+    expect(abrirMenu).toHaveBeenCalledTimes(1);
+    expect(abrirMenu).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 27 }));
+  });
+
+  it("onOpen (o da fileira) recebe a ficha da capa no toque", () => {
+    const abrir = vi.fn();
+    const { getByRole } = render(<MediaCard media={cartaz(28)} onOpen={abrir} />);
+    fireEvent.click(getByRole("button"));
+    expect(abrir).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 28, title: "Cartaz 28" }));
+  });
+
   it("TV: segurar o OK (aviso do tvNav) abre o menu da capa", () => {
     const { getByRole } = render(<MediaCard media={cartaz(25)} onClick={() => {}} />);
     const capa = getByRole("button");

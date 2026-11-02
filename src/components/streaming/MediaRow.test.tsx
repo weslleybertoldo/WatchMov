@@ -133,6 +133,49 @@ describe('MediaRow — fileiras só quando aparecem (TV)', () => {
     vi.useRealTimers();
   });
 
+  // W2 do raio-x (02/11/2026): menos trabalho de uma vez na troca de aba.
+  it('na TV a fileira entra com 8 cartazes; os de trás e o "Ver mais" entram no ocioso', () => {
+    vi.mocked(isTv).mockReturnValue(true);
+    const { container } = render(<MediaRow title="Aventura" cacheKey="w2-aventura" items={itens(10)} onOpen={() => {}} onSeeAll={() => {}} />);
+    chegarPerto();
+    expect(container.querySelectorAll('[data-tv-card]')).toHaveLength(8);
+    expect(container.textContent).not.toContain('Ver mais');
+    expect(ocioso).toHaveLength(1);
+    ficarOcioso();
+    expect(container.querySelectorAll('[data-tv-card]')).toHaveLength(10);
+    expect(container.textContent).toContain('Ver mais');
+  });
+
+  it('na TV a fileira que já ficou completa remonta completa (o foco pode voltar no 10º cartaz)', () => {
+    vi.mocked(isTv).mockReturnValue(true);
+    const a = render(<MediaRow title="Fantasia" cacheKey="w2-fantasia" items={itens(10)} onOpen={() => {}} onSeeAll={() => {}} />);
+    chegarPerto();
+    ficarOcioso();
+    a.unmount();
+    observadores = [];
+    const b = render(<MediaRow title="Fantasia" cacheKey="w2-fantasia" items={itens(10)} onOpen={() => {}} onSeeAll={() => {}} />);
+    expect(b.container.querySelectorAll('[data-tv-card]')).toHaveLength(10);
+    expect(b.container.textContent).toContain('Ver mais');
+    expect(ocioso).toHaveLength(0);
+  });
+
+  it('no celular a fileira entra completa, com o "Ver mais"', () => {
+    const { container } = render(<MediaRow title="História" items={itens(10)} onOpen={() => {}} onSeeAll={() => {}} />);
+    expect(container.querySelectorAll('[data-tv-card]')).toHaveLength(10);
+    expect(container.textContent).toContain('Ver mais');
+    expect(ocioso).toHaveLength(0);
+  });
+
+  it('carregando: um cartão do tamanho final, sem ícone girando', () => {
+    const { container } = render(<MediaRow title="Mistério" cacheKey="w2-misterio" loader={() => new Promise(() => {})} onOpen={() => {}} />);
+    const espaco = container.querySelector('[data-fileira-carregando]');
+    expect(espaco).not.toBeNull();
+    expect(espaco?.className).toContain('w-28');
+    expect(espaco?.querySelector('.aspect-\\[2\\/3\\]')).not.toBeNull();
+    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect(container.textContent).toContain('Carregando…');
+  });
+
   it('na TV sem IntersectionObserver monta os cartões (nunca fica vazia)', () => {
     vi.mocked(isTv).mockReturnValue(true);
     vi.stubGlobal('IntersectionObserver', undefined);

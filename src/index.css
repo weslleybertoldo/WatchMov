@@ -213,9 +213,15 @@ html.tv .glass-card {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-html.tv header[class*="backdrop-blur"] {
-  background-color: hsl(var(--background));
-}
 html.tv .animate-pulse {
   animation: none;
+}
+/* W2 do raio-x (02/11/2026): na TV o fade das telas (página do título, abas, Painel, player) cai de 0,3 s pra 0,12 s — a
+   tela inteira fica menos tempo numa camada da GPU na TV de 1 GB (opacidade curta é barata) —, e a capa não tem
+   transição nenhuma (o foco é o contorno, na hora). */
+html.tv .animate-fade-in {
+  animation-duration: 120ms;
+}
+html.tv .tv-poster {
+  transition: none;
 }

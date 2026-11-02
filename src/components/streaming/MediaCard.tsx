@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import { MediaSummary, capaDeFileira } from '@/lib/tmdb';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
 import { isTv } from '@/lib/device';
@@ -8,7 +8,10 @@ import { Star, Film, Tv, Bookmark } from 'lucide-react';
 
 interface MediaCardProps {
   media: MediaSummary;
-  onClick: () => void;
+  onClick?: () => void;
+  // W2 do raio-x (02/11/2026): a fileira passa a MESMA função pra todas as capas (abre a ficha da capa), em vez de uma
+  // função nova por capa a cada desenho — assim a capa que não mudou não redesenha (memo).
+  onOpen?: (media: MediaSummary) => void;
   rank?: number; // numeração Top 10
   prioridade?: boolean; // W1 do raio-x: capa da frente da 1ª fileira baixa já (sem o lazy)
 }
@@ -35,7 +38,22 @@ export function isNew(date?: string): boolean {
 // nesta abertura do app aparece direto; na TV, sem o fade. Guarda só o endereço (quase nada de memória).
 const carregados = new Set<string>();
 
-export default function MediaCard({ media, onClick, rank, prioridade }: MediaCardProps) {
+// TV: o tvNav avisa com o evento 'tv-segurar' quando o OK foi segurado numa capa (data-tv-hold). W2 do raio-x
+// (02/11/2026): um ouvinte só pra página toda, ligado na 1ª capa (antes era um por capa, ~120 no Início); ele acha a
+// ficha pela capa que recebeu o evento.
+const fichaDaCapa = new WeakMap<Element, { current: MediaSummary }>();
+let ouvindoSegurarOk = false;
+function ouvirSegurarOk() {
+  if (ouvindoSegurarOk) return;
+  ouvindoSegurarOk = true;
+  document.addEventListener('tv-segurar', (e) => {
+    const capa = (e.target as Element | null)?.closest?.('[data-tv-card]');
+    const ficha = capa ? fichaDaCapa.get(capa) : undefined;
+    if (ficha) pedirMenuFavorito(ficha.current);
+  });
+}
+
+function MediaCard({ media, onClick, onOpen, rank, prioridade }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
   // W1 do raio-x (02/11/2026): no cartaz a capa é sempre a w342 (a da biblioteca vem em w500, a da página do título).
   const capa = capaDeFileira(media.posterUrl);
@@ -50,19 +68,19 @@ export default function MediaCard({ media, onClick, rank, prioridade }: MediaCar
   const mediaRef = useRef(media);
   mediaRef.current = media;
   const { handlers: segurar, engolirClique } = useSegurar(() => { pedirMenuFavorito(mediaRef.current); });
-  // TV: o tvNav avisa quando o OK foi segurado nesta capa (data-tv-hold).
-  const btnRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const el = btnRef.current;
+  const registrarCapa = useCallback((el: HTMLButtonElement | null) => {
     if (!el) return;
-    const aoSegurarOk = () => { pedirMenuFavorito(mediaRef.current); };
-    el.addEventListener('tv-segurar', aoSegurarOk);
-    return () => el.removeEventListener('tv-segurar', aoSegurarOk);
+    ouvirSegurarOk();
+    fichaDaCapa.set(el, mediaRef);
   }, []);
   return (
     <button
-      ref={btnRef}
-      onClick={() => { if (!engolirClique()) onClick(); }}
+      ref={registrarCapa}
+      onClick={() => {
+        if (engolirClique()) return;
+        if (onClick) onClick();
+        else onOpen?.(media);
+      }}
       {...segurar}
       data-tv-card
       data-tv-hold
@@ -89,7 +107,7 @@ export default function MediaCard({ media, onClick, rank, prioridade }: MediaCar
           <Bookmark className="w-3.5 h-3.5 fill-white text-white" />
         </span>
       )}
-      <div className={`tv-poster rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${capa && !loaded ? 'animate-pulse' : ''}`}>
+      <div className={`tv-poster rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-shadow ${capa && !loaded ? 'animate-pulse' : ''}`}>
         {capa ? (
           <img
             src={capa}
@@ -129,3 +147,6 @@ export default function MediaCard({ media, onClick, rank, prioridade }: MediaCar
     </button>
   );
 }
+
+// W2 do raio-x (02/11/2026): capa que não mudou não redesenha quando a tela de cima redesenha (avisos, biblioteca…).
+export default memo(MediaCard);
