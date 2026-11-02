@@ -213,9 +213,6 @@ html.tv .glass-card {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-html.tv header {
-  background-color: hsl(var(--background));
-}
 html.tv .animate-pulse {
   animation: none;
 }

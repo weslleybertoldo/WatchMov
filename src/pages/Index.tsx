@@ -550,8 +550,9 @@ export default function Index() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      {/* W2 do raio-x (02/11/2026): sem desfoque (no celular ele refazia o fundo a cada quadro da rolagem); fundo quase cheio. */}
-      <header className="sticky top-0 z-40 bg-background/95 border-b border-border/50">
+      {/* W2 do raio-x (02/11/2026): sem desfoque (no celular ele refazia o fundo a cada quadro da rolagem) e com o fundo cheio
+          (translúcido sem desfoque, o texto de baixo aparecia fraquinho por trás). */}
+      <header className="sticky top-0 z-40 bg-background border-b border-border/50">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <img src="/logo-topo.png" alt="WatchMov" width={28} height={28} className="h-7 w-7 cursor-pointer" onClick={() => changeTab('inicio')} />
           {castNow && (
@@ -750,7 +751,7 @@ export default function Index() {
         onAlternar={(m, favoritar) => { void alternarFavorito(m, favoritar); }} />
 
       {/* Bottom nav (mobile) */}
-      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 border-t border-border flex">
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background border-t border-border flex">
         {TABS.map(t => {
           const Icon = t.icon;
           return (
