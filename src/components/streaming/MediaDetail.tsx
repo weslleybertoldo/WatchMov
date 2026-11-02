@@ -490,8 +490,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
           )}
           {/* Coleção ao lado do olho do "Assistido" (pedido dele 01/11/2026, foto da TV): filme de uma saga abre a pasta dela
               com os outros filmes, sem descer até o "Faz parte da coleção" (que continua embaixo do Elenco, com o nome).
-              Com o texto "Coleção" em todo lugar (ele: "O texto coleção pode manter"). */}
-          {!isSeries && details?.collection && onOpenCollection && (() => {
+              SÓ NA TV, com o texto "Coleção" (ele: "O texto coleção pode manter"); no celular saiu (ele: "pode remover a
+              pasta ao lado do compartilhar, já tem um botão abaixo do elenco que leva até a pasta"). */}
+          {isTv() && !isSeries && details?.collection && onOpenCollection && (() => {
             const col = details.collection;
             return (
               <Button variant="outline" className="shrink-0" onClick={() => onOpenCollection(col)} data-colecao-botao={col.id}
