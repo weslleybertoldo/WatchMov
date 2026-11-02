@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaRow from './MediaRow';
 import MediaCard from './MediaCard';
+import Grade from './Grade';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 
@@ -29,9 +30,9 @@ export default function HistoryView({ movies, series, animes, onOpen, onBack }: 
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
           <h1 className="text-xl font-bold">{TITLES[filter]} assistidos</h1>
         </div>
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {list.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
-        </div>
+        <Grade itens={list} chave={m => `${m.type}-${m.tmdbId}`}>
+          {m => <MediaCard media={m} onOpen={onOpen} />}
+        </Grade>
       </div>
     );
   }

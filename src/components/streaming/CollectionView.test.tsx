@@ -3,8 +3,9 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type { TmdbCollection, MediaSummary } from '@/lib/tmdb';
 import { DESTAQUES, SECOES, UNIVERSOS, carregarColecao, carregarColecoes, idsDe } from '@/lib/colecoes';
 import { CollectionCard, CollectionRow, UniversoCard } from './CollectionCard';
-import { CollectionView, CollectionsGrid, UniversoView } from './CollectionView';
+import { CollectionView, CollectionsGrid, JANELA_FILEIRAS_TV, UniversoView } from './CollectionView';
 import MediaCard from './MediaCard';
+import { isTv } from '@/lib/device';
 
 vi.mock('@/lib/device', () => ({ isTv: vi.fn(() => false) }));
 vi.mock('@/lib/colecoes', async () => {
@@ -196,6 +197,31 @@ describe('CollectionsGrid — "Ver tudo"', () => {
       expect(vi.mocked(carregarColecoes).mock.calls[0][0]).toEqual(idsDe(SECOES[0].colecoes));
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  // W5 do raio-x (02/11/2026): na TV só as fileiras perto da do foco (± JANELA_FILEIRAS_TV) ficam com as pastas.
+  it('TV: as fileiras longe do foco ficam só com o espaço de uma pasta; a janela anda com o foco', async () => {
+    vi.mocked(isTv).mockReturnValue(true);
+    try {
+      vi.mocked(carregarColecoes).mockResolvedValue([harryPotter, senhor]);
+      render(<CollectionsGrid onOpen={vi.fn()} onOpenUniverso={vi.fn()} onBack={vi.fn()} />);
+      await waitFor(() => expect(carregarColecoes).toHaveBeenCalledTimes(SECOES.length));
+      const comPastas = () => [...document.querySelectorAll<HTMLElement>('[data-row-key^="colsec-"]')]
+        .filter(f => f.querySelector('[data-tv-card]')).map(f => f.dataset.rowKey);
+      const chaves = ['colsec-universos', ...SECOES.map(s => `colsec-${s.chave}`)];
+      await waitFor(() => expect(comPastas()).toEqual(chaves.slice(0, JANELA_FILEIRAS_TV + 1)));
+      // longe = uma pasta reservada (mesma altura), sem capa nenhuma
+      const longe = document.querySelector(`[data-row-key="${chaves[chaves.length - 1]}"]`)!;
+      expect(longe.querySelectorAll('[data-fileira-reservada]')).toHaveLength(1);
+      expect(longe.querySelector('img')).toBeNull();
+      // foco desce até a 5ª fileira: montadas = 5ª ± 2
+      fireEvent.focus(document.querySelector(`[data-row-key="${chaves[4]}"] [data-tv-card]`) ?? document.querySelector(`[data-row-key="${chaves[2]}"] [data-tv-card]`)!);
+      fireEvent.focus(document.querySelector(`[data-row-key="${chaves[4]}"] [data-tv-card]`)!);
+      expect(comPastas()).toEqual(chaves.slice(4 - JANELA_FILEIRAS_TV, 4 + JANELA_FILEIRAS_TV + 1));
+      expect(document.querySelector('[data-row-key="colsec-universos"] [data-universo]')).toBeNull();
+    } finally {
+      vi.mocked(isTv).mockReturnValue(false);
     }
   });
 });

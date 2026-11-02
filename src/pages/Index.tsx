@@ -19,6 +19,7 @@ import {
 } from '@/lib/telas';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
+import Grade from '@/components/streaming/Grade';
 import { CollectionRow, type ColecaoAbrir } from '@/components/streaming/CollectionCard';
 import { CollectionView, CollectionsGrid, UniversoView } from '@/components/streaming/CollectionView';
 import { universoPorId, type UniversoId } from '@/lib/colecoes';
@@ -670,9 +671,10 @@ export default function Index() {
               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setListFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
               <h1 className="text-xl font-bold">{listTitle}</h1>
             </div>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-              {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
-            </div>
+            {/* W5 do raio-x (02/11/2026): na TV só as linhas perto do foco ficam montadas (Grade). */}
+            <Grade itens={listFiltered} chave={m => `${m.type}-${m.tmdbId}`}>
+              {m => <MediaCard media={m} onOpen={openMedia} />}
+            </Grade>
           </>
         ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
           <div className="py-12 text-center space-y-2">
