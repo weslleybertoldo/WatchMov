@@ -100,8 +100,10 @@ function visivel(el: HTMLElement): boolean {
 }
 
 // A parte cara de "visível": fora de camada escondida/inerte e com o estilo calculado à vista.
+// W4 do raio-x (02/11/2026): botão de diálogo SAINDO (Radix, data-state="closed" durante a animação de saída) não conta.
+const FORA_DAS_SETAS = '[aria-hidden="true"], [inert], [role="dialog"][data-state="closed"], [role="alertdialog"][data-state="closed"]';
 function visivelPeloEstilo(el: HTMLElement): boolean {
-  if (el.closest('[aria-hidden="true"], [inert]')) return false;
+  if (el.closest(FORA_DAS_SETAS)) return false;
   const st = getComputedStyle(el);
   return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05;
 }
@@ -111,9 +113,12 @@ function visivelPeloEstilo(el: HTMLElement): boolean {
 // ficava no botão escondido atrás dela.
 // W3 do raio-x (02/11/2026): diálogo dentro de uma tela guardada (escondida) não conta — o aviso de atualização mora no
 // rodapé do Início, que fica montado embaixo do título; contado, ele prenderia as setas numa caixa invisível.
-function raiz(): ParentNode {
+// W4 do raio-x (02/11/2026): diálogo FECHANDO também não conta — o Radix deixa a caixa na página com
+// data-state="closed" enquanto a animação de saída roda (120 ms na TV); contada, a seta logo depois do OK ia pra um
+// botão da caixa que está sumindo.
+export function raiz(): ParentNode {
   const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]'))
-    .filter(d => !d.closest('[hidden]'));
+    .filter(d => !d.closest('[hidden]') && d.getAttribute('data-state') !== 'closed');
   if (dialogs.length) return dialogs[dialogs.length - 1];
   const w = window.innerWidth, h = window.innerHeight;
   for (let el = document.elementFromPoint(w / 2, h / 2) as HTMLElement | null; el && el !== document.body; el = el.parentElement) {

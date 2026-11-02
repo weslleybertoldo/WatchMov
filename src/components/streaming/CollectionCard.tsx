@@ -30,7 +30,7 @@ export function CollectionCard({ colecao, onClick }: { colecao: TmdbCollection; 
       data-tv-card
       data-tv-key={`col-${colecao.id}`}
       data-colecao={colecao.id}
-      className="relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
+      className="toque relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
     >
       <div className="relative pt-2">
         <Folhas />
@@ -67,7 +67,7 @@ export function UniversoCard({ universo, onClick }: { universo: Universo; onClic
       data-tv-card
       data-tv-key={`uni-${universo.id}`}
       data-universo={universo.id}
-      className="relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
+      className="toque relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
     >
       <div className="relative pt-2">
         <Folhas />

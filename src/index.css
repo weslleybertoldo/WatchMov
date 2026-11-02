@@ -126,6 +126,14 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: 'Inter', sans-serif;
+    /* W4 do raio-x (02/11/2026): puxar a página além do fim não arrasta o app inteiro junto. */
+    overscroll-behavior-y: contain;
+  }
+
+  /* W4 do raio-x: no celular o toque não pisca o quadrado azul do WebView e não espera o "duplo toque" (300 ms). */
+  button, [role="button"], a {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
 }
 
@@ -167,6 +175,31 @@
   .animate-scale-in {
     animation: scaleIn 0.2s ease-out;
   }
+
+  /* W4 do raio-x (02/11/2026, Skill-wbs-navegacao): a tela que abre por cima (título, Painel, Ver tudo, busca…) entra
+     com um fade + 8 px de subida, curto (180 ms) — no lugar do fade de 0,3 s. Na TV não tem (regra lá embaixo). */
+  .animate-tela-entra {
+    animation: telaEntra 180ms ease-out;
+  }
+}
+
+/* W4 do raio-x: toque com resposta (o WebView não tem hover — sem isto o toque não dá nenhum sinal). Usa as variáveis do
+   transform do Tailwind, então o botão que já tem translate/rotate continua no lugar e só encolhe 3%. Só fora da TV: lá o
+   OK do controle não precisa disso e a TV de 1 GB não ganha camada nova. */
+html:not(.tv) .toque {
+  transition-property: color, background-color, border-color, opacity, transform;
+  transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+html:not(.tv) .toque:active:not(:disabled) {
+  --tw-scale-x: 0.97;
+  --tw-scale-y: 0.97;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
+}
+
+@keyframes telaEntra {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes fadeIn {
@@ -224,4 +257,15 @@ html.tv .animate-fade-in {
 }
 html.tv .tv-poster {
   transition: none;
+}
+/* W4 do raio-x (02/11/2026): navegação fluida na TV = versão leve. A tela que abre por cima aparece na hora (sem
+   transição de página: na TV de 1 GB a tela inteira não vai pra uma camada da GPU) — e a tela guardada que volta (W3)
+   não recomeça animação nenhuma. Os diálogos (favoritos, "Deseja sair?", Painel) abrem e fecham em 120 ms. */
+html.tv .animate-tela-entra {
+  animation: none;
+}
+html.tv .dialogo[data-state],
+html.tv .dialogo-fundo[data-state],
+html.tv .menu-saida[data-state] {
+  animation-duration: 120ms;
 }

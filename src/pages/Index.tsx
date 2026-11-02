@@ -25,6 +25,7 @@ import { universoPorId, type UniversoId } from '@/lib/colecoes';
 import SearchView, { clearSearchCache } from '@/components/streaming/SearchView';
 import MediaCard, { isUpcoming } from '@/components/streaming/MediaCard';
 import FavoriteMenu from '@/components/streaming/FavoriteMenu';
+import { EsqueletoInicio, EsqueletoTela, EsqueletoTitulo } from '@/components/streaming/Esqueleto';
 import { chavesDosFavoritos, ehFavorito, fichaDaBiblioteca, publicarFavoritos, registrarMenuFavorito } from '@/lib/favorites';
 import { gravarFavorito } from '@/lib/gravarFavorito';
 import { toast } from 'sonner';
@@ -45,7 +46,7 @@ import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Home, Film, Tv, Sparkles, RadioTower, Bookmark, Compass, Search, Settings, Loader2, ArrowLeft, Bell } from 'lucide-react';
+import { Home, Film, Tv, Sparkles, RadioTower, Bookmark, Compass, Search, Settings, ArrowLeft, Bell } from 'lucide-react';
 
 // W1 do raio-x (02/11/2026): fora do JS da abertura — a página do título (com o player e o resolvedor: ~120 kB) baixa
 // no ocioso depois que o Início assentou; as telas raras (Painel e as de dentro dele, avisos, Ao Vivo, Procurar)
@@ -63,17 +64,21 @@ const BrowseView = telaSobDemanda(() => import('@/components/streaming/BrowseVie
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'favoritos' | 'procurar';
 
-// Carregando de tela que ainda não baixou (W1 do raio-x).
-const CARREGANDO_TELA = <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>;
+// Carregando de tela que ainda não baixou (W1 do raio-x). W4 do raio-x (02/11/2026): esqueleto parado do tamanho da tela
+// no lugar do spinner (o título tem o dele: fundo, nome e botões).
+const CARREGANDO_TELA = <EsqueletoTela />;
+const CARREGANDO_TITULO = <EsqueletoTitulo />;
 
 // W3 do raio-x (02/11/2026): uma tela da pilha (aba guardada, tela do meio ou título). Escondida = `hidden` (some da
 // página, das setas da TV e do leitor de tela) mas continua montada; cada uma tem o seu Suspense, pra uma tela que ainda
 // está baixando não esconder as outras.
+// W4 do raio-x (02/11/2026): a tela que aparece (nova, aba trocada ou a de baixo quando o título fecha) entra com o fade
+// curto (animate-tela-entra, 180 ms) — o `hidden` → à vista recomeça a animação. Na TV não tem animação (index.css).
 function Camada({ tela, escondida, children }: { tela: string; escondida: boolean; children: ReactNode }) {
   return (
-    <div data-tela={tela} hidden={escondida}>
+    <div data-tela={tela} hidden={escondida} className={escondida ? undefined : 'animate-tela-entra'}>
       <TelaVisivel.Provider value={!escondida}>
-        <Suspense fallback={CARREGANDO_TELA}>{children}</Suspense>
+        <Suspense fallback={tela.startsWith('titulo:') ? CARREGANDO_TITULO : CARREGANDO_TELA}>{children}</Suspense>
       </TelaVisivel.Provider>
     </div>
   );
@@ -505,9 +510,8 @@ export default function Index() {
     if (estavaMontada && isTv()) devolverFoco();
   }, [telaVisivel, telasMontadas, telasGuardaveis, store.loading]);
 
-  if (store.loading) {
-    return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
-  }
+  // W4 do raio-x: 1ª abertura sem a biblioteca guardada = a casca do app em esqueleto, não um spinner de tela cheia.
+  if (store.loading) return <EsqueletoInicio />;
   // W1 do raio-x: a 1ª fileira do Início baixa as capas da frente já (as outras seguem no lazy).
   const primeiraDoInicio = continueMovies.length ? 'cf' : continueSeries.length ? 'cs' : continueAnimes.length ? 'ca' : 'top10';
   const continueFiltered = continueFilter === 'movie' ? continueAll.filter(i => i.type === 'movie')
@@ -541,18 +545,20 @@ export default function Index() {
   };
   // Menu de segurar a capa → põe/tira dos favoritos. Título que ainda não está na biblioteca ganha a ficha completa
   // da TMDB (o gênero separa Séries de Animes; as temporadas), igual ao botão de pastinha da página dele.
+  // W4 do raio-x (02/11/2026): o aviso sai NA HORA do OK (estado otimista) — antes ele esperava a TMDB e o banco (título
+  // fora da biblioteca: 0,3–0,8 s no celular). Deu erro → o aviso de erro troca o de sucesso.
   const alternarFavorito = async (m: MediaSummary, favoritar: boolean) => {
+    const aviso = toast.success(favoritar ? 'Adicionado aos favoritos' : 'Removido dos favoritos');
     const tipo: 'movie' | 'series' = m.type === 'tv' ? 'series' : 'movie';
     let item = store.data.items.find(i => i.tmdbId === m.tmdbId && i.type === tipo) ?? null;
     const precisaDetalhes = !item || (favoritar && m.type === 'movie' && !m.date);   // filme: a data decide o sino
     const detalhes = precisaDetalhes ? await getDetails(m.tmdbId, m.type).catch(() => null) : null;
     if (!item) item = await store.upsertLibraryItem(fichaDaBiblioteca(m, detalhes));
-    if (!item) { toast.error('Não deu pra salvar agora. Tente de novo.'); return; }
+    if (!item) { toast.error('Não deu pra salvar agora. Tente de novo.', { id: aviso }); return; }
     gravarFavorito(store.updateItem, item, favoritar, {
       tmdbId: m.tmdbId, type: m.type, title: item.title, posterUrl: item.posterUrl ?? m.posterUrl,
       emBreve: isUpcoming(m.date ?? detalhes?.releaseDate),
     });
-    toast.success(favoritar ? 'Adicionado aos favoritos' : 'Removido dos favoritos');
   };
 
   // Busca já na tela: a lupa leva pro campo (na TV o OK solto nele abre o teclado do Fire TV).
@@ -657,7 +663,7 @@ export default function Index() {
         ))}
       </div>
     ) : t === 'favoritos' ? (
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6">
         {listFilter ? (
           <>
             <div className="flex items-center gap-2">
@@ -707,7 +713,7 @@ export default function Index() {
           <nav className="hidden sm:flex items-center gap-1">
             {TABS.map(t => (
               <button key={t.key} onClick={() => changeTab(t.key)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${tab === t.key ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+                className={`toque px-3 py-1.5 rounded-lg text-sm font-medium transition ${tab === t.key ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
                 {t.label}
               </button>
             ))}
@@ -788,7 +794,7 @@ export default function Index() {
           const Icon = t.icon;
           return (
             <button key={t.key} onClick={() => changeTab(t.key)}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] ${tab === t.key ? 'text-primary' : 'text-muted-foreground'}`}>
+              className={`toque flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] ${tab === t.key ? 'text-primary' : 'text-muted-foreground'}`}>
               <Icon className="w-5 h-5" />
               {t.label}
             </button>

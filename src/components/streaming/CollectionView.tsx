@@ -5,6 +5,7 @@ import {
   filmesLabel, idsDe, type Universo, type UniversoId,
 } from '@/lib/colecoes';
 import MediaCard from './MediaCard';
+import { EsqueletoGrade } from './Esqueleto';
 import { CollectionCard, FileiraDeColecoes, type ColecaoAbrir } from './CollectionCard';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader2 } from 'lucide-react';
@@ -27,9 +28,8 @@ function Falhou({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-const Carregando = () => (
-  <div className="flex justify-center py-10 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
-);
+// W4 do raio-x (02/11/2026): esqueleto parado do tamanho da grade no lugar do spinner.
+const Carregando = () => <EsqueletoGrade n={9} />;
 
 // Pasta aberta (pedido dele 01/11/2026): os filmes da coleção na ordem de lançamento, numerados 1..N com o ano.
 // Os dados ficam em cache (colecoes.ts): ao voltar de um filme a pasta remonta igual, e o scroll volta pro lugar.
@@ -53,7 +53,7 @@ export function CollectionView({ colecao, onOpen, onBack }: { colecao: ColecaoAb
 
   const anos = dados ? anosDaColecao(dados) : '';
   return (
-    <div className="space-y-4 animate-fade-in" data-colecao-aberta={colecao.id}>
+    <div className="space-y-4" data-colecao-aberta={colecao.id}>
       <Cabecalho titulo={dados?.name || colecao.nome} onBack={onBack} />
       {dados ? (
         <>
@@ -101,7 +101,7 @@ export function UniversoView({ universo, onOpen, onBack }: { universo: Universo;
   }, [ids, carregar]);
 
   return (
-    <div className="space-y-4 animate-fade-in" data-universo-aberto={universo.id}>
+    <div className="space-y-4" data-universo-aberto={universo.id}>
       <Cabecalho titulo={universo.nome} onBack={onBack} />
       <p className="text-xs text-muted-foreground px-1">{colecoesLabel(universo.colecoes.length)}</p>
       {lista ? (
@@ -124,7 +124,7 @@ export function CollectionsGrid({ onOpen, onOpenUniverso, onBack }: {
   onOpen: (c: ColecaoAbrir) => void; onOpenUniverso: (id: UniversoId) => void; onBack: () => void;
 }) {
   return (
-    <div className="space-y-6 animate-fade-in" data-colecoes-tudo>
+    <div className="space-y-6" data-colecoes-tudo>
       <Cabecalho titulo="Coleções" onBack={onBack} />
       <FileiraDeColecoes chave="colsec-universos" titulo="Universos" ids={[]} universos={UNIVERSOS}
         onOpen={onOpen} onOpenUniverso={onOpenUniverso} />

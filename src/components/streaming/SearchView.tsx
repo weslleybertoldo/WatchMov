@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { MediaSummary, searchMulti } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import { EsqueletoGrade } from './Esqueleto';
 import { Input } from '@/components/ui/input';
-import { Search, Loader2, Clock, X } from 'lucide-react';
+import { Search, Clock, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { esconderTeclado, isTv, mostrarTeclado } from '@/lib/device';
 
@@ -85,7 +86,7 @@ export default function SearchView({ onOpen }: SearchViewProps) {
   };
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -147,7 +148,8 @@ export default function SearchView({ onOpen }: SearchViewProps) {
         </div>
       )}
 
-      {loading && <div className="flex justify-center py-8 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
+      {/* W4 do raio-x (02/11/2026): buscando = esqueleto da grade (o resultado entra no mesmo lugar, sem pulo). */}
+      {loading && <EsqueletoGrade n={9} />}
 
       {!loading && results.length > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">

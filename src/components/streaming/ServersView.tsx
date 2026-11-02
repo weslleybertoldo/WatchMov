@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
+import { useUltimoValor } from '@/hooks/use-saida-animada';
 import { useResolverEnabled, setResolverEnabled } from '@/lib/resolver';
 
 // Aba "Servidores" do Painel (abaixo de Download — pedido 07/09/2026): lista as
@@ -18,6 +19,7 @@ export default function ServersView({ onBack }: { onBack: () => void }) {
   const fav = useFavoriteServer();
   const resolverOn = useResolverEnabled();
   const [pending, setPending] = useState<Provider | null>(null);
+  const pendenteNaTela = useUltimoValor(pending);   // W4: o nome fica na caixa enquanto ela sai animada
 
   const confirm = () => {
     if (!pending) return;
@@ -27,7 +29,7 @@ export default function ServersView({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-xl mx-auto">
+    <div className="space-y-6 max-w-xl mx-auto">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
         <h1 className="text-xl font-bold">Servidores</h1>
@@ -74,7 +76,7 @@ export default function ServersView({ onBack }: { onBack: () => void }) {
       <AlertDialog open={!!pending} onOpenChange={o => { if (!o) setPending(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Marcar servidor {pending ? serverLabel(pending) : ''} como favorito?</AlertDialogTitle>
+            <AlertDialogTitle>Marcar servidor {pendenteNaTela ? serverLabel(pendenteNaTela) : ''} como favorito?</AlertDialogTitle>
             <AlertDialogDescription>Ele passa a abrir primeiro no Assistir.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
