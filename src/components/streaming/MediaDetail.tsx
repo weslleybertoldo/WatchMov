@@ -480,12 +480,16 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
             <Play className="w-4 h-4 mr-1" /> {hasProgress ? 'Continuar' : 'Assistir'}
           </Button>
           {!isSeries && (
-            <Button variant={movieWatched ? 'default' : 'outline'}
+            /* Só o olho, sem o texto "Assistido" (pedido dele 01/11/2026); o nome fica no title/aria-label. */
+            <Button variant={movieWatched ? 'default' : 'outline'} size="icon" className="shrink-0"
               title={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'}
+              aria-label={movieWatched ? 'Marcado como assistido' : 'Marcar como assistido'} data-assistido-botao
               onClick={async () => { const it = await ensureLib(); if (it) store.updateItem(it.id, it.completed ? { completed: false } : { completed: true, watchedDuration: it.totalDuration || it.watchedDuration || 0, lastWatchedAt: new Date().toISOString() }); }}>
-              {movieWatched ? <CheckCheck className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />} Assistido
+              {movieWatched ? <CheckCheck className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </Button>
           )}
+          {/* Sem botão "Coleção" aqui (decisão dele 01/11/2026): na TV e no celular a pasta da saga abre pelo
+              "Faz parte da coleção", embaixo do Elenco. */}
           {/* Abrir na TV (pedido dele 26/09/2026): no lugar do "Baixar eps"/"Baixar" — baixar ficou só no player.
               Na TV não aparece: ela é o destino. */}
           {!isTv() && (

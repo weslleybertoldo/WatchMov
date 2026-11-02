@@ -633,6 +633,9 @@ export default function Index() {
         ) : tab === 'filmes' ? (
           <div className="space-y-6">
             <CollectionRow onOpen={openColecao} onOpenUniverso={openUniverso} onSeeAll={openColecoesTudo} />
+            {/* Top 10 da semana também aqui, logo abaixo de Coleções (pedido dele 01/11/2026); o mesmo cache do Início. */}
+            <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
+              loader={() => trendingWeek('movie')} onOpen={openMedia} />
             {MOVIE_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
                 loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
@@ -641,6 +644,9 @@ export default function Index() {
           </div>
         ) : tab === 'series' ? (
           <div className="space-y-6">
+            {/* Top 10 de séries também na aba Séries, no topo (pedido dele 01/11/2026); o mesmo cache do Início. */}
+            <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
+              loader={() => trendingWeek('tv')} onOpen={openMedia} />
             {TV_GENRES.map(g => (
               <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
                 loader={genreRowLoader('tv', g.id, TV_ROW_IDS)} onOpen={openMedia}
