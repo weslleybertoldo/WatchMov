@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo, Suspense } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, Suspense, type ReactNode } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -13,7 +13,10 @@ import { getCastNow, closeNativePlayer, type CastNow } from '@/lib/nativePlayer'
 import { App as CapApp } from '@capacitor/app';
 import { appNaFrente, isTv } from '@/lib/device';
 import { listenAsTv, sessionIdOf } from '@/lib/tvRemote';
-import { lembrarCartaz } from '@/lib/tvNav';
+import { devolverFoco, lembrarCartaz } from '@/lib/tvNav';
+import {
+  ABAS_GUARDADAS_CELULAR, ABAS_GUARDADAS_TV, MemoriaDeRolagem, TelaVisivel, guardarAba, recolocarRolagem, type Rolagem,
+} from '@/lib/telas';
 import MediaRow from '@/components/streaming/MediaRow';
 import CategoryView from '@/components/streaming/CategoryView';
 import { CollectionRow, type ColecaoAbrir } from '@/components/streaming/CollectionCard';
@@ -59,7 +62,22 @@ const LiveTvView = telaSobDemanda(() => import('@/components/streaming/LiveTvVie
 const BrowseView = telaSobDemanda(() => import('@/components/streaming/BrowseView'));
 
 type Tab = 'inicio' | 'filmes' | 'series' | 'animes' | 'aovivo' | 'favoritos' | 'procurar';
-type ScrollPos = { y: number; rowKey?: string; rowTop?: number };
+
+// Carregando de tela que ainda não baixou (W1 do raio-x).
+const CARREGANDO_TELA = <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>;
+
+// W3 do raio-x (02/11/2026): uma tela da pilha (aba guardada, tela do meio ou título). Escondida = `hidden` (some da
+// página, das setas da TV e do leitor de tela) mas continua montada; cada uma tem o seu Suspense, pra uma tela que ainda
+// está baixando não esconder as outras.
+function Camada({ tela, escondida, children }: { tela: string; escondida: boolean; children: ReactNode }) {
+  return (
+    <div data-tela={tela} hidden={escondida}>
+      <TelaVisivel.Provider value={!escondida}>
+        <Suspense fallback={CARREGANDO_TELA}>{children}</Suspense>
+      </TelaVisivel.Provider>
+    </div>
+  );
+}
 
 function itemToSummary(i: WatchItem): MediaSummary {
   return {
@@ -174,12 +192,15 @@ export default function Index() {
   }, [store]);
 
   const [tab, setTab] = useState<Tab>('inicio');
+  // W3 do raio-x (02/11/2026): abas montadas (escondidas quando não são a da vez). Início sempre; as outras vistas por
+  // último, no máximo ABAS_GUARDADAS_* (TV 1, celular 2).
+  const [abasVivas, setAbasVivas] = useState<Tab[]>(['inicio']);
   const [selected, setSelected] = useState<MediaSummary | null>(null);
   const [category, setCategory] = useState<null | { title: string; loadPage: (p: number) => Promise<MediaSummary[]>; cacheKey?: string }>(null);
   // Coleções (pedido dele 01/11/2026): a pasta aberta e a grade do "Ver tudo". Pasta aberta pela página de um
-  // filme ("Faz parte da coleção X") guarda o filme e o lugar da home: o Voltar da pasta devolve a página do
-  // filme, e o Voltar dela, o lugar de onde ele tinha saído.
-  const [colecao, setColecao] = useState<null | (ColecaoAbrir & { origem?: MediaSummary; origemScroll?: ScrollPos })>(null);
+  // filme ("Faz parte da coleção X") guarda o filme: o Voltar da pasta devolve a página do filme, e o Voltar dela, o
+  // lugar de onde ele tinha saído (a memória de rolagem da tela de baixo, W3 do raio-x).
+  const [colecao, setColecao] = useState<null | (ColecaoAbrir & { origem?: MediaSummary })>(null);
   const [colecoesTudo, setColecoesTudo] = useState(false);
   // W5 (pedido dele 01/11/2026): pasta Marvel/DC aberta (as pastas das sagas do universo). Fica embaixo da pasta da
   // saga aberta de dentro dela: o Voltar da saga devolve o universo, e o do universo, a fileira (ou o "Ver tudo").
@@ -237,22 +258,23 @@ export default function Index() {
   const [autoPlay, setAutoPlay] = useState<null | { season: number; episode: number }>(null);
   const closeDetail = useCallback(() => { setAutoPlay(null); setSelected(null); }, []);
 
-  // Preserva o lugar da página ao abrir um título e voltar. Além do scrollY, guarda a
-  // LINHA (data-row-key) onde foi o toque e a posição dela na tela: ao voltar, a home
-  // pode ter mudado de altura (hero carregando, linha "Continuar assistindo" nova ou
-  // reordenada) e restaurar só o scrollY deixava a tela "descendo" pra outro lugar.
-  const homeScrollRef = useRef<{ y: number; rowKey?: string; rowTop?: number }>({ y: 0 });
-  const lastTapRef = useRef<{ rowKey: string; rowTop: number } | null>(null);
+  // Lugar da página de cada tela (W3 do raio-x: a memória fica por tela — ver o efeito das camadas, mais abaixo). Além
+  // do scrollY, guarda a LINHA (data-row-key) do último toque/OK e a posição dela na tela: a tela pode ter mudado de
+  // altura enquanto estava escondida (linha "Continuar assistindo" nova ou reordenada) e restaurar só o scrollY deixava
+  // a tela "descendo" pra outro lugar. A âncora só vale logo depois do toque (o que abriu a outra tela).
+  const ancoraRef = useRef<{ rowKey: string; rowTop: number; em: number } | null>(null);
   useEffect(() => {
-    const onDown = (e: Event) => {
-      const el = (e.target as Element | null)?.closest?.('[data-row-key]') as HTMLElement | null;
-      lastTapRef.current = el ? { rowKey: el.dataset.rowKey || '', rowTop: el.getBoundingClientRect().top } : null;
+    const marcar = (el: Element | null | undefined) => {
+      const f = el?.closest?.('[data-row-key]') as HTMLElement | null | undefined;
+      ancoraRef.current = f ? { rowKey: f.dataset.rowKey || '', rowTop: f.getBoundingClientRect().top, em: performance.now() } : null;
     };
+    const onDown = (e: Event) => marcar(e.target as Element | null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Enter') marcar(document.activeElement); };   // TV: o OK
     document.addEventListener('pointerdown', onDown, true);
-    return () => document.removeEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('pointerdown', onDown, true); window.removeEventListener('keydown', onKey, true); };
   }, []);
   const openMedia = useCallback((m: MediaSummary) => {
-    homeScrollRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
     setAutoPlay(null);
     setSelected(m);
   }, []);
@@ -289,117 +311,44 @@ export default function Index() {
           ? { season: castNow.season, episode: castNow.episode } : null);
         setSelected({ tmdbId: castNow.tmdbId, title: d.title, posterUrl: d.posterUrl,
           type: castNow.type, rating: d.rating, votes: d.votes });
-        window.scrollTo(0, 0);
       })
       .catch(() => {});
   }, [castNow]);
-  // Recoloca a página onde estava (linha âncora no mesmo lugar da tela; senão scrollY).
-  // Devolve o cancelamento das 2 passadas (a 2ª pega imagem/linha que carregou depois).
-  const restoreScroll = (saved: { y: number; rowKey?: string; rowTop?: number }) => {
-    let lastSet = -1;
-    const restore = () => {
-      // Depois da 1ª passada o usuário já rolou por conta própria? Não briga com ele.
-      if (lastSet >= 0 && Math.abs(window.scrollY - lastSet) > 1) return;
-      const row = saved.rowKey
-        ? Array.from(document.querySelectorAll<HTMLElement>('[data-row-key]')).find(el => el.dataset.rowKey === saved.rowKey)
-        : undefined;
-      const target = row && saved.rowTop != null
-        ? row.getBoundingClientRect().top + window.scrollY - saved.rowTop   // mesma linha, mesmo lugar na tela
-        : saved.y;
-      const y = Math.max(0, Math.round(target));
-      if (Math.abs(y - window.scrollY) > 1) window.scrollTo(0, y);
-      lastSet = window.scrollY;
-    };
-    const raf = requestAnimationFrame(restore);
-    const t = window.setTimeout(restore, 150);
-    return () => { cancelAnimationFrame(raf); window.clearTimeout(t); };
-  };
-  useEffect(() => {
-    // Abriu um título: o detalhe nasce no TOPO. Ele troca o conteúdo da home no mesmo
-    // documento e herdava o scroll dela — aparecia rolado até o fim ("clico na série e
-    // vai pro final da página" / "os eps abrem sozinhos", sem passar pelo cabeçalho).
-    if (selected) { window.scrollTo(0, 0); return; }
-    return restoreScroll(homeScrollRef.current);
-  }, [selected]);
-  // "Ver tudo" (categoria / continuar assistindo): mesma coisa do detalhe — a lista nasce
-  // no TOPO e, ao voltar, a home volta pra LINHA de onde saiu. Antes a home herdava o
-  // scroll da lista rolada e "voltava pro final da página" (pedido 07/09/2026).
-  const homeReturnRef = useRef<{ y: number; rowKey?: string; rowTop?: number }>({ y: 0 });
-  const subviewWasOpen = useRef(false);
-  const openCategory = useCallback((c: NonNullable<typeof category>) => {
-    homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
-    setCategory(c);
-  }, []);
-  const openContinue = useCallback((f: 'movie' | 'series' | 'anime') => {
-    homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
-    setContinueFilter(f);
-  }, []);
-  useEffect(() => {
-    if (category || continueFilter) { subviewWasOpen.current = true; window.scrollTo(0, 0); return; }
-    if (!subviewWasOpen.current) return;   // 1ª montagem / nunca abriu: nada a restaurar
-    subviewWasOpen.current = false;
-    return restoreScroll(homeReturnRef.current);
-  }, [category, continueFilter]);
+  // "Ver tudo" (categoria / continuar assistindo), Coleções, título: a tela nova nasce no TOPO e, no Voltar, a de onde
+  // saiu volta pro mesmo lugar (a LINHA de onde saiu; pedido 07/09/2026). Desde a W3 do raio-x quem cuida disso é a
+  // memória de rolagem por tela, no efeito das camadas (mais abaixo) — aqui só se abre e fecha.
+  const openCategory = useCallback((c: NonNullable<typeof category>) => setCategory(c), []);
+  const openContinue = useCallback((f: 'movie' | 'series' | 'anime') => setContinueFilter(f), []);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
     openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
 
-  // Coleções: pasta, universo e grade nascem no TOPO; o Voltar recoloca a tela de onde saiu (a linha da aba Filmes,
-  // o lugar da grade ou o da pasta do universo), igual ao "Ver tudo" das categorias.
-  const gradeScrollRef = useRef<ScrollPos>({ y: 0 });
-  const universoScrollRef = useRef<ScrollPos>({ y: 0 });
-  const colecaoVoltaRef = useRef<ScrollPos | null>(null);
-  const openColecao = useCallback((c: ColecaoAbrir) => {
-    const aqui = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
-    if (universo) universoScrollRef.current = aqui;
-    else if (colecoesTudo) gradeScrollRef.current = aqui;
-    else homeReturnRef.current = aqui;
-    setColecao({ id: c.id, nome: c.nome });
-  }, [universo, colecoesTudo]);
-  const openUniverso = useCallback((u: UniversoId) => {
-    const aqui = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
-    if (colecoesTudo) gradeScrollRef.current = aqui; else homeReturnRef.current = aqui;
-    setUniverso(u);
-  }, [colecoesTudo]);
-  const openColecoesTudo = useCallback(() => {
-    homeReturnRef.current = { y: window.scrollY, ...(lastTapRef.current ?? {}) };
-    setColecoesTudo(true);
-  }, []);
+  // Coleções: pasta, universo e grade (a pasta pode ficar por cima do universo, e os dois por cima da grade).
+  const openColecao = useCallback((c: ColecaoAbrir) => setColecao({ id: c.id, nome: c.nome }), []);
+  const openUniverso = useCallback((u: UniversoId) => setUniverso(u), []);
+  const openColecoesTudo = useCallback(() => setColecoesTudo(true), []);
   const openColecaoDoFilme = useCallback((c: TmdbCollectionRef) => {
     if (!selected) return;
     // O filme foi aberto DESTA pasta (ela está embaixo): é só voltar pra ela, no mesmo lugar.
     if (colecao?.id === c.id) { closeDetail(); return; }
-    setColecao({ id: c.id, nome: c.name, origem: selected, origemScroll: homeScrollRef.current });
-    homeScrollRef.current = { y: 0 };   // o detalhe fecha agora: a pasta nasce no topo, não no lugar da home
+    setColecao({ id: c.id, nome: c.name, origem: selected });
     closeDetail();
   }, [selected, colecao, closeDetail]);
   const fecharColecao = useCallback(() => {
     if (!colecao) return;
     if (colecao.origem) {
-      homeScrollRef.current = colecao.origemScroll ?? { y: 0 };
       setAutoPlay(null);
       setSelected(colecao.origem);
     } else {
-      colecaoVoltaRef.current = universo ? universoScrollRef.current : colecoesTudo ? gradeScrollRef.current : homeReturnRef.current;
       lembrarCartaz(`col-${colecao.id}`);   // TV: o foco volta na pasta de onde ele entrou
     }
     setColecao(null);
-  }, [colecao, universo, colecoesTudo]);
+  }, [colecao]);
   const fecharUniverso = useCallback(() => {
     if (!universo) return;
-    colecaoVoltaRef.current = colecoesTudo ? gradeScrollRef.current : homeReturnRef.current;
     lembrarCartaz(`uni-${universo}`);   // TV: o foco volta na pasta Marvel/DC
     setUniverso(null);
-  }, [universo, colecoesTudo]);
-  const fecharColecoesTudo = useCallback(() => {
-    colecaoVoltaRef.current = homeReturnRef.current;
-    setColecoesTudo(false);
-  }, []);
-  useEffect(() => {
-    const volta = colecaoVoltaRef.current;
-    colecaoVoltaRef.current = null;
-    if (volta) return restoreScroll(volta);
-    if (colecao || universo || colecoesTudo) window.scrollTo(0, 0);
-  }, [colecao, universo, colecoesTudo]);
+  }, [universo]);
+  const fecharColecoesTudo = useCallback(() => setColecoesTudo(false), []);
 
   const handleBack = useCallback(async (): Promise<boolean> => {
     if (menuFavAberto) { setMenuFavAberto(false); return true; }
@@ -429,14 +378,12 @@ export default function Index() {
 
   // TV: o celular mandou abrir um título (enviar pra TV). Fecha o que estiver por cima e mostra a página dele.
   const openFromRemote = useCallback((m: MediaSummary) => {
-    homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
     setExitAsk(false); setLiveChannel(null); setSettingsOpen(false); setNoticesOpen(false); setHistoryOpen(false);
     setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false);
     setMenuFavAberto(false); setListFilter(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setCategory(null);
     setColecao(null); setUniverso(null); setColecoesTudo(false);
     setAutoPlay(null);
     setSelected(m);
-    window.scrollTo(0, 0);
   }, []);
   const openFromRemoteRef = useRef(openFromRemote);
   openFromRemoteRef.current = openFromRemote;
@@ -497,6 +444,67 @@ export default function Index() {
     };
   }, [store.data.items]);
 
+  // ── W3 do raio-x (02/11/2026): as telas em camadas ──
+  // A pilha do que está aberto, de baixo pra cima: a aba → as telas do meio (Ver tudo, busca, Painel, avisos, Coleções…;
+  // a última é a que aparece) → o título. Só a de cima aparece; ficam montadas e escondidas as abas guardadas e a tela do
+  // meio de cima (embaixo do título). Voltar pra uma delas é só mostrar de novo.
+  const telaAba = `aba:${tab}`;
+  const meio: string[] = [];
+  if (category) meio.push(`categoria:${category.cacheKey ?? category.title}`);
+  if (continueFilter) meio.push(`continuar:${continueFilter}`);
+  if (searchOpen) meio.push('busca');
+  if (settingsOpen) {
+    meio.push('painel');
+    const sub = historyOpen ? 'historico' : downloadOpen ? 'downloads' : serversOpen ? 'servidores' : tvOpen ? 'tvs' : bugsOpen ? 'bugs' : '';
+    if (sub) meio.push(`painel:${sub}`);
+  }
+  if (noticesOpen) meio.push('avisos');
+  if (colecoesTudo) meio.push('colecoes');
+  if (universo && universoPorId(universo)) meio.push(`universo:${universo}`);
+  if (colecao) meio.push(`colecao:${colecao.id}`);
+  const telaMeio = meio.length ? meio[meio.length - 1] : null;
+  const telaTitulo = selected ? `titulo:${selected.type}-${selected.tmdbId}` : null;
+  const telaVisivel = telaTitulo ?? telaMeio ?? telaAba;
+  const telasMontadas = [...abasVivas.map(a => `aba:${a}`), ...(telaMeio ? [telaMeio] : []), ...(telaTitulo ? [telaTitulo] : [])].join('|');
+  // Memória de rolagem: das telas que ainda podem reaparecer (a aba, as abas guardadas, as do meio abertas).
+  const telasGuardaveis = [telaAba, ...abasVivas.map(a => `aba:${a}`), ...meio].join('|');
+
+  // A página inteira rola (window): cada tela guarda onde estava quando outra foi por cima e recebe de volta quando
+  // reaparece; a que nunca foi coberta nasce no topo. O "onde estava" é o último scroll da tela à vista (ouvido na
+  // rolagem — depois da troca a altura da página já é a da outra tela) + a âncora do toque/OK que abriu a outra.
+  const memoriaRef = useRef<MemoriaDeRolagem | null>(null);
+  if (!memoriaRef.current) memoriaRef.current = new MemoriaDeRolagem();
+  const yDaTela = useRef(0);
+  const telaAnterior = useRef<string | null>(null);
+  const montadasAntes = useRef<Set<string>>(new Set());
+  const cancelarRecolocar = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    yDaTela.current = window.scrollY;
+    const onScroll = () => { yDaTela.current = window.scrollY; };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  useLayoutEffect(() => {
+    if (store.loading) return;
+    const memoria = memoriaRef.current!;
+    const antes = telaAnterior.current;
+    const estavaMontada = montadasAntes.current.has(telaVisivel);
+    telaAnterior.current = telaVisivel;
+    montadasAntes.current = new Set(telasMontadas.split('|'));
+    if (antes === null || antes === telaVisivel) { memoria.manterSo(telasGuardaveis.split('|')); return; }
+    const a = ancoraRef.current;
+    memoria.guardar(antes, { y: yDaTela.current, ...(a && performance.now() - a.em < 2000 ? { rowKey: a.rowKey, rowTop: a.rowTop } : {}) });
+    memoria.manterSo(telasGuardaveis.split('|'));
+    cancelarRecolocar.current();
+    const pos: Rolagem | undefined = memoria.ler(telaVisivel);
+    if (pos) cancelarRecolocar.current = recolocarRolagem(pos);
+    else { cancelarRecolocar.current = () => undefined; window.scrollTo(0, 0); }
+    yDaTela.current = window.scrollY;
+    // TV: a tela que estava guardada voltou já pronta → o foco vai JÁ pro cartaz aberto (se o foco se perdeu). Tela nova
+    // fica com o observador do tvNav, que espera ela carregar (ex.: o "Assistir" do título).
+    if (estavaMontada && isTv()) devolverFoco();
+  }, [telaVisivel, telasMontadas, telasGuardaveis, store.loading]);
+
   if (store.loading) {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
@@ -514,13 +522,19 @@ export default function Index() {
   const listFiltered = listFilter === 'movie' ? listMovies : listFilter === 'anime' ? listAnimes : listFilter === 'series' ? listSeries : [];
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
 
-  const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setUniverso(null); setColecoesTudo(false); };
+  // W3 do raio-x: a aba vista há pouco continua montada (guardarAba) e, no celular, volta onde estava. A mesma aba de novo
+  // nasce no topo; na TV também a outra (o foco está na barra de cima, que leva a página pro topo).
+  const changeTab = (t: Tab) => {
+    if (t === tab || isTv()) memoriaRef.current!.esquecer(`aba:${t}`);
+    if (t === tab && telaVisivel === telaAba) window.scrollTo(0, 0);   // já na aba, sem nada por cima: só sobe
+    setAbasVivas(v => guardarAba(v, t, 'inicio', isTv() ? ABAS_GUARDADAS_TV : ABAS_GUARDADAS_CELULAR));
+    setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setUniverso(null); setColecoesTudo(false);
+  };
 
   // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
   // eram interruptores e a lupa nem aparecia com um título, os avisos ou o Painel por cima. A engrenagem sempre cai
   // na tela principal do Painel (não no Histórico/Downloads onde ele parou).
   const abrirDoTopo = (alvo: 'busca' | 'avisos' | 'painel') => {
-    homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 };
     closeDetail(); setCategory(null); setColecao(null); setUniverso(null); setColecoesTudo(false);
     setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
     setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListFilter(null);
@@ -543,9 +557,137 @@ export default function Index() {
 
   // Busca já na tela: a lupa leva pro campo (na TV o OK solto nele abre o teclado do Fire TV).
   const abrirBusca = () => {
-    if (searchOpen && !selected && !noticesOpen && !settingsOpen) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+    if (telaVisivel === 'busca') document.querySelector<HTMLInputElement>('[data-tela="busca"] input[type="search"]')?.focus();
     else abrirDoTopo('busca');
   };
+
+  // As telas do meio, da de cima pra de baixo (a mesma ordem da pilha `meio`).
+  const conteudoDoMeio = (): ReactNode => (
+    colecao ? (
+      /* Pasta e grade logo depois do detalhe: a pasta aberta pela página de um filme (que pode ter vindo da
+         busca, do histórico…) aparece por cima da tela de onde o filme saiu, e o Voltar devolve tudo em ordem. */
+      <CollectionView key={colecao.id} colecao={colecao} onOpen={openMedia} onBack={fecharColecao} />
+    ) : universo && universoPorId(universo) ? (
+      <UniversoView key={universo} universo={universoPorId(universo)!} onOpen={openColecao} onBack={fecharUniverso} />
+    ) : colecoesTudo ? (
+      <CollectionsGrid onOpen={openColecao} onOpenUniverso={openUniverso} onBack={fecharColecoesTudo} />
+    ) : noticesOpen ? (
+      <NoticesView onBack={() => setNoticesOpen(false)} />
+    ) : settingsOpen ? (
+      historyOpen ? (
+        <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
+      ) : downloadOpen ? (
+        <DownloadView onBack={() => setDownloadOpen(false)} />
+      ) : serversOpen ? (
+        <ServersView onBack={() => setServersOpen(false)} />
+      ) : tvOpen ? (
+        <TvDevicesView onBack={() => setTvOpen(false)} />
+      ) : bugsOpen ? (
+        <BugsView onBack={() => setBugsOpen(false)} />
+      ) : (
+        <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+      )
+    ) : searchOpen ? (
+      <SearchView onOpen={openMedia} />
+    ) : continueFilter ? (
+      <ContinueView title={continueTitle} entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueFilter(null)} />
+    ) : category ? (
+      <CategoryView title={category.title} loadPage={category.loadPage} cacheKey={category.cacheKey} onOpen={openMedia} onBack={() => setCategory(null)} />
+    ) : null
+  );
+
+  const conteudoDaAba = (t: Tab): ReactNode => (
+    t === 'inicio' ? (
+      <div className="space-y-6">
+        <HeroCarousel onOpen={openMedia} />
+        {continueMovies.length > 0 && (
+          <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} prioridade={primeiraDoInicio === 'cf'} />
+        )}
+        {continueSeries.length > 0 && (
+          <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} prioridade={primeiraDoInicio === 'cs'} />
+        )}
+        {continueAnimes.length > 0 && (
+          <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} prioridade={primeiraDoInicio === 'ca'} />
+        )}
+        <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
+          loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade={primeiraDoInicio === 'top10'} />
+        <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
+          loader={() => trendingWeek('tv')} onOpen={openMedia} />
+        <MediaRow title="Lançamentos recentes" cacheKey="recent-movie"
+          loader={() => recent('movie')} onOpen={openMedia}
+          onSeeAll={() => openCategory({ title: 'Lançamentos recentes', loadPage: (p) => recent('movie', p), cacheKey: 'cat-recent-movie' })} />
+        {MOVIE_GENRES.slice(0, 6).map(g => (
+          <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
+            loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
+            onSeeAll={() => openGenre('movie', g.id, g.name)} />
+        ))}
+        <footer className="pt-4 border-t border-border/50">
+          <UpdateChecker />
+        </footer>
+      </div>
+    ) : t === 'filmes' ? (
+      <div className="space-y-6">
+        <CollectionRow onOpen={openColecao} onOpenUniverso={openUniverso} onSeeAll={openColecoesTudo} />
+        {/* Top 10 da semana também aqui, logo abaixo de Coleções (pedido dele 01/11/2026); o mesmo cache do Início. */}
+        <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
+          loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade />
+        {MOVIE_GENRES.map(g => (
+          <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
+            loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
+            onSeeAll={() => openGenre('movie', g.id, g.name)} />
+        ))}
+      </div>
+    ) : t === 'series' ? (
+      <div className="space-y-6">
+        {/* Top 10 de séries também na aba Séries, no topo (pedido dele 01/11/2026); o mesmo cache do Início. */}
+        <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
+          loader={() => trendingWeek('tv')} onOpen={openMedia} prioridade />
+        {TV_GENRES.map(g => (
+          <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
+            loader={genreRowLoader('tv', g.id, TV_ROW_IDS)} onOpen={openMedia}
+            onSeeAll={() => openGenre('tv', g.id, g.name)} />
+        ))}
+      </div>
+    ) : t === 'animes' ? (
+      <div className="space-y-6">
+        {ANIME_ROWS.map((r, k) => (
+          <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
+            loader={animeRowLoader(r.id)} onOpen={openMedia} prioridade={k === 0}
+            onSeeAll={() => openCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
+        ))}
+      </div>
+    ) : t === 'favoritos' ? (
+      <div className="space-y-6 animate-fade-in">
+        {listFilter ? (
+          <>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setListFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
+              <h1 className="text-xl font-bold">{listTitle}</h1>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+              {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
+            </div>
+          </>
+        ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
+          <div className="py-12 text-center space-y-2">
+            <Bookmark className="w-8 h-8 mx-auto text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Nenhum favorito ainda.</p>
+            <p className="text-xs text-muted-foreground">Segure a capa de um filme ou série pra salvar aqui (na TV, segure o OK).</p>
+          </div>
+        ) : (
+          <>
+            {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
+            {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
+            {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
+          </>
+        )}
+      </div>
+    ) : t === 'procurar' ? (
+      <BrowseView onOpen={openMedia} />
+    ) : (
+      <LiveTvView onPlay={setLiveChannel} />
+    )
+  );
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -599,140 +741,30 @@ export default function Index() {
         </div>
       )}
 
-      {/* Conteúdo */}
+      {/* Conteúdo — W3 do raio-x (02/11/2026): em camadas. As abas guardadas e a tela do meio embaixo do título ficam
+          montadas e escondidas; só a de cima aparece (telaVisivel). */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 md:px-6 py-4 pb-24 sm:pb-6">
-        {/* Tela que ainda não baixou (W1 do raio-x): um carregando curto no lugar do conteúdo. */}
-        <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>}>
-        {selected ? (
-          /* key por título: trocar de título (relacionados) REMONTA o detalhe — estado
-             do título anterior (ficha, temporada, aba de episódios, autoPlay já usado)
-             não vaza pro novo. */
-          <MediaDetail key={`${selected.type}-${selected.tmdbId}`} media={selected} store={store} autoPlay={autoPlay} castNow={castNow}
-            onBack={closeDetail} onOpenCollection={openColecaoDoFilme}
-            /* Relacionado NÃO passa pelo openMedia: ele grava o scroll da HOME, e aqui
-               estamos dentro do detalhe — sobrescrever bagunçaria a volta. */
-            onOpen={(m) => { setAutoPlay(null); setSelected(m); window.scrollTo(0, 0); }} />
-        ) : colecao ? (
-          /* Pasta e grade logo depois do detalhe: a pasta aberta pela página de um filme (que pode ter vindo da
-             busca, do histórico…) aparece por cima da tela de onde o filme saiu, e o Voltar devolve tudo em ordem. */
-          <CollectionView key={colecao.id} colecao={colecao} onOpen={openMedia} onBack={fecharColecao} />
-        ) : universo && universoPorId(universo) ? (
-          <UniversoView key={universo} universo={universoPorId(universo)!} onOpen={openColecao} onBack={fecharUniverso} />
-        ) : colecoesTudo ? (
-          <CollectionsGrid onOpen={openColecao} onOpenUniverso={openUniverso} onBack={fecharColecoesTudo} />
-        ) : noticesOpen ? (
-          <NoticesView onBack={() => setNoticesOpen(false)} />
-        ) : settingsOpen ? (
-          historyOpen ? (
-            <HistoryView movies={histMovies} series={histSeries} animes={histAnimes} onOpen={openMedia} onBack={() => setHistoryOpen(false)} />
-          ) : downloadOpen ? (
-            <DownloadView onBack={() => setDownloadOpen(false)} />
-          ) : serversOpen ? (
-            <ServersView onBack={() => setServersOpen(false)} />
-          ) : tvOpen ? (
-            <TvDevicesView onBack={() => setTvOpen(false)} />
-          ) : bugsOpen ? (
-            <BugsView onBack={() => setBugsOpen(false)} />
-          ) : (
-            <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
-          )
-        ) : searchOpen ? (
-          <SearchView onOpen={openMedia} />
-        ) : continueFilter ? (
-          <ContinueView title={continueTitle} entries={continueEntries} onOpen={openMedia} onRemove={store.clearProgress} onBack={() => setContinueFilter(null)} />
-        ) : category ? (
-          <CategoryView title={category.title} loadPage={category.loadPage} cacheKey={category.cacheKey} onOpen={openMedia} onBack={() => setCategory(null)} />
-        ) : tab === 'inicio' ? (
-          <div className="space-y-6">
-            <HeroCarousel onOpen={openMedia} />
-            {continueMovies.length > 0 && (
-              <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} prioridade={primeiraDoInicio === 'cf'} />
-            )}
-            {continueSeries.length > 0 && (
-              <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} prioridade={primeiraDoInicio === 'cs'} />
-            )}
-            {continueAnimes.length > 0 && (
-              <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} prioridade={primeiraDoInicio === 'ca'} />
-            )}
-            <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
-              loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade={primeiraDoInicio === 'top10'} />
-            <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
-              loader={() => trendingWeek('tv')} onOpen={openMedia} />
-            <MediaRow title="Lançamentos recentes" cacheKey="recent-movie"
-              loader={() => recent('movie')} onOpen={openMedia}
-              onSeeAll={() => openCategory({ title: 'Lançamentos recentes', loadPage: (p) => recent('movie', p), cacheKey: 'cat-recent-movie' })} />
-            {MOVIE_GENRES.slice(0, 6).map(g => (
-              <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
-                loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
-                onSeeAll={() => openGenre('movie', g.id, g.name)} />
-            ))}
-            <footer className="pt-4 border-t border-border/50">
-              <UpdateChecker />
-            </footer>
-          </div>
-        ) : tab === 'filmes' ? (
-          <div className="space-y-6">
-            <CollectionRow onOpen={openColecao} onOpenUniverso={openUniverso} onSeeAll={openColecoesTudo} />
-            {/* Top 10 da semana também aqui, logo abaixo de Coleções (pedido dele 01/11/2026); o mesmo cache do Início. */}
-            <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
-              loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade />
-            {MOVIE_GENRES.map(g => (
-              <MediaRow key={g.id} title={g.name} cacheKey={`m-${g.id}`}
-                loader={genreRowLoader('movie', g.id, MOVIE_ROW_IDS)} onOpen={openMedia}
-                onSeeAll={() => openGenre('movie', g.id, g.name)} />
-            ))}
-          </div>
-        ) : tab === 'series' ? (
-          <div className="space-y-6">
-            {/* Top 10 de séries também na aba Séries, no topo (pedido dele 01/11/2026); o mesmo cache do Início. */}
-            <MediaRow title="Top 10 séries" numbered cacheKey="top10-tv"
-              loader={() => trendingWeek('tv')} onOpen={openMedia} prioridade />
-            {TV_GENRES.map(g => (
-              <MediaRow key={g.id} title={g.name} cacheKey={`t-${g.id}`}
-                loader={genreRowLoader('tv', g.id, TV_ROW_IDS)} onOpen={openMedia}
-                onSeeAll={() => openGenre('tv', g.id, g.name)} />
-            ))}
-          </div>
-        ) : tab === 'animes' ? (
-          <div className="space-y-6">
-            {ANIME_ROWS.map((r, k) => (
-              <MediaRow key={r.name} title={r.name} cacheKey={`a-${r.id ?? 'pop'}`}
-                loader={animeRowLoader(r.id)} onOpen={openMedia} prioridade={k === 0}
-                onSeeAll={() => openCategory({ title: r.name, loadPage: (p) => discoverAnime(p, r.id), cacheKey: `cat-anime-${r.id ?? 'pop'}` })} />
-            ))}
-          </div>
-        ) : tab === 'favoritos' ? (
-          <div className="space-y-6 animate-fade-in">
-            {listFilter ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setListFilter(null)}><ArrowLeft className="w-5 h-5" /></Button>
-                  <h1 className="text-xl font-bold">{listTitle}</h1>
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {listFiltered.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => openMedia(m)} />)}
-                </div>
-              </>
-            ) : (listMovies.length === 0 && listSeries.length === 0 && listAnimes.length === 0) ? (
-              <div className="py-12 text-center space-y-2">
-                <Bookmark className="w-8 h-8 mx-auto text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">Nenhum favorito ainda.</p>
-                <p className="text-xs text-muted-foreground">Segure a capa de um filme ou série pra salvar aqui (na TV, segure o OK).</p>
-              </div>
-            ) : (
-              <>
-                {listMovies.length > 0 && <MediaRow title="Filmes" items={listMovies} onOpen={openMedia} onSeeAll={() => setListFilter('movie')} />}
-                {listSeries.length > 0 && <MediaRow title="Séries" items={listSeries} onOpen={openMedia} onSeeAll={() => setListFilter('series')} />}
-                {listAnimes.length > 0 && <MediaRow title="Animes" items={listAnimes} onOpen={openMedia} onSeeAll={() => setListFilter('anime')} />}
-              </>
-            )}
-          </div>
-        ) : tab === 'procurar' ? (
-          <BrowseView onOpen={openMedia} />
-        ) : (
-          <LiveTvView onPlay={setLiveChannel} />
+        {abasVivas.map(t => (
+          <Camada key={`aba:${t}`} tela={`aba:${t}`} escondida={telaVisivel !== `aba:${t}`}>
+            {conteudoDaAba(t)}
+          </Camada>
+        ))}
+        {telaMeio && (
+          <Camada key={telaMeio} tela={telaMeio} escondida={!!telaTitulo}>
+            {conteudoDoMeio()}
+          </Camada>
         )}
-        </Suspense>
+        {selected && telaTitulo && (
+          <Camada key={telaTitulo} tela={telaTitulo} escondida={false}>
+            {/* key por título: trocar de título (relacionados) REMONTA o detalhe — estado
+                do título anterior (ficha, temporada, aba de episódios, autoPlay já usado)
+                não vaza pro novo. */}
+            <MediaDetail key={`${selected.type}-${selected.tmdbId}`} media={selected} store={store} autoPlay={autoPlay} castNow={castNow}
+              onBack={closeDetail} onOpenCollection={openColecaoDoFilme}
+              /* Relacionado NÃO passa pelo openMedia (que é de quem abre da lista); a tela nova nasce no topo. */
+              onOpen={(m) => { setAutoPlay(null); setSelected(m); }} />
+          </Camada>
+        )}
       </main>
 
       <AlertDialog open={exitAsk} onOpenChange={setExitAsk}>

@@ -42,6 +42,10 @@ const USER = "user-1";
 
 beforeEach(() => {
   for (const k in responses) delete responses[k];
+  // Desde a W1 do raio-x o store nasce da biblioteca guardada no aparelho: sem limpar, o teste seguinte começava com
+  // `loading=false` e a biblioteca do anterior, e a resposta do banco chegava DEPOIS (falhava às vezes: deleteSection e
+  // o das listas memorizadas).
+  localStorage.clear();
 });
 
 describe("useWatchStore", () => {

@@ -109,8 +109,11 @@ function visivelPeloEstilo(el: HTMLElement): boolean {
 // Com um diálogo aberto (Radix: role=dialog/alertdialog) o foco não sai dele. Camada por cima de tudo sem ser
 // diálogo (player "Procurando…", canal ao vivo: um `fixed` que cobre a tela) também prende o foco — senão ele
 // ficava no botão escondido atrás dela.
+// W3 do raio-x (02/11/2026): diálogo dentro de uma tela guardada (escondida) não conta — o aviso de atualização mora no
+// rodapé do Início, que fica montado embaixo do título; contado, ele prenderia as setas numa caixa invisível.
 function raiz(): ParentNode {
-  const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]'))
+    .filter(d => !d.closest('[hidden]'));
   if (dialogs.length) return dialogs[dialogs.length - 1];
   const w = window.innerWidth, h = window.innerHeight;
   for (let el = document.elementFromPoint(w / 2, h / 2) as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
@@ -156,6 +159,19 @@ function focoInicial(r: ParentNode = raiz()): HTMLElement | null {
   return mesmoCartaz.find(el => naTela.includes(el)) ?? mesmoCartaz[0]
     ?? conteudo.find(el => el.matches('[data-tv-card], [data-row-key="hero"]'))
     ?? conteudo[0] ?? naTela[0] ?? todos[0] ?? null;
+}
+
+// W3 do raio-x (02/11/2026): a tela guardada (escondida, já montada) reapareceu — o foco vai JÁ pro cartaz aberto por
+// último (senão o 1º item da tela), sem esperar o observador (que só age 150 ms depois de a página parar de mudar; e
+// mostrar uma tela guardada nem mexe na lista de elementos). Foco ainda num item à vista (ex.: o botão da aba, na barra
+// de cima) fica onde está.
+export function devolverFoco(): boolean {
+  const r = raiz();
+  if (!semFoco(r)) return false;
+  const ini = focoInicial(r);
+  if (!ini) return false;
+  focar(ini, r);
+  return true;
 }
 
 function semFoco(r: ParentNode = raiz()): boolean {
