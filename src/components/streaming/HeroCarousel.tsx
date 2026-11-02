@@ -5,6 +5,7 @@ import { isTv } from '@/lib/device';
 import { usePaginaVisivel } from '@/hooks/use-pagina-visivel';
 import { guardarFileira, lerFileira } from '@/lib/fileirasGuardadas';
 import { depoisDeAssentar } from '@/lib/ocioso';
+import { useTelaVisivel } from '@/lib/telas';
 
 // Cache em memória: ao voltar do detalhe o hero remonta JÁ com os itens (mesma altura
 // na hora). Antes nascia vazio (altura 0) e, quando a TMDB respondia, empurrava a
@@ -48,12 +49,14 @@ function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => void }) {
   // Com o player por cima (página escondida) o carrossel para: ninguém vê e cada troca redesenha o fundo grande.
   // W4 das quedas na Fire TV (01/11/2026): na TV ele não gira sozinho — cada troca decodifica e redesenha a imagem
   // grande enquanto a pessoa navega pelas fileiras. As setas ← → no destaque continuam trocando.
+  // W3 do raio-x (02/11/2026): o Início fica montado e escondido com um título por cima — o carrossel para também aí.
   const visivel = usePaginaVisivel();
+  const telaVisivel = useTelaVisivel();
   useEffect(() => {
-    if (items.length < 2 || !visivel || isTv()) return;
+    if (items.length < 2 || !visivel || !telaVisivel || isTv()) return;
     const t = setInterval(() => setI(p => (p + 1) % items.length), 5000);
     return () => clearInterval(t);
-  }, [items.length, visivel]);
+  }, [items.length, visivel, telaVisivel]);
 
   if (!items.length) return null;
   const idx = i % items.length;
