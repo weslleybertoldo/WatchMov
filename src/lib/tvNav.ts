@@ -17,6 +17,13 @@ const FOCAVEIS = 'button, a[href], input, select, textarea, [tabindex]';
 // quanto sai da faixa do item atual + um pouco da distância entre os centros (desempate).
 // Pros lados só vale quem divide a mesma faixa de altura: no fim da fileira o foco para.
 export function pickNext(from: Box, cands: Box[], dir: Dir): number {
+  return ordemDosVizinhos(from, cands, dir)[0] ?? -1;
+}
+
+// A mesma regra do pickNext, devolvendo TODOS os que valem na ordem da escolha: os inteiros daquele lado pela nota, depois
+// os que só têm o centro daquele lado pela nota (empate = o que vem antes na página). W2 do raio-x (02/11/2026): com a
+// ordem, a seta confere se o item está visível de verdade (o caro: estilo calculado) só nos primeiros, até achar um.
+export function ordemDosVizinhos(from: Box, cands: Box[], dir: Dir): number[] {
   const cx = (b: Box) => (b.left + b.right) / 2;
   const cy = (b: Box) => (b.top + b.bottom) / 2;
   const TOL = 4;
@@ -46,17 +53,15 @@ export function pickNext(from: Box, cands: Box[], dir: Dir): number {
     return Math.max(0, eixo) + 3 * foraDaFaixa(b) + 0.05 * desvio;
   };
   const valido = (b: Box) => vertical || foraDaFaixa(b) === 0;
+  const ordem: number[] = [];
+  const ja = new Set<number>();
   for (const filtro of [inteiro, centro]) {
-    let melhor = -1;
-    let melhorNota = Infinity;
-    cands.forEach((b, i) => {
-      if (!filtro(b) || !valido(b)) return;
-      const n = nota(b);
-      if (n < melhorNota) { melhorNota = n; melhor = i; }
-    });
-    if (melhor >= 0) return melhor;
+    const notas = new Map<number, number>();
+    cands.forEach((b, i) => { if (!ja.has(i) && filtro(b) && valido(b)) notas.set(i, nota(b)); });
+    const daVez = [...notas.keys()].sort((a, b) => notas.get(a)! - notas.get(b)! || a - b);
+    for (const i of daVez) { ordem.push(i); ja.add(i); }
   }
-  return -1;
+  return ordem;
 }
 
 // A barra de cima é fixa (sticky). Pra achar o vizinho ela conta onde fica no topo da PÁGINA, não onde aparece
@@ -88,10 +93,15 @@ export function inicioDaSetinha(from: Box, zona: Box): { x: number; y: number; e
 }
 
 function visivel(el: HTMLElement): boolean {
-  if (el.closest('[aria-hidden="true"], [inert]')) return false;
   if ((el as HTMLButtonElement).disabled) return false;
   const r = el.getBoundingClientRect();
   if (r.width < 2 || r.height < 2) return false;
+  return visivelPeloEstilo(el);
+}
+
+// A parte cara de "visível": fora de camada escondida/inerte e com o estilo calculado à vista.
+function visivelPeloEstilo(el: HTMLElement): boolean {
+  if (el.closest('[aria-hidden="true"], [inert]')) return false;
   const st = getComputedStyle(el);
   return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05;
 }
@@ -111,15 +121,15 @@ function raiz(): ParentNode {
   return document;
 }
 
-function candidatos(): HTMLElement[] {
-  return Array.from(raiz().querySelectorAll<HTMLElement>(FOCAVEIS))
+function candidatos(r: ParentNode = raiz()): HTMLElement[] {
+  return Array.from(r.querySelectorAll<HTMLElement>(FOCAVEIS))
     .filter(el => el.tabIndex >= 0 && visivel(el));
 }
 
-function focar(el: HTMLElement) {
+function focar(el: HTMLElement, r: ParentNode = raiz()) {
   el.focus({ preventScroll: true });
   el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  if (window.scrollY === 0 || raiz() !== document) return;   // diálogo ou camada por cima: a página de trás fica
+  if (window.scrollY === 0 || r !== document) return;   // diálogo ou camada por cima: a página de trás fica
   const fundo = el.getBoundingClientRect().bottom + window.scrollY;
   if (voltaProTopo(!!el.closest('header'), fundo, window.innerHeight)) window.scrollTo({ top: 0 });
 }
@@ -135,8 +145,8 @@ export function lembrarCartaz(chave: string) {
 
 // Onde o foco começa: o item marcado (ex.: "Assistir" no detalhe), o cartaz aberto por
 // último, o 1º destaque/cartaz na tela ou o 1º item visível do conteúdo (sem o cabeçalho).
-function focoInicial(): HTMLElement | null {
-  const todos = candidatos();
+function focoInicial(r: ParentNode = raiz()): HTMLElement | null {
+  const todos = candidatos(r);
   const marcado = todos.find(el => el.hasAttribute('data-tv-autofocus'));
   if (marcado) return marcado;
   const h = window.innerHeight;
@@ -148,10 +158,9 @@ function focoInicial(): HTMLElement | null {
     ?? conteudo[0] ?? naTela[0] ?? todos[0] ?? null;
 }
 
-function semFoco(): boolean {
+function semFoco(r: ParentNode = raiz()): boolean {
   const a = document.activeElement as HTMLElement | null;
   if (!a || a === document.body || !a.isConnected || !visivel(a)) return true;
-  const r = raiz();
   return r !== document && !(r as HTMLElement).contains(a);   // foco ficou atrás da camada de cima
 }
 
@@ -175,19 +184,47 @@ function tentarSetinha(atual: HTMLElement) {
   });
 }
 
+// W2 do raio-x (02/11/2026): a seta procurava em TODOS os itens da página a cada tecla (~150 no Início, ~250 nas grades),
+// lendo o estilo calculado de cada um, e calculava a camada de cima 4 vezes. Agora a camada sai 1 vez por tecla; ←/→
+// dentro de uma fileira olham só a fileira (fora dela nada divide a mesma faixa de altura; sem vizinho ali, procura na
+// página toda, como antes); e a busca mede só as caixas (barato) e confere o estilo dos melhores, na ordem da nota, até
+// achar um visível — o escolhido é o mesmo de antes.
+function vizinho(atual: HTMLElement, dir: Dir, r: ParentNode): HTMLElement | null {
+  const rolagem = r === document ? window.scrollY : 0;
+  const caixa = (el: HTMLElement, b: DOMRect): Box => (el.closest('header') ? noTopoDaPagina(b, rolagem) : b);
+  const de = caixa(atual, atual.getBoundingClientRect());
+  const procurar = (onde: ParentNode): HTMLElement | null => {
+    const els: HTMLElement[] = [];
+    const caixas: Box[] = [];
+    onde.querySelectorAll<HTMLElement>(FOCAVEIS).forEach(el => {
+      if (el === atual || el.tabIndex < 0 || (el as HTMLButtonElement).disabled) return;
+      if (atual.contains(el) || el.contains(atual)) return;
+      const b = el.getBoundingClientRect();
+      if (b.width < 2 || b.height < 2) return;
+      els.push(el);
+      caixas.push(caixa(el, b));
+    });
+    for (const i of ordemDosVizinhos(de, caixas, dir)) if (visivelPeloEstilo(els[i])) return els[i];
+    return null;
+  };
+  if (r === document && (dir === 'left' || dir === 'right')) {
+    const fileira = atual.closest<HTMLElement>('[data-row-key]');
+    const naFileira = fileira ? procurar(fileira) : null;
+    if (naFileira) return naFileira;
+  }
+  return procurar(r);
+}
+
 function mover(dir: Dir): boolean {
-  if (semFoco()) {
-    const ini = focoInicial();
-    if (ini) focar(ini);
+  const r = raiz();
+  if (semFoco(r)) {
+    const ini = focoInicial(r);
+    if (ini) focar(ini, r);
     return !!ini;
   }
   const atual = document.activeElement as HTMLElement;
-  const todos = candidatos().filter(el => el !== atual && !atual.contains(el) && !el.contains(atual));
-  const rolagem = raiz() === document ? window.scrollY : 0;
-  const caixa = (el: HTMLElement): Box =>
-    el.closest('header') ? noTopoDaPagina(el.getBoundingClientRect(), rolagem) : el.getBoundingClientRect();
-  const i = pickNext(caixa(atual), todos.map(caixa), dir);
-  if (i >= 0) focar(todos[i]);
+  const alvo = vizinho(atual, dir, r);
+  if (alvo) focar(alvo, r);
   else if (dir === 'down') tentarSetinha(atual);
   return true;   // sem vizinho o foco fica onde está (e a página não rola sozinha)
 }

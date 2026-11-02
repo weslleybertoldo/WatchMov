@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 
 // Segurar o dedo (ou o botão do mouse) numa capa por SEGURAR_TOQUE_MS sem arrastar = `aoSegurar` (menu dos
@@ -7,62 +7,74 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent }
 export const SEGURAR_TOQUE_MS = 500;
 const TOLERANCIA_PX = 10;
 
-export function useSegurar(aoSegurar: () => void) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inicio = useRef<{ x: number; y: number } | null>(null);
-  const segurou = useRef(false);
-  const cb = useRef(aoSegurar);
-  cb.current = aoSegurar;
+interface Segurar {
+  handlers: {
+    onPointerDown: (e: ReactPointerEvent) => void;
+    onPointerMove: (e: ReactPointerEvent) => void;
+    onPointerUp: () => void;
+    onPointerCancel: () => void;
+    onPointerLeave: () => void;
+    onContextMenu: (e: ReactMouseEvent) => void;
+  };
+  engolirClique: () => boolean;
+}
 
-  const cancelar = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-    inicio.current = null;
-  }, []);
-  useEffect(() => cancelar, [cancelar]);
+// W2 do raio-x (02/11/2026): o controle de cada capa nasce uma vez só (um objeto com as funções), em vez de 4 refs + 5
+// callbacks + 1 efeito por capa — o Início monta ~120 capas e cada gancho custa na TV. Mesmo comportamento de antes.
+function criarSegurar(aoSegurar: { current: () => void }): Segurar & { cancelar: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inicio: { x: number; y: number } | null = null;
+  let segurou = false;
 
-  const disparar = useCallback(() => {
+  const cancelar = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    inicio = null;
+  };
+  const disparar = () => {
     cancelar();
-    segurou.current = true;
-    cb.current();
-  }, [cancelar]);
-
-  const onPointerDown = useCallback((e: ReactPointerEvent) => {
-    segurou.current = false;
-    if (e.button !== 0) return;   // botão direito: quem abre é o contextmenu
-    inicio.current = { x: e.clientX, y: e.clientY };
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(disparar, SEGURAR_TOQUE_MS);
-  }, [disparar]);
-
-  const onPointerMove = useCallback((e: ReactPointerEvent) => {
-    const i = inicio.current;
-    if (i && Math.hypot(e.clientX - i.x, e.clientY - i.y) > TOLERANCIA_PX) cancelar();
-  }, [cancelar]);
-
-  // Android: o toque longo também dispara o contextmenu (às vezes antes do nosso tempo) — vira o mesmo "segurar" e
-  // não deixa abrir o menu do sistema nem selecionar o texto. No PC o botão direito faz o mesmo.
-  const onContextMenu = useCallback((e: ReactMouseEvent) => {
-    e.preventDefault();
-    if (!segurou.current) disparar();
-  }, [disparar]);
-
-  // O clique que chega depois de segurar não abre o título.
-  const engolirClique = useCallback((): boolean => {
-    if (!segurou.current) return false;
-    segurou.current = false;
-    return true;
-  }, []);
+    segurou = true;
+    aoSegurar.current();
+  };
 
   return {
+    cancelar,
     handlers: {
-      onPointerDown,
-      onPointerMove,
+      onPointerDown: (e) => {
+        segurou = false;
+        if (e.button !== 0) return;   // botão direito: quem abre é o contextmenu
+        inicio = { x: e.clientX, y: e.clientY };
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(disparar, SEGURAR_TOQUE_MS);
+      },
+      onPointerMove: (e) => {
+        if (inicio && Math.hypot(e.clientX - inicio.x, e.clientY - inicio.y) > TOLERANCIA_PX) cancelar();
+      },
       onPointerUp: cancelar,
       onPointerCancel: cancelar,
       onPointerLeave: cancelar,
-      onContextMenu,
+      // Android: o toque longo também dispara o contextmenu (às vezes antes do nosso tempo) — vira o mesmo "segurar" e
+      // não deixa abrir o menu do sistema nem selecionar o texto. No PC o botão direito faz o mesmo.
+      onContextMenu: (e) => {
+        e.preventDefault();
+        if (!segurou) disparar();
+      },
     },
-    engolirClique,
+    // O clique que chega depois de segurar não abre o título.
+    engolirClique: () => {
+      if (!segurou) return false;
+      segurou = false;
+      return true;
+    },
   };
+}
+
+export function useSegurar(aoSegurar: () => void): Segurar {
+  const cb = useRef(aoSegurar);
+  cb.current = aoSegurar;
+  const controle = useRef<ReturnType<typeof criarSegurar> | null>(null);
+  if (!controle.current) controle.current = criarSegurar(cb);
+  const c = controle.current;
+  useEffect(() => c.cancelar, [c]);
+  return c;
 }

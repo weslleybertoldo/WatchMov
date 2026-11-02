@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { AppData, Section, WatchItem, Season, DashboardStats } from '@/types/watch';
 import { supabase } from '@/lib/supabase';
 import { isSeriesFinished } from '@/lib/watchProgress';
@@ -593,13 +593,15 @@ export function useWatchStore(userId?: string) {
   // de progresso/conclusão, então séries não acumulariam watchedEpisodes.
   // Série com TODOS os episódios assistidos sai (isSeriesFinished) — "concluída" pra
   // série é isso; `completed` só é gravado pra filme.
-  const continueWatching = data.items
+  // W2 do raio-x (02/11/2026): as duas listas só são refeitas quando a biblioteca muda — eram listas novas a cada
+  // desenho e as fileiras do Início (memo) redesenhariam todas as capas à toa.
+  const continueWatching = useMemo(() => data.items
     .filter(i => !i.completed && !isSeriesFinished(i) && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false) || !!i.lastWatchedAt))
-    .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0));
+    .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0)), [data.items]);
 
-  const myList = data.items
+  const myList = useMemo(() => data.items
     .filter(i => i.favorite)
-    .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0));
+    .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0)), [data.items]);
 
   // ── Stats ──
 

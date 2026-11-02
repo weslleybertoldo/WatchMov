@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { TmdbCollection } from '@/lib/tmdb';
 import { isTv } from '@/lib/device';
 import {
@@ -193,11 +193,12 @@ export function FileiraDeColecoes({ chave, titulo, ids, universos = [], onOpen, 
 
 // Fileira "Coleções" no topo da aba Filmes (pedido dele 01/11/2026): as pastas Marvel e DC, as sagas em destaque e
 // "Ver tudo" (na TV, o cartão "Ver mais" no fim da fileira).
-export function CollectionRow({ onOpen, onOpenUniverso, onSeeAll }: {
+// W2 do raio-x (02/11/2026): memo — não redesenha quando o Index redesenha (as 3 funções vêm de useCallback).
+export const CollectionRow = memo(function CollectionRow({ onOpen, onOpenUniverso, onSeeAll }: {
   onOpen: (c: ColecaoAbrir) => void; onOpenUniverso: (id: UniversoId) => void; onSeeAll: () => void;
 }) {
   return (
     <FileiraDeColecoes chave="colecoes" titulo="Coleções" ids={DESTAQUES} universos={UNIVERSOS}
       onOpen={onOpen} onOpenUniverso={onOpenUniverso} onSeeAll={onSeeAll} />
   );
-}
+});

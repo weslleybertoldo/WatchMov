@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, Suspense } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, Suspense } from 'react';
 import { useWatchStore } from '@/store/useWatchStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
@@ -75,6 +75,35 @@ function itemToSummary(i: WatchItem): MediaSummary {
 // Anime = série de animação (gênero "Animação"). Western cartoons também caem aqui.
 const isAnime = (i: WatchItem): boolean =>
   i.type === 'series' && /anima[çc][ãa]o|anime/i.test(i.genre || '');
+
+const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i), progress: continueProgress(i) ?? undefined });
+
+// O mesmo título espelhando na TV (o nativo devolve um objeto novo a cada 4 s): não troca o estado à toa.
+const mesmoCast = (a: CastNow | null, b: CastNow | null): boolean => a === b || (!!a && !!b
+  && a.tmdbId === b.tmdbId && a.type === b.type && a.season === b.season && a.episode === b.episode && a.title === b.title);
+
+// W2 do raio-x (02/11/2026): o sino com o número num componente só dele. Os avisos, a lista de downloads (a cada 1,2 s
+// enquanto baixa) e as conversões redesenhavam o Index inteiro — e com ele as fileiras e as capas do Início.
+// Badge = avisos não lidos + o que está EM ANDAMENTO. Abrir o sino zera os lidos, mas enquanto um download/conversão
+// roda o número continua lá — some só quando termina E o aviso de conclusão é visto.
+function SinoDoTopo({ aberto, onAbrir }: { aberto: boolean; onAbrir: () => void }) {
+  const { unread } = useNotices({ adiarSync: true });
+  const { items: downloads } = useDownloadList();
+  const dlAtivos = [...downloads.values()].filter(d => d.state === 'downloading' || d.state === 'queued' || d.state === 'restarting').length;
+  const mp4Ativos = useMp4All().filter(m => m.state !== 'done').length;
+  const badge = unread + dlAtivos + mp4Ativos;
+  return (
+    <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${aberto ? 'text-primary' : 'text-muted-foreground'}`}
+      onClick={onAbrir} title="Notificações">
+      <Bell className="w-4 h-4" />
+      {badge > 0 && (
+        <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
+    </Button>
+  );
+}
 
 const MOVIE_ROW_IDS = MOVIE_GENRES.map(g => g.id);
 const TV_ROW_IDS = TV_GENRES.map(g => g.id);
@@ -160,7 +189,6 @@ export default function Index() {
   const [listFilter, setListFilter] = useState<null | 'movie' | 'series' | 'anime'>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [noticesOpen, setNoticesOpen] = useState(false);
-  const { unread: unreadNotices } = useNotices({ adiarSync: true });
   useEffect(() => { startMp4Listener(); }, []);     // avisos de conversão desde o boot
   // Registro da aba Bugs desde o boot. Antes vivia dentro do VideoPlayer, que
   // episódio BAIXADO nunca monta — então erro de reprodução (e os diagnósticos de
@@ -169,13 +197,6 @@ export default function Index() {
   useEffect(() => depoisDeAssentar(() => { startPlaybackErrorLog(); }), []);
   // W1 do raio-x: a página do título baixa no ocioso, antes de a pessoa escolher um título.
   useEffect(() => depoisDeAssentar(() => { void MediaDetail.preparar(); }, 3000), []);
-  // Badge do sino = avisos não lidos + o que está EM ANDAMENTO. Abrir o sino zera
-  // os lidos, mas enquanto um download/conversão roda o número continua lá — some
-  // só quando termina E o aviso de conclusão é visto.
-  const { items: dlItemsAll } = useDownloadList();
-  const dlAtivos = [...dlItemsAll.values()].filter(d => d.state === 'downloading' || d.state === 'queued' || d.state === 'restarting').length;
-  const mp4Ativos = useMp4All().filter(m => m.state !== 'done').length;
-  const badgeNotices = unreadNotices + dlAtivos + mp4Ativos;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [serversOpen, setServersOpen] = useState(false);    // aba Servidores (favorito do Assistir)
@@ -249,7 +270,7 @@ export default function Index() {
     const tick = () => {
       getCastNow().then(({ now, progressed }) => {
         if (!alive) return;
-        setCastNow(now);
+        setCastNow(prev => (mesmoCast(prev, now) ? prev : now));
         if (progressed) setTvProgress(n => n + 1);
       }).catch(() => {});
     };
@@ -436,15 +457,49 @@ export default function Index() {
     });
   }, [tvSid, uid]);
 
+  // W2 do raio-x (02/11/2026): as listas das fileiras (e as contas do Painel) só são refeitas quando a biblioteca muda —
+  // listas novas a cada desenho faziam as fileiras (memo) redesenharem todas as capas.
+  const continueAll = useMemo(() => store.continueWatching.filter(i => i.tmdbId), [store.continueWatching]);
+  const { continueMovies, continueAnimes, continueSeries } = useMemo(() => ({
+    continueMovies: continueAll.filter(i => i.type === 'movie').map(toCont),
+    continueAnimes: continueAll.filter(isAnime).map(toCont),
+    continueSeries: continueAll.filter(i => i.type === 'series' && !isAnime(i)).map(toCont),
+  }), [continueAll]);
+  const { listMovies, listAnimes, listSeries } = useMemo(() => {
+    const salvos = store.myList.filter(i => i.tmdbId);
+    return {
+      listMovies: salvos.filter(i => i.type === 'movie').map(itemToSummary),
+      listAnimes: salvos.filter(isAnime).map(itemToSummary),
+      listSeries: salvos.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary),
+    };
+  }, [store.myList]);
+  // ── Assistidos (painel + histórico) ──
+  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado. O último assistido primeiro.
+  const { watchedStats, histMovies, histSeries, histAnimes } = useMemo(() => {
+    const watchedItems = sortByLastWatched(store.data.items.filter(i => i.tmdbId &&
+      (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0)));
+    const watchedMovies = watchedItems.filter(i => i.type === 'movie');
+    const watchedAnimes = watchedItems.filter(isAnime);
+    const watchedSeries = watchedItems.filter(i => i.type === 'series' && !isAnime(i));
+    const sumEps = (arr: WatchItem[]) => arr.reduce((n, i) => n + totalEpisodesWatched(i), 0);
+    const stats: WatchedStats = {
+      moviesCount: watchedMovies.length,
+      seriesCount: watchedSeries.length,
+      seriesEpisodes: sumEps(watchedSeries),
+      animesCount: watchedAnimes.length,
+      animeEpisodes: sumEps(watchedAnimes),
+    };
+    return {
+      watchedStats: stats,
+      histMovies: watchedMovies.map(itemToSummary),
+      histSeries: watchedSeries.map(itemToSummary),
+      histAnimes: watchedAnimes.map(itemToSummary),
+    };
+  }, [store.data.items]);
+
   if (store.loading) {
     return <div className="flex h-screen items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
-
-  const toCont = (i: WatchItem): MediaSummary => ({ ...itemToSummary(i), subtitle: continueLabel(i), progress: continueProgress(i) ?? undefined });
-  const continueAll = store.continueWatching.filter(i => i.tmdbId);
-  const continueMovies = continueAll.filter(i => i.type === 'movie').map(toCont);
-  const continueAnimes = continueAll.filter(isAnime).map(toCont);
-  const continueSeries = continueAll.filter(i => i.type === 'series' && !isAnime(i)).map(toCont);
   // W1 do raio-x: a 1ª fileira do Início baixa as capas da frente já (as outras seguem no lazy).
   const primeiraDoInicio = continueMovies.length ? 'cf' : continueSeries.length ? 'cs' : continueAnimes.length ? 'ca' : 'top10';
   const continueFiltered = continueFilter === 'movie' ? continueAll.filter(i => i.type === 'movie')
@@ -456,31 +511,8 @@ export default function Index() {
     : continueFilter === 'anime' ? 'Continuar assistindo seus animes'
     : continueFilter === 'series' ? 'Continuar assistindo suas séries'
     : 'Continuar assistindo';
-  const savedList = store.myList.filter(i => i.tmdbId);
-  const listMovies = savedList.filter(i => i.type === 'movie').map(itemToSummary);
-  const listAnimes = savedList.filter(isAnime).map(itemToSummary);
-  const listSeries = savedList.filter(i => i.type === 'series' && !isAnime(i)).map(itemToSummary);
   const listFiltered = listFilter === 'movie' ? listMovies : listFilter === 'anime' ? listAnimes : listFilter === 'series' ? listSeries : [];
   const listTitle = listFilter === 'movie' ? 'Filmes' : listFilter === 'anime' ? 'Animes' : 'Séries';
-
-  // ── Assistidos (painel + histórico) ──
-  // Filme: marcado como concluído. Série/anime: ≥1 episódio marcado. O último assistido primeiro.
-  const watchedItems = sortByLastWatched(store.data.items.filter(i => i.tmdbId &&
-    (i.type === 'movie' ? !!i.completed : totalEpisodesWatched(i) > 0)));
-  const watchedMovies = watchedItems.filter(i => i.type === 'movie');
-  const watchedAnimes = watchedItems.filter(isAnime);
-  const watchedSeries = watchedItems.filter(i => i.type === 'series' && !isAnime(i));
-  const sumEps = (arr: WatchItem[]) => arr.reduce((n, i) => n + totalEpisodesWatched(i), 0);
-  const watchedStats: WatchedStats = {
-    moviesCount: watchedMovies.length,
-    seriesCount: watchedSeries.length,
-    seriesEpisodes: sumEps(watchedSeries),
-    animesCount: watchedAnimes.length,
-    animeEpisodes: sumEps(watchedAnimes),
-  };
-  const histMovies = watchedMovies.map(itemToSummary);
-  const histSeries = watchedSeries.map(itemToSummary);
-  const histAnimes = watchedAnimes.map(itemToSummary);
 
   const changeTab = (t: Tab) => { homeScrollRef.current = { y: 0 }; homeReturnRef.current = { y: 0 }; setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setUniverso(null); setColecoesTudo(false); };
 
@@ -518,7 +550,8 @@ export default function Index() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-background/85 backdrop-blur-md border-b border-border/50">
+      {/* W2 do raio-x (02/11/2026): sem desfoque (no celular ele refazia o fundo a cada quadro da rolagem); fundo quase cheio. */}
+      <header className="sticky top-0 z-40 bg-background/95 border-b border-border/50">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <img src="/logo-topo.png" alt="WatchMov" width={28} height={28} className="h-7 w-7 cursor-pointer" onClick={() => changeTab('inicio')} />
           {castNow && (
@@ -541,15 +574,7 @@ export default function Index() {
               onClick={abrirBusca} title="Buscar">
               <Search className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className={`relative h-8 w-8 ${noticesOpen ? 'text-primary' : 'text-muted-foreground'}`}
-              onClick={() => abrirDoTopo('avisos')} title="Notificações">
-              <Bell className="w-4 h-4" />
-              {badgeNotices > 0 && (
-                <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold flex items-center justify-center">
-                  {badgeNotices > 9 ? '9+' : badgeNotices}
-                </span>
-              )}
-            </Button>
+            <SinoDoTopo aberto={noticesOpen} onAbrir={() => abrirDoTopo('avisos')} />
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${settingsOpen ? 'text-primary' : 'text-muted-foreground'}`} onClick={() => abrirDoTopo('painel')} title="Painel">
               <Settings className="w-4 h-4" />
             </Button>
@@ -725,7 +750,7 @@ export default function Index() {
         onAlternar={(m, favoritar) => { void alternarFavorito(m, favoritar); }} />
 
       {/* Bottom nav (mobile) */}
-      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 backdrop-blur border-t border-border flex">
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background/95 border-t border-border flex">
         {TABS.map(t => {
           const Icon = t.icon;
           return (

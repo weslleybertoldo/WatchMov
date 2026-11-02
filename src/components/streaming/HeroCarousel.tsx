@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { trendingToday, type MediaSummary } from '@/lib/tmdb';
 import { isTv } from '@/lib/device';
@@ -25,7 +25,7 @@ function heroDoAparelho(): MediaSummary[] | null {
 
 // Hero "Populares Hoje" (estilo Smart Play): backdrop grande em carrossel
 // auto-rotativo, com play + dots. Toque abre o título.
-export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => void }) {
+function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => void }) {
   const [items, setItems] = useState<MediaSummary[]>(() => heroDoAparelho() ?? []);
   const [i, setI] = useState(0);
   const startX = useRef<number | null>(null);
@@ -110,3 +110,6 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
     </div>
   );
 }
+
+// W2 do raio-x (02/11/2026): o destaque não redesenha quando o Index redesenha (o onOpen dele é estável).
+export default memo(HeroCarousel);
