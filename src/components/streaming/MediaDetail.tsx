@@ -488,19 +488,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
               {movieWatched ? <CheckCheck className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </Button>
           )}
-          {/* Coleção ao lado do olho do "Assistido" (pedido dele 01/11/2026, foto da TV): filme de uma saga abre a pasta dela
-              com os outros filmes, sem descer até o "Faz parte da coleção" (que continua embaixo do Elenco, com o nome).
-              SÓ NA TV, com o texto "Coleção" (ele: "O texto coleção pode manter"); no celular saiu (ele: "pode remover a
-              pasta ao lado do compartilhar, já tem um botão abaixo do elenco que leva até a pasta"). */}
-          {isTv() && !isSeries && details?.collection && onOpenCollection && (() => {
-            const col = details.collection;
-            return (
-              <Button variant="outline" className="shrink-0" onClick={() => onOpenCollection(col)} data-colecao-botao={col.id}
-                title={`Coleção ${col.name}`} aria-label={`Abrir a coleção ${col.name}`}>
-                <Folder className="w-4 h-4 mr-1" /> Coleção
-              </Button>
-            );
-          })()}
+          {/* Sem botão "Coleção" aqui (decisão dele 01/11/2026): na TV e no celular a pasta da saga abre pelo
+              "Faz parte da coleção", embaixo do Elenco. */}
           {/* Abrir na TV (pedido dele 26/09/2026): no lugar do "Baixar eps"/"Baixar" — baixar ficou só no player.
               Na TV não aparece: ela é o destino. */}
           {!isTv() && (
