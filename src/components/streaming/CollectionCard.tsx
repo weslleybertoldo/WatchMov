@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { TmdbCollection } from '@/lib/tmdb';
 import { isTv } from '@/lib/device';
 import {
@@ -109,18 +109,23 @@ interface FileiraProps {
   onOpenUniverso?: (id: UniversoId) => void;
   onSeeAll?: () => void;
   adiar?: boolean;                                // só busca na TMDB quando a fileira chega perto da tela
+  longe?: boolean;                                // TV, "Ver tudo": longe do foco = só o espaço dela, sem as pastas (W5)
 }
 
 // Uma fileira de pastas: a "Coleções" da aba Filmes e cada gênero do "Ver tudo". As pastas aparecem de lote em lote
 // (8 por vez); no "Ver tudo" (adiar) a fileira só pede as coleções dela quando chega perto da tela — são ~250 sagas
 // e a Fire TV tem 1 GB. TMDB fora: a fileira some (ficam só as pastas Marvel/DC, que não dependem dela).
-export function FileiraDeColecoes({ chave, titulo, ids, universos = [], onOpen, onOpenUniverso, onSeeAll, adiar }: FileiraProps) {
+export function FileiraDeColecoes({ chave, titulo, ids, universos = [], onOpen, onOpenUniverso, onSeeAll, adiar, longe = false }: FileiraProps) {
   // Sem sagas (a fileira "Universos" do "Ver tudo" só tem Marvel e DC): já nasce completa, sem ir na TMDB.
   const [lista, setLista] = useState<TmdbCollection[] | null>(() => (ids.length ? colecoesProntas(ids) ?? null : []));
   const [completa, setCompleta] = useState(() => !ids.length || !!colecoesProntas(ids));
   const [perto, setPerto] = useState(() => !adiar || !ids.length || !!colecoesProntas(ids));
   const rowRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Fileira longe do foco: o navegador zera a rolagem de lado quando as pastas saem — essa rolagem não vale (a guardada
+  // fica pra quando ela voltar).
+  const longeRef = useRef(longe);
+  longeRef.current = longe;
 
   useEffect(() => {
     if (perto) return;
@@ -145,10 +150,11 @@ export function FileiraDeColecoes({ chave, titulo, ids, universos = [], onOpen, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perto]);
 
-  // Volta pra mesma posição horizontal quando a fileira fica completa (de novo, ao voltar de uma pasta).
-  useEffect(() => {
-    if (completa && scrollRef.current) scrollRef.current.scrollLeft = scrollDasFileiras.get(chave) ?? 0;
-  }, [completa, chave]);
+  // Volta pra mesma posição horizontal quando a fileira fica completa (de novo, ao voltar de uma pasta) e quando as
+  // pastas voltam depois de a fileira ficar longe do foco (antes de pintar).
+  useLayoutEffect(() => {
+    if (completa && !longe && scrollRef.current) scrollRef.current.scrollLeft = scrollDasFileiras.get(chave) ?? 0;
+  }, [completa, chave, longe]);
 
   const temSagas = !!lista?.length;
   if (completa && !temSagas && universos.length === 0) return null;
@@ -162,8 +168,11 @@ export function FileiraDeColecoes({ chave, titulo, ids, universos = [], onOpen, 
           <button onClick={onSeeAll} tabIndex={isTv() ? -1 : undefined} className="text-xs text-muted-foreground hover:text-primary">Ver tudo</button>
         )}
       </div>
-      <div ref={scrollRef} onScroll={() => { if (scrollRef.current) scrollDasFileiras.set(chave, scrollRef.current.scrollLeft); }}
+      <div ref={scrollRef} onScroll={() => { if (scrollRef.current && !longeRef.current) scrollDasFileiras.set(chave, scrollRef.current.scrollLeft); }}
         className="flex gap-3 overflow-x-auto scroll-smooth snap-x pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* W5 do raio-x (02/11/2026): na TV, a fileira longe do foco fica só com o espaço de uma pasta (mesma altura) —
+            o "Ver tudo" tem ~250 pastas e a Fire TV, 1 GB. */}
+        {longe ? <PastaReservada /> : <>
         {universos.map(u => (
           <div key={u.id} className="snap-start">
             <UniversoCard universo={u} onClick={() => onOpenUniverso?.(u.id)} />
@@ -186,6 +195,7 @@ export function FileiraDeColecoes({ chave, titulo, ids, universos = [], onOpen, 
             <span className="text-xs mt-1">Ver mais</span>
           </button>
         )}
+        </>}
       </div>
     </div>
   );

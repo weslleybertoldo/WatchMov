@@ -4,6 +4,7 @@ import {
   MOVIE_GENRES, TV_GENRES, ANIME_GENRES, BROWSE_YEARS, BROWSE_RATINGS, BROWSE_HIGHLIGHTS,
 } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import Grade from './Grade';
 import { EsqueletoGrade } from './Esqueleto';
 import { useSaidaAnimada } from '@/hooks/use-saida-animada';
 import { Button } from '@/components/ui/button';
@@ -191,10 +192,11 @@ export default function BrowseView({ onOpen }: BrowseViewProps) {
       </div>
 
       {/* Grid (largura total) */}
+      {/* W5 do raio-x (02/11/2026): na TV só as linhas perto do foco ficam montadas (Grade). */}
       {items.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {items.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
-        </div>
+        <Grade itens={items} chave={m => `${m.type}-${m.tmdbId}`}>
+          {m => <MediaCard media={m} onOpen={onOpen} />}
+        </Grade>
       )}
 
       {/* W4 do raio-x (02/11/2026): 1ª carga = esqueleto da grade; mais páginas = o spinner pequeno embaixo. */}

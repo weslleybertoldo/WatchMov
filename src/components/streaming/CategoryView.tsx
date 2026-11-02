@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import Grade from './Grade';
 import { EsqueletoGrade } from './Esqueleto';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader2 } from 'lucide-react';
@@ -75,11 +76,10 @@ export default function CategoryView({ title, loadPage, onOpen, onBack, cacheKey
         <Button variant="ghost" size="icon" onClick={onBack} className="h-9 w-9"><ArrowLeft className="w-5 h-5" /></Button>
         <h1 className="text-xl font-bold">{title}</h1>
       </div>
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-        {items.map(m => (
-          <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />
-        ))}
-      </div>
+      {/* W5 do raio-x (02/11/2026): na TV só as linhas perto do foco ficam montadas (Grade). */}
+      <Grade itens={items} chave={m => `${m.type}-${m.tmdbId}`}>
+        {m => <MediaCard media={m} onOpen={onOpen} />}
+      </Grade>
       {/* W4 do raio-x (02/11/2026): a 1ª página carregando = esqueleto do tamanho da grade; "carregar mais" = o spinner
           pequeno embaixo da grade que já está na tela. */}
       {loading && items.length === 0 && <EsqueletoGrade />}

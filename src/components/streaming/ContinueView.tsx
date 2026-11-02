@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import Grade from './Grade';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Pencil, Check, X } from 'lucide-react';
 
@@ -35,9 +36,9 @@ export default function ContinueView({ entries, title = 'Continuar assistindo', 
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Nada em andamento.</p>
       ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {entries.map(({ id, summary }) => (
-            <div key={`${summary.type}-${summary.tmdbId}`} className="relative">
+        <Grade itens={entries} chave={e => `${e.summary.type}-${e.summary.tmdbId}`}>
+          {({ id, summary }) => (
+            <div className="relative">
               <MediaCard media={summary} onClick={() => editing ? onRemove(id) : onOpen(summary)} />
               {editing && (
                 <button
@@ -49,8 +50,8 @@ export default function ContinueView({ entries, title = 'Continuar assistindo', 
                 </button>
               )}
             </div>
-          ))}
-        </div>
+          )}
+        </Grade>
       )}
     </div>
   );

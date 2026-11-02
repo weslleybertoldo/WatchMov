@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RadioTower, Search } from 'lucide-react';
 import { fetchChannels, categoriesOf, type Channel } from '@/lib/liveTv';
+import Grade from './Grade';
 
 interface LiveTvViewProps {
   onPlay: (ch: Channel) => void;
@@ -73,9 +74,10 @@ export default function LiveTvView({ onPlay }: LiveTvViewProps) {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Nenhum canal encontrado.</p>
       ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {filtered.map(ch => (
-            <button key={ch.id} onClick={() => onPlay(ch)}
+        /* W5 do raio-x (02/11/2026): na TV só as linhas perto do foco ficam montadas (Grade). */
+        <Grade itens={filtered} chave={ch => String(ch.id)}>
+          {ch => (
+            <button onClick={() => onPlay(ch)}
               className="group flex flex-col gap-1.5 text-left">
               <div className="aspect-video rounded-lg bg-card border border-border/60 overflow-hidden flex items-center justify-center p-2 group-hover:border-primary/60 transition">
                 {ch.logo
@@ -84,8 +86,8 @@ export default function LiveTvView({ onPlay }: LiveTvViewProps) {
               </div>
               <span className="text-[11px] text-muted-foreground truncate group-hover:text-foreground">{ch.name}</span>
             </button>
-          ))}
-        </div>
+          )}
+        </Grade>
       )}
     </div>
   );

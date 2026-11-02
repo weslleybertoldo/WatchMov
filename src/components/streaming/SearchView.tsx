@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { MediaSummary, searchMulti } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
+import Grade from './Grade';
 import { EsqueletoGrade } from './Esqueleto';
 import { Input } from '@/components/ui/input';
 import { Search, Clock, X } from 'lucide-react';
@@ -152,9 +153,9 @@ export default function SearchView({ onOpen }: SearchViewProps) {
       {loading && <EsqueletoGrade n={9} />}
 
       {!loading && results.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {results.map(m => <MediaCard key={`${m.type}-${m.tmdbId}`} media={m} onClick={() => onOpen(m)} />)}
-        </div>
+        <Grade itens={results} chave={m => `${m.type}-${m.tmdbId}`}>
+          {m => <MediaCard media={m} onOpen={onOpen} />}
+        </Grade>
       )}
 
       {!loading && searched && results.length === 0 && (

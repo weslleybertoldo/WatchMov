@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
+import { flushSync } from 'react-dom';
 import type { MediaSummary, TmdbCollection } from '@/lib/tmdb';
 import {
   SECOES, UNIVERSOS, anosDaColecao, carregarColecao, carregarColecoes, colecaoPronta, colecoesLabel, colecoesProntas,
@@ -8,6 +9,8 @@ import MediaCard from './MediaCard';
 import { EsqueletoGrade } from './Esqueleto';
 import { CollectionCard, FileiraDeColecoes, type ColecaoAbrir } from './CollectionCard';
 import { Button } from '@/components/ui/button';
+import { isTv } from '@/lib/device';
+import { devolverFoco } from '@/lib/tvNav';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 
 function Cabecalho({ titulo, onBack }: { titulo: string; onBack: () => void }) {
@@ -118,19 +121,65 @@ export function UniversoView({ universo, onOpen, onBack }: { universo: Universo;
   );
 }
 
+// W5 do raio-x (02/11/2026): na TV só as fileiras perto da do foco (± 2) ficam com as pastas montadas.
+export const JANELA_FILEIRAS_TV = 2;
+const FILEIRAS_DO_TUDO = ['colsec-universos', ...SECOES.map(s => `colsec-${s.chave}`)];
+
 // "Ver tudo" da fileira: as pastas Marvel e DC e, embaixo, uma fileira por gênero (Ação, Aventura, Ficção…). Cada
 // fileira só pede as coleções dela quando chega perto da tela.
 export function CollectionsGrid({ onOpen, onOpenUniverso, onBack }: {
   onOpen: (c: ColecaoAbrir) => void; onOpenUniverso: (id: UniversoId) => void; onBack: () => void;
 }) {
+  const tv = isTv();
+  const ref = useRef<HTMLDivElement>(null);
+  const [foco, setFoco] = useState(0);
+  const focoRef = useRef(foco);
+  focoRef.current = foco;
+  const adiado = useRef<{ raf: number; t?: ReturnType<typeof setTimeout> }>({ raf: 0 });
+  const cancelarAdiado = () => { cancelAnimationFrame(adiado.current.raf); clearTimeout(adiado.current.t); };
+  useEffect(() => cancelarAdiado, []);
+  // A fileira de cima e a de baixo da do foco precisam estar com as pastas JÁ; estando, a janela anda logo depois de a
+  // tela mostrar o foco novo (a tecla não espera montar a fileira que entra, fora da tela).
+  const aoFocar = (e: FocusEvent<HTMLDivElement>) => {
+    const i = FILEIRAS_DO_TUDO.indexOf((e.target as Element).closest<HTMLElement>('[data-row-key]')?.dataset.rowKey ?? '');
+    if (i < 0) return;
+    cancelarAdiado();
+    const f = focoRef.current;
+    if (i === f) return;
+    const fora = (k: number) => k >= 0 && k < FILEIRAS_DO_TUDO.length && Math.abs(k - f) > JANELA_FILEIRAS_TV;
+    if (fora(i - 1) || fora(i + 1)) { setFoco(i); return; }
+    adiado.current.raf = requestAnimationFrame(() => { adiado.current.t = setTimeout(() => setFoco(i), 0); });
+  };
+  // Foco fora das fileiras (voltou de uma pasta: esta tela foi desmontada embaixo dela e a rolagem volta lá pra baixo; ou
+  // o foco na barra de cima): as fileiras À VISTA ganham as pastas — senão o foco não acha a pasta aberta e sobra buraco.
+  const conferirTela = useCallback(() => {
+    const el = ref.current;
+    if (!el || !el.getClientRects().length || el.contains(document.activeElement)) return;
+    const vistas: number[] = [];
+    el.querySelectorAll<HTMLElement>('[data-row-key]').forEach(f => {
+      const i = FILEIRAS_DO_TUDO.indexOf(f.dataset.rowKey ?? '');
+      const r = f.getBoundingClientRect();
+      if (i >= 0 && r.bottom > 0 && r.top < window.innerHeight) vistas.push(i);
+    });
+    if (!vistas.length || vistas.every(i => Math.abs(i - focoRef.current) <= JANELA_FILEIRAS_TV)) return;
+    flushSync(() => setFoco(vistas[Math.floor(vistas.length / 2)]));
+    devolverFoco();   // foco perdido (voltou da pasta): vai JÁ pra pasta aberta, agora montada
+  }, []);
+  useEffect(() => {
+    if (!tv) return;
+    window.addEventListener('scroll', conferirTela, { passive: true });
+    const raf = requestAnimationFrame(conferirTela);
+    return () => { window.removeEventListener('scroll', conferirTela); cancelAnimationFrame(raf); };
+  }, [tv, conferirTela]);
+  const longe = (i: number) => tv && Math.abs(i - foco) > JANELA_FILEIRAS_TV;
   return (
-    <div className="space-y-6" data-colecoes-tudo>
+    <div ref={ref} className="space-y-6" data-colecoes-tudo onFocus={tv ? aoFocar : undefined}>
       <Cabecalho titulo="Coleções" onBack={onBack} />
       <FileiraDeColecoes chave="colsec-universos" titulo="Universos" ids={[]} universos={UNIVERSOS}
-        onOpen={onOpen} onOpenUniverso={onOpenUniverso} />
-      {SECOES.map(s => (
+        onOpen={onOpen} onOpenUniverso={onOpenUniverso} longe={longe(0)} />
+      {SECOES.map((s, i) => (
         <FileiraDeColecoes key={s.chave} chave={`colsec-${s.chave}`} titulo={s.nome} ids={idsDe(s.colecoes)}
-          onOpen={onOpen} adiar />
+          onOpen={onOpen} adiar longe={longe(i + 1)} />
       ))}
     </div>
   );
