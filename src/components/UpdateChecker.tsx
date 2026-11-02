@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Download, X, CheckCircle, RefreshCw, AlertTriangle } from "lucide-react";
 import { downloadAndInstall } from "@/lib/apkUpdater";
 import { isFireTv, isTv } from "@/lib/device";
+import { depoisDeAssentar } from "@/lib/ocioso";
 
 const CURRENT_VERSION = __APP_VERSION__;
 const BUILD_DATE = __BUILD_DATE__;   // carimbo de quando este APK foi gerado
@@ -79,6 +80,11 @@ export function permissionHint(tv: boolean, fireTv: boolean): string {
   return 'Permita "instalar apps desconhecidos" para o WatchMov nas configuracoes que abriram, depois toque em baixar novamente.';
 }
 
+// W1 do raio-x (02/11/2026): a consulta automática ao GitHub roda UMA vez por abertura do app, depois que a tela assentou
+// (antes: a cada volta ao Início, junto com o 1º desenho — e a API sem token tem limite de 60 por hora por IP). As outras
+// montagens do rodapé mostram o resultado guardado. Falha não fica guardada: a próxima montagem tenta de novo.
+let resultadoDaSessao: { update: VersionInfo | null; forced: boolean } | null = null;
+
 export default function UpdateChecker() {
   const [update, setUpdate] = useState<VersionInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -135,13 +141,17 @@ export default function UpdateChecker() {
         const apkAsset = (release.assets || []).find(
           (a: { name: string }) => a.name.endsWith(".apk")
         );
-        setUpdate({
+        const nova = {
           version: remoteVersion,
           download_url: apkAsset?.browser_download_url || release.html_url,
-        });
+        };
+        const obrigatoria = /\[force\]/i.test(release.body || ""); // corpo do release contém [force]
+        resultadoDaSessao = { update: nova, forced: obrigatoria };
+        setUpdate(nova);
         setDismissed(false);
-        setForced(/\[force\]/i.test(release.body || "")); // corpo do release contém [force]
+        setForced(obrigatoria);
       } else {
+        resultadoDaSessao = { update: null, forced: false };
         setUpdate(null);
         setJustChecked(true);
         setTimeout(() => {
@@ -157,7 +167,12 @@ export default function UpdateChecker() {
   };
 
   useEffect(() => {
-    checkUpdate();
+    if (resultadoDaSessao) {
+      setUpdate(resultadoDaSessao.update);
+      setForced(resultadoDaSessao.forced);
+      return;
+    }
+    return depoisDeAssentar(() => { void checkUpdate(); });
   }, []);
 
   if (update && (!dismissed || forced)) {

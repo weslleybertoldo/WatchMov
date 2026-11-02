@@ -116,8 +116,12 @@ const DEFAULT_SECTIONS = [
 // ── Store Hook ──
 
 export function useWatchStore(userId?: string) {
-  const [data, setData] = useState<AppData>({ sections: [], items: [] });
-  const [loading, setLoading] = useState(true);
+  // W1 do raio-x (02/11/2026): a biblioteca guardada no aparelho entra JÁ no 1º desenho. Antes era lida num efeito: o
+  // Início desenhava um spinner, depois a tela inteira de novo (na TV, um desenho a mais na abertura).
+  const inicialRef = useRef<{ userId?: string; data: AppData | null } | null>(null);
+  if (inicialRef.current === null) inicialRef.current = { userId, data: userId ? readCache(userId) : null };
+  const [data, setData] = useState<AppData>(() => inicialRef.current?.data ?? { sections: [], items: [] });
+  const [loading, setLoading] = useState(() => !inicialRef.current?.data);
   const loadedRef = useRef(false);
   const itemsRef = useRef<WatchItem[]>([]);
 
@@ -131,8 +135,11 @@ export function useWatchStore(userId?: string) {
     if (!userId) return;
 
     // Hidrata do cache ANTES da rede: offline a home/continuar assistindo aparecem.
-    const cached = readCache(userId);
-    if (cached && !loadedRef.current) { setData(cached); setLoading(false); }
+    // (Na 1ª carga do mesmo usuário ele já entrou no 1º desenho — não troca o objeto à toa.)
+    const inicial = inicialRef.current;
+    const jaNaTela = !!inicial?.data && inicial.userId === userId && !loadedRef.current;
+    const cached = jaNaTela ? inicial!.data : readCache(userId);
+    if (cached && !loadedRef.current && !jaNaTela) { setData(cached); setLoading(false); }
 
     const [secRes, itemRes] = await Promise.all([
       supabase.from('wm_sections').select('*').eq('user_id', userId).order('created_at'),
@@ -174,9 +181,10 @@ export function useWatchStore(userId?: string) {
 
   useEffect(() => {
     loadedRef.current = false;
-    setLoading(true);
-    loadFromDB();
-  }, [loadFromDB]);
+    const inicial = inicialRef.current;
+    if (!(inicial?.data && inicial.userId === userId)) setLoading(true);
+    loadFromDB().finally(() => { if (inicialRef.current) inicialRef.current = { userId: inicialRef.current.userId, data: null }; });
+  }, [loadFromDB, userId]);
 
   // ── Section CRUD ──
 

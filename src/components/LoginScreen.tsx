@@ -1,13 +1,22 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { isTv } from "@/lib/device";
-import { TvLogin } from "@/components/TvLogin";
+
+// W1 do raio-x (02/11/2026): a tela de entrar da TV (com o gerador de QR, ~25 kB) só baixa na TV deslogada — fora do JS
+// da abertura de quem já está logado.
+const TvLogin = lazy(() => import("@/components/TvLogin").then(m => ({ default: m.TvLogin })));
 
 export function LoginScreen() {
   // TV: sem navegador pro Google (Fire TV) — entra pelo celular (QR + código).
-  if (isTv()) return <TvLogin />;
+  if (isTv()) {
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+        <TvLogin />
+      </Suspense>
+    );
+  }
   return <GoogleLogin />;
 }
 

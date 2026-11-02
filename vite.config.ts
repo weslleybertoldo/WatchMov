@@ -29,17 +29,11 @@ export default defineConfig(() => ({
   build: {
     rollupOptions: {
       output: {
+        // W1 do raio-x (02/11/2026): sem o pedaço "radix" fixo — ele obrigava a abertura a baixar tooltip, select,
+        // popover e menu (nenhum em uso) junto com o diálogo; agora cada um vai com a tela que usa. O roteador saiu do app.
         manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
+          react: ["react", "react-dom"],
           supabase: ["@supabase/supabase-js"],
-          radix: [
-            "@radix-ui/react-dialog",
-            "@radix-ui/react-alert-dialog",
-            "@radix-ui/react-dropdown-menu",
-            "@radix-ui/react-tooltip",
-            "@radix-ui/react-select",
-            "@radix-ui/react-popover",
-          ],
         },
       },
     },

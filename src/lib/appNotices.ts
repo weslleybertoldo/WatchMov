@@ -1,5 +1,6 @@
 import { useEffect, useReducer } from 'react';
 import { supabase } from '@/lib/supabase';
+import { depoisDeAssentar } from './ocioso';
 
 // Central de avisos do app (o sino no topo). Os toasts passam e somem; aqui fica o
 // registro — download concluído, MP4 pronto, conversão na fila ou falhada.
@@ -68,9 +69,15 @@ export function clearNotices() {
   void remote(async () => { await supabase.from('wm_notices').delete().neq('id', ''); });
 }
 
-export function useNotices(): { list: Notice[]; unread: number } {
+// adiarSync (W1 do raio-x, 02/11/2026): o sino do topo nasce junto com o Início — a busca no banco espera a tela assentar.
+export function useNotices(o?: { adiarSync?: boolean }): { list: Notice[]; unread: number } {
   const [, force] = useReducer((x: number) => x + 1, 0);
-  useEffect(() => { subs.add(force); void syncNotices(); return () => { subs.delete(force); }; }, []);
+  const adiar = !!o?.adiarSync;
+  useEffect(() => {
+    subs.add(force);
+    const desistir = adiar ? depoisDeAssentar(() => { void syncNotices(); }) : (void syncNotices(), () => undefined);
+    return () => { subs.delete(force); desistir(); };
+  }, [adiar]);
   const list = read();
   return { list, unread: list.filter(n => !n.read).length };
 }

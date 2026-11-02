@@ -3,7 +3,8 @@ import { MediaSummary } from '@/lib/tmdb';
 import MediaCard from './MediaCard';
 import { ChevronLeft, ChevronRight, Plus, Loader2 } from 'lucide-react';
 import { isTv } from '@/lib/device';
-import { naFilaDoOcioso } from '@/lib/ocioso';
+import { depoisDeAssentar, naFilaDoOcioso } from '@/lib/ocioso';
+import { guardarFileira, lerFileira, marcarParaAtualizar, pegarParaAtualizar } from '@/lib/fileirasGuardadas';
 
 interface MediaRowProps {
   title: string;
@@ -13,10 +14,26 @@ interface MediaRowProps {
   numbered?: boolean;                   // Top 10
   onOpen: (media: MediaSummary) => void;
   onSeeAll?: () => void;
+  prioridade?: boolean;                 // 1ª fileira da tela: as capas da frente baixam já (sem esperar o lazy)
 }
 
 // cache simples em memória por cacheKey
 const rowCache = new Map<string, MediaSummary[]>();
+// W1 do raio-x (02/11/2026): na 1ª montagem da sessão a fileira vem do que ficou guardado no aparelho (fileirasGuardadas):
+// aparece na hora, sem "Carregando…". Velha (> 6 h) = a TMDB é consultada depois que a tela assentou e a resposta fica
+// guardada pra próxima abertura — nesta sessão a fileira não troca de cartazes com a pessoa olhando.
+function daMemoriaOuDoAparelho(cacheKey?: string): MediaSummary[] | undefined {
+  if (!cacheKey) return undefined;
+  const mem = rowCache.get(cacheKey);
+  if (mem) return mem;
+  const guardada = lerFileira(cacheKey);
+  if (!guardada) return undefined;
+  rowCache.set(cacheKey, guardada.itens);
+  if (!guardada.fresca) marcarParaAtualizar(cacheKey);
+  return guardada.itens;
+}
+const ESPERA_ATUALIZAR_MS = 4000;     // depois do resto da abertura (avisos, push…), uma fileira por vez no ocioso
+const CAPAS_PRIORITARIAS = 6;         // ~as que cabem na largura da tela
 // posição do scroll horizontal por linha (sobrevive remontagem ao abrir detalhe)
 const scrollCache = new Map<string, number>();
 // W4 das quedas na Fire TV (01/11/2026): na TV a aba não monta todos os cartões de uma vez (a Filmes montava ~110 na
@@ -30,8 +47,8 @@ const fileirasVistas = new Set<string>();
 const PERTO_DA_TELA = '600px 0px';   // ~1 tela da TV (540 CSS px) acima e abaixo
 const ESPERA_OCIOSO_MS = 1500;       // a aba aparece primeiro; o resto monta depois, antes de a pessoa descer
 
-export default function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll }: MediaRowProps) {
-  const [data, setData] = useState<MediaSummary[]>(() => items ?? (cacheKey ? rowCache.get(cacheKey) ?? [] : []));
+export default function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, prioridade }: MediaRowProps) {
+  const [data, setData] = useState<MediaSummary[]>(() => items ?? daMemoriaOuDoAparelho(cacheKey) ?? []);
   const [loading, setLoading] = useState(!items && !(cacheKey && rowCache.has(cacheKey)));
   const scrollRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -72,11 +89,18 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
   useEffect(() => {
     if (items) { setData(items); return; }
     if (!loader) return;
-    if (cacheKey && rowCache.has(cacheKey)) { setData(rowCache.get(cacheKey)!); setLoading(false); return; }
+    if (cacheKey && rowCache.has(cacheKey)) {
+      setData(rowCache.get(cacheKey)!); setLoading(false);
+      // Veio velha do aparelho: atualiza o guardado no ocioso (independe desta montagem — a tela pode ter mudado).
+      if (pegarParaAtualizar(cacheKey)) {
+        depoisDeAssentar(() => { loader().then(res => guardarFileira(cacheKey, res)).catch(() => undefined); }, ESPERA_ATUALIZAR_MS);
+      }
+      return;
+    }
     let alive = true;
     setLoading(true);
     loader()
-      .then(res => { if (!alive) return; if (cacheKey) rowCache.set(cacheKey, res); setData(res); })
+      .then(res => { if (cacheKey) { rowCache.set(cacheKey, res); guardarFileira(cacheKey, res); } if (!alive) return; setData(res); })
       .catch(() => { if (alive) setData([]); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -121,7 +145,8 @@ export default function MediaRow({ title, items, loader, cacheKey, numbered, onO
             <>
               {data.slice(0, 10).map((m, i) => (
                 <div key={`${m.type}-${m.tmdbId}`} className="snap-start">
-                  <MediaCard media={m} onClick={() => onOpen(m)} rank={numbered ? i + 1 : undefined} />
+                  <MediaCard media={m} onClick={() => onOpen(m)} rank={numbered ? i + 1 : undefined}
+                    prioridade={prioridade && i < CAPAS_PRIORITARIAS} />
                 </div>
               ))}
               {onSeeAll && (

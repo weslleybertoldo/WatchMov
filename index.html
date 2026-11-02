@@ -12,6 +12,12 @@
     <meta property="og:title" content="WatchMov" />
     <meta property="og:description" content="WatchMov - Controle de filmes e series" />
     <meta property="og:type" content="website" />
+    <!-- W1 do raio-x (02/11/2026): a fonte do texto (local) e as conexões com a TMDB e o Supabase começam junto com o
+         HTML, em vez de esperar o JS pedir. -->
+    <link rel="preload" href="/fonts/inter/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preconnect" href="https://api.themoviedb.org" crossorigin />
+    <link rel="preconnect" href="https://image.tmdb.org" />
+    <link rel="preconnect" href="%VITE_SUPABASE_URL%" crossorigin />
   </head>
   <body style="margin:0;background:#0e1115">
     <!-- Abertura com a logo até o React desenhar (o render troca o conteúdo do #root). -->

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MediaSummary } from '@/lib/tmdb';
+import { MediaSummary, capaDeFileira } from '@/lib/tmdb';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
 import { isTv } from '@/lib/device';
 import { useEhFavorito, pedirMenuFavorito } from '@/lib/favorites';
@@ -10,6 +10,7 @@ interface MediaCardProps {
   media: MediaSummary;
   onClick: () => void;
   rank?: number; // numeração Top 10
+  prioridade?: boolean; // W1 do raio-x: capa da frente da 1ª fileira baixa já (sem o lazy)
 }
 
 // Ainda não lançou (data futura) → tag "Em breve": avisa que não dá pra assistir.
@@ -34,9 +35,11 @@ export function isNew(date?: string): boolean {
 // nesta abertura do app aparece direto; na TV, sem o fade. Guarda só o endereço (quase nada de memória).
 const carregados = new Set<string>();
 
-export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
+export default function MediaCard({ media, onClick, rank, prioridade }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
-  const [loaded, setLoaded] = useState(() => !!media.posterUrl && carregados.has(media.posterUrl));
+  // W1 do raio-x (02/11/2026): no cartaz a capa é sempre a w342 (a da biblioteca vem em w500, a da página do título).
+  const capa = capaDeFileira(media.posterUrl);
+  const [loaded, setLoaded] = useState(() => !!capa && carregados.has(capa));
   const upcoming = isUpcoming(media.date);
   const fresh = isNew(media.date);
   // Cartaz numerado (Top 10, filmes de uma coleção): a tag "Em breve"/"Novo" desce pra baixo do número — no
@@ -86,14 +89,15 @@ export default function MediaCard({ media, onClick, rank }: MediaCardProps) {
           <Bookmark className="w-3.5 h-3.5 fill-white text-white" />
         </span>
       )}
-      <div className={`tv-poster rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${media.posterUrl && !loaded ? 'animate-pulse' : ''}`}>
-        {media.posterUrl ? (
+      <div className={`tv-poster rounded-lg overflow-hidden bg-muted aspect-[2/3] ring-1 ring-border group-hover:ring-primary transition-all ${capa && !loaded ? 'animate-pulse' : ''}`}>
+        {capa ? (
           <img
-            src={media.posterUrl}
+            src={capa}
             alt={media.title}
-            loading="lazy"
+            loading={prioridade ? 'eager' : 'lazy'}
+            decoding="async"
             draggable={false}
-            onLoad={() => { if (media.posterUrl) carregados.add(media.posterUrl); setLoaded(true); }}
+            onLoad={() => { if (capa) carregados.add(capa); setLoaded(true); }}
             className={`w-full h-full object-cover ${isTv() ? '' : 'transition-opacity duration-500'} ${loaded ? 'opacity-100' : 'opacity-0'}`}
           />
         ) : (

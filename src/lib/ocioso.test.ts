@@ -66,3 +66,40 @@ describe('naFilaDoOcioso', () => {
     expect(feitas).toEqual(['a', 'b']);
   });
 });
+
+// W1 do raio-x (02/11/2026): o que pode esperar a abertura espera a tela assentar e ainda vai pra fila do ocioso.
+describe('depoisDeAssentar', () => {
+  let ociosos: IdleRequestCallback[];
+  beforeEach(() => {
+    vi.resetModules();
+    ociosos = [];
+    vi.useFakeTimers();
+    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => { ociosos.push(cb); return ociosos.length; });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('espera o tempo de assentar e depois o ocioso', async () => {
+    const { depoisDeAssentar, ESPERA_ASSENTAR_MS } = await import('./ocioso');
+    const feitas: string[] = [];
+    depoisDeAssentar(() => feitas.push('a'));
+    vi.advanceTimersByTime(ESPERA_ASSENTAR_MS - 1);
+    expect(ociosos).toHaveLength(0);                    // ainda não pediu o ocioso
+    vi.advanceTimersByTime(1);
+    expect(ociosos).toHaveLength(1);
+    expect(feitas).toEqual([]);
+    ociosos.shift()!({ didTimeout: false, timeRemaining: () => 10 } as IdleDeadline);
+    expect(feitas).toEqual(['a']);
+  });
+
+  it('desistir antes (ou já na fila) não roda', async () => {
+    const { depoisDeAssentar } = await import('./ocioso');
+    const feitas: string[] = [];
+    const antes = depoisDeAssentar(() => feitas.push('antes'), 100);
+    const naFila = depoisDeAssentar(() => feitas.push('na fila'), 100);
+    antes();
+    vi.advanceTimersByTime(100);
+    naFila();
+    while (ociosos.length) ociosos.shift()!({ didTimeout: false, timeRemaining: () => 10 } as IdleDeadline);
+    expect(feitas).toEqual([]);
+  });
+});

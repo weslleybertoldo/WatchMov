@@ -3,26 +3,45 @@ import { Play } from 'lucide-react';
 import { trendingToday, type MediaSummary } from '@/lib/tmdb';
 import { isTv } from '@/lib/device';
 import { usePaginaVisivel } from '@/hooks/use-pagina-visivel';
+import { guardarFileira, lerFileira } from '@/lib/fileirasGuardadas';
+import { depoisDeAssentar } from '@/lib/ocioso';
 
 // Cache em memória: ao voltar do detalhe o hero remonta JÁ com os itens (mesma altura
 // na hora). Antes nascia vazio (altura 0) e, quando a TMDB respondia, empurrava a
 // página inteira pra baixo — a posição do scroll restaurada ficava errada ("a tela
 // vai descendo"). Mesmo padrão do rowCache do MediaRow.
 let heroCache: MediaSummary[] | null = null;
+// W1 do raio-x (02/11/2026): na 1ª montagem da sessão vem do guardado no aparelho (fileirasGuardadas) — aparece na hora.
+// Velho (> 6 h): a TMDB é consultada no ocioso e a resposta fica pra próxima abertura (o destaque não troca na cara).
+let heroVelho = false;
+function heroDoAparelho(): MediaSummary[] | null {
+  if (heroCache) return heroCache;
+  const g = lerFileira('hero');
+  if (!g) return null;
+  heroCache = g.itens;
+  heroVelho = !g.fresca;
+  return heroCache;
+}
 
 // Hero "Populares Hoje" (estilo Smart Play): backdrop grande em carrossel
 // auto-rotativo, com play + dots. Toque abre o título.
 export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => void }) {
-  const [items, setItems] = useState<MediaSummary[]>(() => heroCache ?? []);
+  const [items, setItems] = useState<MediaSummary[]>(() => heroDoAparelho() ?? []);
   const [i, setI] = useState(0);
   const startX = useRef<number | null>(null);
   const swiped = useRef(false);                 // distingue arraste de toque (não abre no swipe)
   const go = (dir: number) => setI(p => (p + dir + items.length) % items.length);
 
   useEffect(() => {
-    if (heroCache) return;
+    if (heroCache) {
+      if (heroVelho) {
+        heroVelho = false;
+        depoisDeAssentar(() => { trendingToday().then(r => guardarFileira('hero', r)).catch(() => undefined); }, 4000);
+      }
+      return;
+    }
     let alive = true;
-    trendingToday().then(r => { heroCache = r; if (alive) setItems(r); }).catch(() => {});
+    trendingToday().then(r => { heroCache = r; guardarFileira('hero', r); if (alive) setItems(r); }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
@@ -67,7 +86,8 @@ export default function HeroCarousel({ onOpen }: { onOpen: (m: MediaSummary) => 
         if (Math.abs(dx) > 40) { swiped.current = true; go(dx < 0 ? 1 : -1); }
       }}
       onClick={() => { if (swiped.current) { swiped.current = false; return; } onOpen(m); }}>
-      {bg && <img key={bg} src={bg} alt={m.title} className="w-full h-full object-cover animate-fade-in" />}
+      {/* A imagem do destaque é a maior da tela: baixa antes das capas (fetchpriority) e decodifica fora do desenho. */}
+      {bg && <img key={bg} src={bg} alt={m.title} decoding="async" {...{ fetchpriority: 'high' }} className="w-full h-full object-cover animate-fade-in" />}
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
       <div className="absolute bottom-0 inset-x-0 p-4 flex flex-col items-center text-center gap-1.5">
         <div className="rounded-full bg-primary/90 w-14 h-14 flex items-center justify-center shadow-lg mb-1">

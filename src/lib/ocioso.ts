@@ -29,3 +29,15 @@ export function naFilaDoOcioso(tarefa: () => void): () => void {
     if (i >= 0) fila.splice(i, 1);
   };
 }
+
+// W1 do raio-x (02/11/2026): o que não precisa estar pronto na abertura (avisos, push, registro da TV, verificação de
+// atualização, log de erros) espera a tela assentar e ainda entra na fila do ocioso — antes rodava tudo junto com o 1º
+// desenho, disputando a TV com a TMDB e as fileiras. Devolve o "desistir" (desmontou antes = não roda).
+export const ESPERA_ASSENTAR_MS = 2500;
+
+export function depoisDeAssentar(tarefa: () => void, esperaMs = ESPERA_ASSENTAR_MS): () => void {
+  let desistir = () => {};
+  let fora = false;
+  const espera = setTimeout(() => { if (!fora) desistir = naFilaDoOcioso(tarefa); }, esperaMs);
+  return () => { fora = true; clearTimeout(espera); desistir(); };
+}

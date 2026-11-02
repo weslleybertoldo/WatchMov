@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ANIME_ROWS, ANIME_GENRES, recent, getCredits, ELENCO_MAX, getCollection, getDetails, nomeDaColecao, ordemDeLancamento } from './tmdb';
+import { ANIME_ROWS, ANIME_GENRES, recent, getCredits, ELENCO_MAX, getCollection, getDetails, nomeDaColecao, ordemDeLancamento, capaDeFileira } from './tmdb';
 import { isPrimaryGenre } from './rowFill';
 
 const ACAO = 10759, FANTASIA = 10765, COMEDIA = 35, DRAMA = 18, MISTERIO = 9648, CRIME = 80, FAMILIA = 10751;
@@ -184,5 +184,15 @@ describe('getDetails() — "Faz parte da coleção X"', () => {
     await comFetchCol({ id: 2, name: 'Série', seasons: [], belongs_to_collection: { id: 7, name: 'X' } }, async () => {
       expect((await getDetails(2, 'tv')).collection).toBeUndefined();
     });
+  });
+});
+
+// W1 do raio-x (02/11/2026): capa da biblioteca (w500) vira w342 no cartaz das fileiras.
+describe('capaDeFileira', () => {
+  it('troca só o tamanho w500 da TMDB', () => {
+    expect(capaDeFileira('https://image.tmdb.org/t/p/w500/abc.jpg')).toBe('https://image.tmdb.org/t/p/w342/abc.jpg');
+    expect(capaDeFileira('https://image.tmdb.org/t/p/w342/abc.jpg')).toBe('https://image.tmdb.org/t/p/w342/abc.jpg');
+    expect(capaDeFileira('https://lh3.googleusercontent.com/w500/x.png')).toBe('https://lh3.googleusercontent.com/w500/x.png');
+    expect(capaDeFileira(undefined)).toBeUndefined();
   });
 });
