@@ -9,7 +9,9 @@ import {
   MOVIE_GENRES, TV_GENRES, ANIME_ROWS, ANIME_GENRES, type TmdbMediaType, type TmdbCollectionRef,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
-import { getCastNow, closeNativePlayer, type CastNow } from '@/lib/nativePlayer';
+import { getCastNow, closeNativePlayer, playNative, type CastNow } from '@/lib/nativePlayer';
+import { Capacitor } from '@capacitor/core';
+import { mimeDoLink } from '@/lib/iptvOrg';
 import { App as CapApp } from '@capacitor/app';
 import { appNaFrente, isTv } from '@/lib/device';
 import { listenAsTv, sessionIdOf } from '@/lib/tvRemote';
@@ -324,6 +326,15 @@ export default function Index() {
   // saiu volta pro mesmo lugar (a LINHA de onde saiu; pedido 07/09/2026). Desde a W3 do raio-x quem cuida disso é a
   // memória de rolagem por tela, no efeito das camadas (mais abaixo) — aqui só se abre e fecha.
   const openCategory = useCallback((c: NonNullable<typeof category>) => setCategory(c), []);
+  // Canal ao vivo: os do iptv-org (link direto, 03/11/2026) tocam no player nativo com referer/user-agent da lista;
+  // no navegador e nos do SuperFlix (iframe) abre a camada de sempre.
+  const abrirCanal = useCallback((ch: Channel) => {
+    if (ch.url && Capacitor.isNativePlatform()) {
+      void playNative({ url: ch.url, referer: ch.referer, ua: ch.ua, mime: mimeDoLink(ch.url), title: ch.name });
+      return;
+    }
+    setLiveChannel(ch);
+  }, []);
   const openContinue = useCallback((f: 'movie' | 'series' | 'anime') => setContinueFilter(f), []);
   const openGenre = (type: TmdbMediaType, id: number, name: string) =>
     openCategory({ title: name, loadPage: (p) => discoverByGenre(type, id, p), cacheKey: `cat-${type}-${id}` });
@@ -693,7 +704,7 @@ export default function Index() {
     ) : t === 'procurar' ? (
       <BrowseView onOpen={openMedia} />
     ) : (
-      <LiveTvView onPlay={setLiveChannel} />
+      <LiveTvView onPlay={abrirCanal} />
     )
   );
 
@@ -733,7 +744,7 @@ export default function Index() {
         </div>
       </header>
 
-      {/* Player de canal ao vivo — overlay full-screen (iframe modo servidor). */}
+      {/* Player de canal ao vivo — overlay full-screen (iframe modo servidor; iptv-org no navegador = <video>). */}
       {liveChannel && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
           <div className="flex items-center gap-2 px-3 h-12 bg-black/90 text-white shrink-0">
@@ -742,10 +753,16 @@ export default function Index() {
             </Button>
             <span className="text-sm font-medium truncate">{liveChannel.name}</span>
           </div>
-          <iframe key={liveChannel.embed} src={liveChannel.embed} title={liveChannel.name}
-            className="flex-1 w-full border-0"
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            allowFullScreen referrerPolicy="origin" />
+          {liveChannel.url ? (
+            /* iptv-org no navegador: <video> direto (toca onde o navegador lê HLS; no app vai pro player nativo). */
+            <video key={liveChannel.url} src={liveChannel.url} title={liveChannel.name}
+              className="flex-1 w-full min-h-0 bg-black" controls autoPlay playsInline />
+          ) : (
+            <iframe key={liveChannel.embed} src={liveChannel.embed} title={liveChannel.name}
+              className="flex-1 w-full border-0"
+              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+              allowFullScreen referrerPolicy="origin" />
+          )}
         </div>
       )}
 
