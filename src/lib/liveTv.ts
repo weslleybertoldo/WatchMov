@@ -1,4 +1,5 @@
 import { CapacitorHttp, Capacitor } from '@capacitor/core';
+import { fetchIptvBrasil, fetchIptvMundo, type IptvChannel } from './iptvOrg';
 
 // Canais ao vivo do SuperFlix. O endpoint /lista?category=canais devolve id, nome,
 // logo, categoria e embed_url (iframe /canal/{id}). NÃO tem CORS → no aparelho a
@@ -13,8 +14,14 @@ export interface Channel {
   id: string;
   name: string;
   logo: string;
-  embed: string;      // URL de iframe (modo servidor)
+  embed: string;      // URL de iframe (modo servidor) — só os do SuperFlix; '' nos do iptv-org
   category: string;   // categoria "primária" (a 1ª, quando vêm várias)
+  // 03/11/2026 — canais do iptv-org (lista M3U pública): link direto do vídeo, tocado no player nativo.
+  categories?: string[]; // todas as categorias (no iptv-org um canal pode estar em mais de uma)
+  url?: string;          // link direto (HLS/DASH)
+  referer?: string;
+  ua?: string;
+  country?: string;      // país (bandeira no Mundo)
 }
 
 interface RawChannel {
@@ -65,10 +72,59 @@ export async function fetchChannels(force = false): Promise<Channel[]> {
   return list;
 }
 
-// Categorias na ordem em que aparecem (com "Todos" na frente é responsabilidade da UI).
+// Canal do iptv-org no formato da aba.
+export function doIptv(c: IptvChannel): Channel {
+  return {
+    id: `iptv:${c.url}`,
+    name: c.name,
+    logo: c.logo,
+    embed: '',
+    category: c.categories[0] ?? 'Outros',
+    categories: c.categories,
+    url: c.url,
+    referer: c.referer,
+    ua: c.ua,
+    country: c.country,
+  };
+}
+
+// Aba Ao Vivo (Brasil) = SuperFlix + iptv-org do Brasil, nas mesmas categorias. Uma fonte fora do ar não derruba a
+// outra (no navegador o SuperFlix nem responde: sem CORS); só as duas fora = erro na tela.
+export async function fetchAoVivo(force = false): Promise<Channel[]> {
+  const [superflix, iptv] = await Promise.allSettled([fetchChannels(force), fetchIptvBrasil(force)]);
+  const list = [
+    ...(superflix.status === 'fulfilled' ? superflix.value : []),
+    ...(iptv.status === 'fulfilled' ? iptv.value.map(doIptv) : []),
+  ];
+  if (!list.length) {
+    const falha = [superflix, iptv].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    throw falha ? falha.reason : new Error('nenhum canal');
+  }
+  return list;
+}
+
+// Última aba "Mundo": iptv-org do mundo todo, sem os do Brasil. Só baixa quando a aba abre.
+export async function fetchMundo(force = false): Promise<Channel[]> {
+  return (await fetchIptvMundo(force)).map(doIptv);
+}
+
+export function categoriasDo(c: Channel): string[] {
+  return c.categories?.length ? c.categories : [c.category];
+}
+
+// Categorias em ordem alfabética (com "Todos" na frente é responsabilidade da UI). Canal com várias conta em todas.
 export function categoriesOf(list: Channel[]): string[] {
   const seen = new Set<string>();
-  const out: string[] = [];
-  for (const c of list) if (!seen.has(c.category)) { seen.add(c.category); out.push(c.category); }
-  return out.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  for (const c of list) for (const k of categoriasDo(c)) seen.add(k);
+  return [...seen].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+const semAcento = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// Filtro da aba: categoria (null = todas) + busca pelo nome, sem diferenciar acento nem maiúscula.
+export function filtrarCanais(list: Channel[], categoria: string | null, termo: string): Channel[] {
+  const t = semAcento(termo.trim());
+  return list.filter(c =>
+    (!categoria || categoriasDo(c).includes(categoria)) &&
+    (!t || semAcento(c.name).includes(t)));
 }
