@@ -35,7 +35,8 @@ export const ABYS_PROVIDERS = [ABYS_PROVIDER, 'fshd'];
 export const usesAbys = (providerId?: string) => !!providerId && ABYS_PROVIDERS.includes(providerId);
 // 19/10/2026: a Fonte 4 (Pomfy) passa por 3 páginas (título → servidor → Byse) sem lista de opções, então o cronômetro
 // por opção não estica o prazo — no emulador o vídeo saiu aos ~44 s → mesmo orçamento do ABYS.
-export function budgetFor(providerId: string): number { return usesAbys(providerId) || wrapsIframe(providerId) ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
+// 04/11/2026: Fontes 5 (superflix) e 6 (warezcdn) passam pela validação da Cloudflare antes do player → 90 s.
+export function budgetFor(providerId: string): number { return usesAbys(providerId) || wrapsIframe(providerId) || providerId === 'superflix' || providerId === 'warezcdn' ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
 // Iframes de player em que é preciso CLICAR (opção/gate) → frame-hop (só no fallback sem injeção).
 export const HOP_HOSTS = ['playerflix.ink', 'embedplay.one', 'f7hyg4q.org'];
 // Ordem importa: 1 clique por tick e no máximo 1 por seletor por página. "text:" = por texto.
@@ -84,7 +85,7 @@ const PLAY_MUTED = "if(!window.__wmNoPlay)document.querySelectorAll('video').for
 // (frame principal) não alcançava e o frame-hop deixava a página em branco.
 export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): string {
   const list = JSON.stringify(steps);
-  return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;try{console.log("WMINJ frame "+location.href.slice(0,70))}catch(_){}var STEPS=' + list + ';var done={};'
+  return '(function(){try{if(/cloudflare\\.com$/i.test(location.hostname)||window.__wmInj)return;window.__wmInj=1;try{console.log("WMINJ frame "+location.href.slice(0,70))}catch(_){}var STEPS=' + list + ';var done={};'
     + 'var vis=function(e){try{var r=e.getBoundingClientRect();return r.width>2&&r.height>2}catch(_){return false}};'
     + "var byText=function(t){t=t.toLowerCase();var all=document.querySelectorAll('button,a,div,span,li,label');for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length>3)continue;var s=(e.textContent||'').trim().toLowerCase();if(s&&s.indexOf(t)>=0&&s.length<t.length+40&&vis(e))return e;}return null;};"
     + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
@@ -124,11 +125,11 @@ export function buildInjectScript(steps: string[] = CLICK_STEPS, extra = ''): st
 // `WMOPT|dead|k=K|reason=not-found` (a UPNS disse que o vídeo foi apagado → o nativo pula na hora).
 export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
   const list = JSON.stringify(steps);
-  return '(function(){try{if(window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
+  return '(function(){try{if(/cloudflare\\.com$/i.test(location.hostname)||window.__wmInj)return;window.__wmInj=1;var K=__OPT_K__;var STEPS=' + list + ';var done={};var reported=false;'
     // 20/10/2026 (emulador): na página do FS/HD o console.log da página principal não chega ao app (some antes do
     // onConsoleMessage — testado com log manual), só o de iframes. Os recados WMOPT vão por um iframe em branco
-    // criado na hora (mesma origem); se não der, pelo console da própria página.
-    + "var sayF=null;var say=function(m){try{if(!sayF||!sayF.contentWindow){sayF=document.createElement('iframe');sayF.style.display='none';sayF.setAttribute('aria-hidden','true');(document.body||document.documentElement).appendChild(sayF);}sayF.contentWindow.console.log(m);return}catch(_){}try{console.log(m)}catch(_){}};"
+    // criado na hora (mesma origem); se não der (ou na verificação Turnstile, onde iframe extra quebra postMessage), pelo console da própria página.
+    + "var sayF=null;var say=function(m){try{if(!document.querySelector('input[name=\"cf_embed_challenge\"]')){if(!sayF||!sayF.contentWindow){sayF=document.createElement('iframe');sayF.style.display='none';sayF.setAttribute('aria-hidden','true');(document.body||document.documentElement).appendChild(sayF);}sayF.contentWindow.console.log(m);return}}catch(_){}try{console.log(m)}catch(_){}};"
     + 'var REP=' + JSON.stringify(STEPS_REPEAT) + ',PLAY=' + JSON.stringify(STEPS_PLAY) + ',DEAD=' + JSON.stringify(DEAD_TEXTS) + ',lastAt={};'
     + "var prog=function(s){try{say('WMOPT|progress|k='+K+'|stage='+s+'|host='+location.hostname)}catch(_){}};"
     // UPNS: pergunta direto à API se o vídeo existe (o play dela não sai com clique automático no celular — 25/09/2026,
@@ -314,7 +315,7 @@ if(!pend&&!sent)send()})})},700);
 //  3. mantém o leitor `VIDEO_CONFIG`/`ytInitialPlayerResponse`/`currentSrc` (frame do YouTube).
 // Emite `WMBLOG|q=<qualidade>|url=<u>` (maior qualidade primeiro); `WMBLOG|url=` continua aceito = 360p.
 export function buildBloggerScript(): string {
-  return '(function(){try{if(window.__wmBlog)return;window.__wmBlog=1;'
+  return '(function(){try{if(/cloudflare\\.com$/i.test(location.hostname)||window.__wmBlog)return;window.__wmBlog=1;'
     + "var log=function(m){try{console.log('WMBLOG|'+m)}catch(_){}};var done=false;var sent={};"
     + "var B=String.fromCharCode(92);var STOP=String.fromCharCode(34,92,32,44,93,125,10,13,9);"
     + "var QMAP={18:'360p',22:'720p',37:'1080p',59:'480p',43:'360p'};"
@@ -372,7 +373,7 @@ export function bloggerNaBusca(providerId?: string, tv: boolean = isTv()): boole
 //  - Fonte 4 (api.pomfy.stream): `const available=false` (o botão vira "Em breve").
 // As Fontes 5 e 6 ficam atrás da verificação da Cloudflare antes de qualquer coisa: não entram aqui.
 export function buildSemTituloScript(): string {
-  return '(function(){try{if(window.__wmSem)return;window.__wmSem=1;var H=String(location.hostname||\'\').toLowerCase(),said=false;'
+  return '(function(){try{if(/cloudflare\\.com$/i.test(location.hostname)||window.__wmSem)return;window.__wmSem=1;var H=String(location.hostname||\'\').toLowerCase(),said=false;'
     + "var none=function(r){if(said)return;said=true;try{console.log('WMOPT|none|reason='+r+'|host='+H)}catch(_){}};"
     // Só a 1ª resposta da lista vale; formato que não for o conhecido não decide nada (fica pro prazo, como antes).
     + "var lido=false,lista=function(txt){if(lido)return;lido=true;try{var d=JSON.parse(txt);if(d&&d.status===false){none('f1-vazio');return}var os=d&&d.data&&d.data.options;if(!Array.isArray(os))return;"

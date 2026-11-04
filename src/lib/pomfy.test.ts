@@ -21,10 +21,14 @@ describe('Fonte 4 (Pomfy)', () => {
     expect(p.build({ type: 'movie', imdbId: 'tt4154796' })).toBeNull();
   });
 
-  it('o modo Servidor da web pode abrir a Pomfy (frame-src do vercel.json)', () => {
+  it('o modo Servidor da web pode abrir a Pomfy e o domínio final da SuperFlix (frame-src do vercel.json)', () => {
     expect(PROVIDER_HOSTS).toContain('https://api.pomfy.stream');
+    expect(PROVIDER_HOSTS).toContain('https://superflixapi.fun');
+    expect(PROVIDER_HOSTS).toContain('https://warezcdn.sbs');
     const frameSrc = /frame-src ([^;]+);/.exec(readFileSync('vercel.json', 'utf8'))?.[1] ?? '';
     expect(frameSrc.split(' ')).toContain('https://api.pomfy.stream');
+    expect(frameSrc.split(' ')).toContain('https://superflixapi.fun');
+    expect(frameSrc.split(' ')).toContain('https://warezcdn.sbs');
   });
 
   it('só a Pomfy abre dentro de iframe; os passos dela são Assistir → Servidor 1 → gate da Byse', () => {
