@@ -93,6 +93,7 @@ public class MainActivity extends BridgeActivity {
         if (TvMode.isTv(this)) tirarBrowserNaTv();
 
         WebView webView = this.bridge.getWebView();
+        StreamSnifferPlugin.desativarHeaderApp(webView);
         // Até a página pintar, o WebView fica da cor do app (era branco: "tela branca genérica", 26/09/2026).
         webView.setBackgroundColor(ContextCompat.getColor(this, R.color.wm_fundo));
         if (TvMode.isTv(this)) {
@@ -110,7 +111,10 @@ public class MainActivity extends BridgeActivity {
         // UA REAL deste WebView → proxy/sniffer/player reenviam o mesmo (googlevideo/Blogger
         // prende a URL ao UA que a gerou; com UA fixo diferente o replay dava 403).
         ProxyServer.attach(getApplicationContext());
-        ProxyServer.setWebViewUserAgent(webView.getSettings().getUserAgentString());
+        String defaultUa = webView.getSettings().getUserAgentString();
+        String cleanUa = StreamSnifferPlugin.uaLimpo(defaultUa);
+        webView.getSettings().setUserAgentString(cleanUa);
+        ProxyServer.setWebViewUserAgent(cleanUa);
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
         webView.getSettings().setSupportMultipleWindows(true);
         StreamSnifferPlugin.aoParar = fecharPopupAoParar;
@@ -130,6 +134,7 @@ public class MainActivity extends BridgeActivity {
                 try {
                     fecharPopup("outro popup");
                     sniffPopup = new WebView(MainActivity.this);
+                    StreamSnifferPlugin.desativarHeaderApp(sniffPopup);
                     android.webkit.WebSettings ps = sniffPopup.getSettings();
                     ps.setJavaScriptEnabled(true);
                     ps.setDomStorageEnabled(true);

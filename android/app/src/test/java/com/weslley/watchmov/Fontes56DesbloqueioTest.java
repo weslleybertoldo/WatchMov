@@ -12,7 +12,9 @@ public class Fontes56DesbloqueioTest {
     @Test
     public void identificaSomenteFontes5e6() {
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://superflixapi.fun/filme/tt0433035"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://superflixonline.lat/filme/1368337"));
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://warezcdn.sbs/filme/39254"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://overflixhd.sbs/filme/1368337"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://challenges.cloudflare.com/turnstile/v0/api.js"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://myembed.biz/filme/39254"));
     }

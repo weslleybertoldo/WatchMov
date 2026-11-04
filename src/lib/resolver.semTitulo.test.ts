@@ -123,8 +123,18 @@ describe('não tem o título (sinais por fonte)', () => {
     expect(await rodar('playerflix.ink', () => fakeFetch({ ok: 1 }), ajax({ ok: 1 }))).toEqual([]);
   });
 
+  it('Fonte 5 e 6: "não encontrado" ou serverList sem link avisa sem-servidor', async () => {
+    expect(await rodar('warezcdn.sbs', () => {
+      document.body.innerHTML = '<div>Filme não encontrado</div>';
+    })).toEqual(['WMOPT|none|reason=f56-nao-encontrado|host=warezcdn.sbs']);
+    delete (window as Win).__wmSem;
+    expect(await rodar('superflixapi.fun', () => {
+      document.body.innerHTML = '<div>Conteúdo indisponível</div>';
+    })).toEqual(['WMOPT|none|reason=f56-nao-encontrado|host=superflixapi.fun']);
+  });
+
   it('outros frames (myembed.biz, Byse, anúncio) não avisam nada', async () => {
-    for (const h of ['myembed.biz', 'n1mwq.org', 'superflixapi.monster']) {
+    for (const h of ['myembed.biz', 'n1mwq.org']) {
       delete (window as Win).__wmSem;
       expect(await rodar(h, () => { document.title = 'FSHD — 404'; document.body.innerHTML = '<div class="movie-not-found"></div><script>const available=false;</script>'; })).toEqual([]);
     }
@@ -134,21 +144,25 @@ describe('não tem o título (sinais por fonte)', () => {
 describe('pulo automático pra próxima fonte', () => {
   const ordem = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn', 'megaembed'];
 
-  it('as Fontes 1 a 4 e a 7 entram no pulo (a 5 e a 6 ficam atrás da Cloudflare)', () => {
-    expect(AUTO_PULO).toEqual(['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'megaembed']);
+  it('todas as Fontes 1 a 7 entram no pulo', () => {
+    expect(AUTO_PULO).toEqual(['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn', 'megaembed']);
   });
 
-  it('segue a ordem da tela e dá a volta: 4 → 7 → 1 → 2 → 3', () => {
+  it('segue a ordem da tela e dá a volta: 4 → 5 → 6 → 7 → 1 → 2 → 3', () => {
     const fora = new Set<string>();
-    expect(proximaFonte(ordem, 'pomfy', fora)).toBe('megaembed');   // a 5 e a 6 não entram
+    expect(proximaFonte(ordem, 'pomfy', fora)).toBe('superflix');
     fora.add('pomfy');
+    expect(proximaFonte(ordem, 'superflix', fora)).toBe('warezcdn');
+    fora.add('superflix');
+    expect(proximaFonte(ordem, 'warezcdn', fora)).toBe('megaembed');
+    fora.add('warezcdn');
     expect(proximaFonte(ordem, 'megaembed', fora)).toBe('embedmovies');
     fora.add('megaembed');
     expect(proximaFonte(ordem, 'embedmovies', fora)).toBe('embedplayapi');
     fora.add('embedmovies');
     expect(proximaFonte(ordem, 'embedplayapi', fora)).toBe('fshd');
     fora.add('embedplayapi');
-    expect(proximaFonte(ordem, 'fshd', fora)).toBeNull();   // as 5 disseram que não têm
+    expect(proximaFonte(ordem, 'fshd', fora)).toBeNull();   // as 7 disseram que não têm
   });
 
   it('pula a que já disse "não tem", a que está em pausa e a que não existe pro título (Fonte 3 sem IMDb)', () => {
@@ -156,9 +170,5 @@ describe('pulo automático pra próxima fonte', () => {
     expect(proximaFonte(ordem, 'embedmovies', new Set(), id => id === 'embedplayapi')).toBe('fshd');
     const semImdb = ordem.filter(id => id !== 'fshd');
     expect(proximaFonte(semImdb, 'embedplayapi', new Set())).toBe('pomfy');
-  });
-
-  it('começando fora do pulo (Fonte 5 escolhida na mão) tenta a 1', () => {
-    expect(proximaFonte(ordem, 'superflix', new Set(['superflix']))).toBe('embedmovies');
   });
 });
