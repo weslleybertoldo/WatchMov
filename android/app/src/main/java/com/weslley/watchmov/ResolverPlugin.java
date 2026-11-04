@@ -188,6 +188,10 @@ public class ResolverPlugin extends Plugin {
                             ui.post(() -> onOptionProgress(mySession, "media"));
                         }
                         maybeHop(mySession, req);
+                        if (StreamSnifferPlugin.precisaEsconderApp(u)) {
+                            WebResourceResponse r = StreamSnifferPlugin.fetchSemNomeDoApp(req);
+                            if (r != null) return r;
+                        }
                         return null;
                     }
                     // 01/11/2026 (quedas na Fire TV): o processo de página morreu (falta de memória) → esta WebView
@@ -208,6 +212,7 @@ public class ResolverPlugin extends Plugin {
                         // Subframe e redirect HTTP seguem. Main-frame por JS só pro MESMO site da página
                         // atual ou pra host de hop — troca cross-site (popunder via location.href) = anúncio.
                         if (!req.isForMainFrame() || req.isRedirect()) return false;
+                        if (StreamSnifferPlugin.precisaEsconderApp(u.toString())) return false;
                         String host = u.getHost() != null ? u.getHost().toLowerCase() : "";
                         if (sameSite(host, hostOf(currentUrl)) || isHopHost(host)) return false;
                         if (navReports++ < 3) report("RESOLVER_NAV_BLOCKED", u.toString());
@@ -540,6 +545,10 @@ public class ResolverPlugin extends Plugin {
     // Console do WebView (todos os frames): WMABYS = diagnostico do pump ABYS; WMOPT = lista de opcoes do playerflix.
     private void handleConsole(int mySession, String msg) {
         if (mySession != session || msg == null) return;
+        if (msg.startsWith("WMCFTAP|")) {
+            ui.post(() -> StreamSnifferPlugin.tocarCheckboxTurnstile(web, ui, msg));
+            return;
+        }
         if (msg.startsWith("WMABYS")) { if (abysLog.length() < 4000) abysLog.append(msg).append(" | "); return; }
         if (msg.startsWith("WMBLOG|")) {
             // v4.62: `WMBLOG|q=<qualidade>|url=<u>` (hook do batchexecute do Blogger: itag 18/22) ou o

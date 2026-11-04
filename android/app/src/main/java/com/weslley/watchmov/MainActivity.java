@@ -144,6 +144,10 @@ public class MainActivity extends BridgeActivity {
                             if (StreamSnifferPlugin.isWatching() && u != null) {
                                 StreamSnifferPlugin.inspect(u, req.getRequestHeaders());
                             }
+                            if (StreamSnifferPlugin.precisaEsconderApp(u)) {
+                                WebResourceResponse r = StreamSnifferPlugin.fetchSemNomeDoApp(req);
+                                if (r != null) return r;
+                            }
                             return null;
                         }
 
@@ -200,6 +204,18 @@ public class MainActivity extends BridgeActivity {
                 if (!TvMode.isTv(MainActivity.this)) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 applyImmersive(false);
             }
+
+            @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
+                try {
+                    String m = cm != null ? cm.message() : null;
+                    if (m != null && m.startsWith("WMCFTAP|")) {
+                        android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+                        h.post(() -> StreamSnifferPlugin.tocarCheckboxTurnstile(webView, h, m));
+                    }
+                } catch (Throwable ignored) {}
+                return super.onConsoleMessage(cm);
+            }
         });
 
         // Popunder/redirect por navegação top-frame: bloqueia main-frame fora da
@@ -234,6 +250,10 @@ public class MainActivity extends BridgeActivity {
                 if (StreamSnifferPlugin.isWatching() && u != null) {
                     StreamSnifferPlugin.inspect(u, request.getRequestHeaders());
                 }
+                if (StreamSnifferPlugin.precisaEsconderApp(u)) {
+                    WebResourceResponse r = StreamSnifferPlugin.fetchSemNomeDoApp(request);
+                    if (r != null) return r;
+                }
                 return super.shouldInterceptRequest(view, request);
             }
 
@@ -257,6 +277,10 @@ public class MainActivity extends BridgeActivity {
                         if (StreamSnifferPlugin.shouldBlockResource(u)) return StreamSnifferPlugin.blockedResponse();
                         if (StreamSnifferPlugin.isWatching() && u != null) {
                             StreamSnifferPlugin.inspect(u, request.getRequestHeaders());
+                        }
+                        if (StreamSnifferPlugin.precisaEsconderApp(u)) {
+                            WebResourceResponse r = StreamSnifferPlugin.fetchSemNomeDoApp(request);
+                            if (r != null) return r;
                         }
                         return null;
                     }

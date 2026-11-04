@@ -95,27 +95,27 @@ export const PROVIDERS: Provider[] = [
     id: 'superflix',
     name: 'Fonte 5 (SuperFlix PT-BR DUB+LEG)',
     tag: 'SuperFlix', color: '#f87171',
-    // Dublado+legendado. Anti-bot no CDN → NÃO toca no player nativo; abre no
-    // modo Servidor (iframe/WebView). Aceita IMDB ou TMDB id.
+    // Dublado+legendado. Domínio final atual: superflixapi.fun (evita redirect 301 .cyou→.monster→.fun
+    // que causava erro 110200 de domínio no Turnstile). Aceita IMDB ou TMDB id.
     build: (t) => {
       const id = t.imdbId ?? t.tmdbId;
       if (!id) return null;
       return t.type === 'movie'
-        ? `https://superflixapi.cyou/filme/${id}`
-        : `https://superflixapi.cyou/serie/${id}/${s(t)}/${e(t)}`;
+        ? `https://superflixapi.fun/filme/${id}`
+        : `https://superflixapi.fun/serie/${id}/${s(t)}/${e(t)}`;
     },
   },
   {
     id: 'warezcdn',
     name: 'Fonte 6 (WarezCDN PT-BR)',
     tag: 'WarezCDN', color: '#fbbf24',
-    // Domínio real warezcdn.lat (embed.warezcdn.com morreu). Usa TMDB id
+    // Domínio final atual warezcdn.sbs (warezcdn.lat faz 301 → warezcdn.sbs). Usa TMDB id
     // (/serie/276643 confirmado). Série abre no landing p/ escolher temporada/ep.
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
-        ? `https://warezcdn.lat/filme/${t.tmdbId}`
-        : `https://warezcdn.lat/serie/${t.tmdbId}`;
+        ? `https://warezcdn.sbs/filme/${t.tmdbId}`
+        : `https://warezcdn.sbs/serie/${t.tmdbId}`;
     },
   },
   {
@@ -142,8 +142,9 @@ export const PROVIDER_HOSTS = [
   'https://warezcdn.lat',
   'https://fshd.link',
   'https://myembed.biz',
-  // redirects atuais (14/09/2026): .cyou/.pro → .monster; fembed.sx → fembed.lol; warezcdn.lat → warezcdn.sbs
+  // redirects atuais (14/09/2026): .cyou/.pro → .monster → .fun; fembed.sx → fembed.lol; warezcdn.lat → warezcdn.sbs
   'https://superflixapi.monster',
+  'https://superflixapi.fun',
   'https://fembed.lol',
   'https://warezcdn.sbs',
   'https://api.pomfy.stream',

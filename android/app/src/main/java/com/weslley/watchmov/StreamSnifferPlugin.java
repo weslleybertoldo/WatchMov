@@ -102,6 +102,413 @@ public class StreamSnifferPlugin extends Plugin {
         "google-analytics.com", "googletagmanager.com",
     };
 
+    // 04/11/2026 (Fontes 5 e 6 — SuperFlix e WarezCDN): o servidor bloqueia com HTTP 403
+    // ("Acesso bloqueado para este app · com.weslley.watchmov") quando recebe o header
+    // automático do Android WebView `X-Requested-With: com.weslley.watchmov` (tanto no GET inicial
+    // quanto no POST do formulário de validação da Cloudflare). Interceptamos apenas os hosts das
+    // Fontes 5 e 6 via OkHttp (sem tocar em challenges.cloudflare.com), sincronizando cookies em
+    // todos os hops (inclusive 302) e convertendo o POST da validação para sair sem o nome do app.
+    private static final String[] HOSTS_SEM_NOME_DO_APP = { "superflixapi.", "warezcdn." };
+
+    public static boolean precisaEsconderApp(String url) {
+        if (url == null) return false;
+        String u = url.toLowerCase(java.util.Locale.ROOT);
+        for (String h : HOSTS_SEM_NOME_DO_APP) if (u.contains(h)) return true;
+        return false;
+    }
+
+    private static final OkHttpClient httpSemNome = new OkHttpClient.Builder()
+        .dns(AppDns.get())
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .addNetworkInterceptor(chain -> {
+            Request req = chain.request();
+            String reqUrl = req.url().toString();
+            Request.Builder rb = req.newBuilder()
+                .removeHeader("X-WM-Post-Body")
+                .removeHeader("X-WM-Post-CT");
+            String xrw = req.header("X-Requested-With");
+            if (xrw != null && !"XMLHttpRequest".equalsIgnoreCase(xrw.trim())) {
+                rb.removeHeader("X-Requested-With");
+            }
+            try {
+                String ck = android.webkit.CookieManager.getInstance().getCookie(reqUrl);
+                if (ck != null && !ck.isEmpty()) rb.header("Cookie", ck);
+            } catch (Throwable ignored) {}
+            Response resp = chain.proceed(rb.build());
+            try {
+                android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance();
+                java.util.List<String> setCookies = resp.headers("Set-Cookie");
+                if (setCookies != null && !setCookies.isEmpty()) {
+                    for (String sc : setCookies) cm.setCookie(reqUrl, sc);
+                    cm.flush();
+                }
+            } catch (Throwable ignored) {}
+            return resp;
+        })
+        .build();
+
+    static String uaLimpo(String ua) {
+        if (ua == null || ua.isEmpty()) ua = ProxyServer.userAgent();
+        if (ua == null) return "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+        return ua.replace("; wv)", ")").replace(" wv)", ")").replace("com.weslley.watchmov", "").replaceAll("\\s{2,}", " ").trim();
+    }
+
+    static boolean ehPaginaEntradaEmbed(String url) {
+        if (url == null) return false;
+        try {
+            String path = new java.net.URI(url).getPath();
+            if (path == null || path.isEmpty() || "/".equals(path)) return true;
+            String p = path.toLowerCase(java.util.Locale.ROOT);
+            return p.startsWith("/filme/") || p.startsWith("/serie/") || p.startsWith("/tv/");
+        } catch (Throwable t) {
+            String low = url.toLowerCase(java.util.Locale.ROOT);
+            return low.contains("/filme/") || low.contains("/serie/") || low.contains("/tv/");
+        }
+    }
+
+    private static String extrairOrigin(String url) {
+        if (url == null) return null;
+        try {
+            java.net.URI u = new java.net.URI(url);
+            if (u.getScheme() != null && u.getHost() != null) return u.getScheme() + "://" + u.getHost();
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    private static String extrairHost(String url) {
+        if (url == null) return null;
+        try {
+            return new java.net.URI(url).getHost();
+        } catch (Throwable ignored) { return null; }
+    }
+
+    static String resolverUrlRelativa(String baseUrl, String location) {
+        if (location == null || location.isEmpty()) return baseUrl;
+        if (location.startsWith("http://") || location.startsWith("https://")) return location;
+        try {
+            return new java.net.URI(baseUrl).resolve(location).toString();
+        } catch (Throwable ignored) { return location; }
+    }
+
+    private static final Pattern NMS_PATTERN = Pattern.compile("https?:\\\\?/\\\\?/[^\"'\\s<>]+\\\\?/player\\\\?/native\\\\?/media-source\\\\?/[^\"'\\s<>]+");
+
+    static String extrairMediaSourceNativo(String html) {
+        if (html == null || !html.contains("media-source")) return null;
+        Matcher m = NMS_PATTERN.matcher(html);
+        if (!m.find()) return null;
+        return m.group(0).replace("\\/", "/");
+    }
+
+    private static void resolverMediaSourceNativo(String nmsUrl, String referer, String ua) {
+        try {
+            Request.Builder rb = new Request.Builder()
+                .url(nmsUrl)
+                .get()
+                .header("User-Agent", ua)
+                .header("Accept", "*/*")
+                .header("Range", "bytes=0-100")
+                .header("Sec-Fetch-Dest", "video")
+                .header("Sec-Fetch-Mode", "no-cors")
+                .header("Sec-Fetch-Site", "same-origin");
+            if (referer != null && !referer.isEmpty()) rb.header("Referer", referer);
+            try (Response r = httpSemNome.newCall(rb.build()).execute()) {
+                String loc = r.header("Location");
+                if (loc != null && !loc.isEmpty()) {
+                    String abs = resolverUrlRelativa(nmsUrl, loc);
+                    report(abs, null, mimeFor(abs), null);
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private static final String HOOK_POST_E_LIMPA_URL =
+        "<script>(function(){try{"
+        + "if(location.search.indexOf('__wm_post=')>=0)history.replaceState(null,'',location.pathname+location.hash);"
+        + "var okU=function(u){try{var p=new URL(String(u||''),location.href);return p.hostname===location.hostname||/(superflixapi|warezcdn)\\./i.test(p.hostname)}catch(_){return false}};"
+        + "var b64=function(s){try{return btoa(unescape(encodeURIComponent(s)))}catch(_){return ''}};"
+        + "var strBody=function(b){if(!b)return null;if(typeof b==='string')return {s:b,ct:''};"
+        + "if(typeof URLSearchParams!=='undefined'&&b instanceof URLSearchParams)return {s:b.toString(),ct:'application/x-www-form-urlencoded;charset=UTF-8'};"
+        + "if(typeof FormData!=='undefined'&&b instanceof FormData){try{return {s:new URLSearchParams(b).toString(),ct:'application/x-www-form-urlencoded;charset=UTF-8'}}catch(_){}}return null;};"
+        + "var OF=window.fetch;if(OF)window.fetch=function(i,init){try{var u=typeof i==='string'?i:(i&&i.url)||'';if(okU(u)&&init&&String(init.method||'').toUpperCase()==='POST'&&init.body){"
+        + "var sb=strBody(init.body);if(sb){var h=new Headers(init.headers||{});h.set('X-WM-Post-Body',b64(sb.s));if(sb.ct&&!h.has('Content-Type'))h.set('X-WM-Post-CT',sb.ct);init=Object.assign({},init,{headers:h});}}}"
+        + "catch(_){}return OF.call(this,i,init)};"
+        + "var XO=XMLHttpRequest.prototype.open,XS=XMLHttpRequest.prototype.send;"
+        + "XMLHttpRequest.prototype.open=function(m,u){this.__wmM=String(m||'').toUpperCase();this.__wmU=String(u||'');return XO.apply(this,arguments)};"
+        + "XMLHttpRequest.prototype.send=function(b){try{if(this.__wmM==='POST'&&b&&okU(this.__wmU)){var sb=strBody(b);if(sb){this.setRequestHeader('X-WM-Post-Body',b64(sb.s));if(sb.ct)this.setRequestHeader('X-WM-Post-CT',sb.ct);}}}catch(_){}return XS.apply(this,arguments)};"
+        + "}catch(_){}})();</script>";
+
+    private static final String HOOK_TURNSTILE_TAP =
+        "<script>(function(){try{"
+        + "var n=0,iv=setInterval(function(){"
+        + "n++;if(n>30){clearInterval(iv);return;}"
+        + "var s=document.querySelector('.captcha-status');"
+        + "if(s&&/conclu/i.test(s.textContent||'')){clearInterval(iv);return;}"
+        + "var b=document.querySelector('.cf-turnstile-placeholder')||document.querySelector('.captcha-box');"
+        + "if(!b)return;"
+        + "var r=b.getBoundingClientRect();"
+        + "if(r.width>100&&r.height>30&&window.innerWidth>0&&window.innerHeight>0){"
+        + "console.log('WMCFTAP|'+Math.round(r.left+28)+'|'+Math.round(r.top+r.height/2)+'|'+Math.round(window.innerWidth)+'|'+Math.round(window.innerHeight));"
+        + "}"
+        + "},3200);"
+        + "}catch(_){}})();</script>";
+
+    private static final String HOOK_AUTO_SERVER_PLAY =
+        "<script>(function(){try{"
+        + "var done=false,n=0,iv=setInterval(function(){"
+        + "n++;if(done||n>50){clearInterval(iv);return;}"
+        + "var box=typeof sfDomEl==='function'?sfDomEl('serverList'):null;"
+        + "var list=box?box.querySelectorAll('a'):document.querySelectorAll('a[href=\"javascript:void(0)\"]');"
+        + "for(var i=0;i<list.length;i++){"
+        + "var a=list[i],t=(a.textContent||'').trim();"
+        + "if(/download|voltar/i.test(t))continue;"
+        + "if((box&&box.contains(a))||/servidor\\s+(principal|alternativo)/i.test(t)){"
+        + "done=true;clearInterval(iv);a.click();return;"
+        + "}"
+        + "}"
+        + "},350);"
+        + "}catch(_){}})();</script>";
+
+    static String preparaHtmlVerificacao(String html) {
+        if (html == null || html.isEmpty()) return html;
+        String out = html;
+        if (out.contains("cloudflareEmbedCaptchaPassed") || out.contains("cf_embed_challenge")) {
+            // O Turnstile moderno renderiza o iframe num Closed Shadow DOM → querySelector no Light DOM
+            // retorna null e aos 12 s a página mostra falso erro ("Não foi possível carregar a verificação").
+            out = out.replace("if(!hasTurnstile)", "if(false)");
+            // Em vez de form.submit() (POST nativo que reenvia X-Requested-With: com.weslley.watchmov),
+            // navega com __wm_post=... que o fetchSemNomeDoApp converte em POST real no OkHttp.
+            out = out.replace(
+                "form.submit();",
+                "try{var _u=new URL(form.action||location.href,location.href);_u.searchParams.set('__wm_post',new URLSearchParams(new FormData(form)).toString());location.replace(_u.toString());return;}catch(_e){form.submit();}"
+            );
+            int bodyEnd = out.lastIndexOf("</body>");
+            if (bodyEnd >= 0) out = out.substring(0, bodyEnd) + HOOK_TURNSTILE_TAP + out.substring(bodyEnd);
+            else out = out + HOOK_TURNSTILE_TAP;
+        }
+        if (out.contains("renderServerList") || out.contains("SF_DOM_IDS")) {
+            out = out.replace("event.originalEvent.isTrusted !== true", "false");
+            int bodyEnd = out.lastIndexOf("</body>");
+            if (bodyEnd >= 0) out = out.substring(0, bodyEnd) + HOOK_AUTO_SERVER_PLAY + out.substring(bodyEnd);
+            else out = out + HOOK_AUTO_SERVER_PLAY;
+        }
+        if (out.contains("/player/native/media-source/")) {
+            out = out.replace("/player/native/media-source/", "/player/native/media-source-capturado/");
+        }
+        int headIdx = out.indexOf("<head>");
+        if (headIdx >= 0) {
+            out = out.substring(0, headIdx + 6) + HOOK_POST_E_LIMPA_URL + out.substring(headIdx + 6);
+        } else {
+            out = HOOK_POST_E_LIMPA_URL + out;
+        }
+        return out;
+    }
+
+    public static void tocarCheckboxTurnstile(final android.webkit.WebView w, final android.os.Handler ui, String msg) {
+        if (w == null || ui == null || msg == null || !msg.startsWith("WMCFTAP|")) return;
+        try {
+            String[] p = msg.substring(8).split("\\|");
+            if (p.length < 4) return;
+            final int xCss = Integer.parseInt(p[0].trim());
+            final int yCss = Integer.parseInt(p[1].trim());
+            final int vw = Integer.parseInt(p[2].trim());
+            final int vh = Integer.parseInt(p[3].trim());
+            if (vw <= 0 || vh <= 0 || w.getWidth() <= 0 || w.getHeight() <= 0) return;
+            final float px = xCss * ((float) w.getWidth() / (float) vw);
+            final float py = yCss * ((float) w.getHeight() / (float) vh);
+            long now = android.os.SystemClock.uptimeMillis();
+            final android.view.MotionEvent down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, px, py, 0);
+            w.dispatchTouchEvent(down);
+            ui.postDelayed(() -> {
+                try {
+                    long upAt = android.os.SystemClock.uptimeMillis();
+                    android.view.MotionEvent up = android.view.MotionEvent.obtain(now, upAt, android.view.MotionEvent.ACTION_UP, px, py, 0);
+                    w.dispatchTouchEvent(up);
+                    up.recycle();
+                } catch (Throwable ignored) {}
+                try { down.recycle(); } catch (Throwable ignored) {}
+            }, 60);
+        } catch (Throwable ignored) {}
+    }
+
+    public static android.webkit.WebResourceResponse fetchSemNomeDoApp(android.webkit.WebResourceRequest req) {
+        if (req == null || req.getUrl() == null) return null;
+        String rawUrl = req.getUrl().toString();
+        if (!precisaEsconderApp(rawUrl)) return null;
+        if (rawUrl.contains("/player/native/media-source-capturado/")) return blockedResponse();
+        try {
+            String method = req.getMethod() != null ? req.getMethod().toUpperCase(java.util.Locale.ROOT) : "GET";
+            Map<String, String> hdr = req.getRequestHeaders();
+            String wmPostQuery = null;
+            try { wmPostQuery = req.getUrl().getQueryParameter("__wm_post"); } catch (Throwable ignored) {}
+            String wmPostHdr = hdr != null ? hdr.get("X-WM-Post-Body") : null;
+            String wmPostCt = hdr != null ? hdr.get("X-WM-Post-CT") : null;
+
+            String targetUrl = rawUrl;
+            okhttp3.RequestBody postBody = null;
+            boolean isAjaxPost = false;
+            if (wmPostQuery != null) {
+                method = "POST";
+                targetUrl = rawUrl.replaceAll("([?&])__wm_post=[^&#]*(&?)", "$1").replaceAll("[?&]$", "").replace("?&", "?");
+                postBody = okhttp3.RequestBody.create(wmPostQuery, okhttp3.MediaType.parse("application/x-www-form-urlencoded"));
+            } else if ("POST".equals(method) && wmPostHdr != null && !wmPostHdr.isEmpty()) {
+                isAjaxPost = true;
+                byte[] decoded = android.util.Base64.decode(wmPostHdr, android.util.Base64.DEFAULT);
+                String ct = (wmPostCt != null && !wmPostCt.isEmpty()) ? wmPostCt
+                    : (hdr != null && hdr.get("Content-Type") != null ? hdr.get("Content-Type") : "application/x-www-form-urlencoded;charset=UTF-8");
+                postBody = okhttp3.RequestBody.create(decoded, okhttp3.MediaType.parse(ct));
+            } else if (!"GET".equals(method)) {
+                return null;
+            }
+
+            String ua = hdr != null ? hdr.get("User-Agent") : null;
+            final String cleanUa = uaLimpo(ua);
+
+            if (targetUrl.contains("/player/native/media-source/")) {
+                final String finalTargetUrl = targetUrl;
+                final String finalRef = hdr != null ? hdr.get("Referer") : extrairOrigin(targetUrl);
+                pool.submit(() -> resolverMediaSourceNativo(finalTargetUrl, finalRef, cleanUa));
+                return blockedResponse();
+            }
+
+            String currentUrl = targetUrl;
+            String currentMethod = method;
+            okhttp3.RequestBody currentBody = ("POST".equals(method) && postBody != null) ? postBody : null;
+            boolean currentTurnstilePost = (wmPostQuery != null);
+            boolean currentAjaxPost = isAjaxPost;
+            Response resp = null;
+
+            for (int hop = 0; hop < 6; hop++) {
+                Request.Builder rb = new Request.Builder().url(currentUrl);
+                if ("POST".equals(currentMethod) && currentBody != null) {
+                    rb.post(currentBody);
+                } else {
+                    rb.get();
+                }
+                if (hdr != null) {
+                    for (Map.Entry<String, String> e : hdr.entrySet()) {
+                        String k = e.getKey(), v = e.getValue();
+                        if (k == null || v == null) continue;
+                        if (k.equalsIgnoreCase("X-Requested-With") || k.equalsIgnoreCase("X-WM-Post-Body") || k.equalsIgnoreCase("X-WM-Post-CT")) continue;
+                        if (k.equalsIgnoreCase("User-Agent") || k.equalsIgnoreCase("Host") || k.equalsIgnoreCase("Accept-Encoding")
+                            || k.equalsIgnoreCase("Cookie") || k.equalsIgnoreCase("Content-Length")
+                            || (currentBody != null && k.equalsIgnoreCase("Content-Type"))) continue;
+                        rb.header(k, v);
+                    }
+                }
+                rb.header("User-Agent", cleanUa);
+                String origin = extrairOrigin(currentUrl);
+                if (currentTurnstilePost) {
+                    if (origin != null) rb.header("Origin", origin);
+                    rb.header("Referer", currentUrl);
+                    rb.header("Sec-Fetch-Site", "same-origin");
+                    rb.header("Sec-Fetch-Mode", "navigate");
+                    rb.header("Sec-Fetch-Dest", "iframe");
+                } else if (currentAjaxPost) {
+                    if (origin != null) rb.header("Origin", origin);
+                    String ref = hdr != null ? hdr.get("Referer") : null;
+                    if (ref == null || ref.isEmpty() || ref.contains("watchmovbr.vercel.app")) {
+                        ref = origin != null ? origin + "/" : currentUrl;
+                    }
+                    rb.header("Referer", ref);
+                    rb.header("X-Requested-With", "XMLHttpRequest");
+                    rb.header("Sec-Fetch-Site", "same-origin");
+                    rb.header("Sec-Fetch-Mode", "cors");
+                    rb.header("Sec-Fetch-Dest", "empty");
+                } else if ("GET".equals(currentMethod) && ehPaginaEntradaEmbed(currentUrl)) {
+                    rb.removeHeader("Origin");
+                    rb.header("Referer", "https://watchmovbr.vercel.app/");
+                    rb.header("Sec-Fetch-Site", "cross-site");
+                    rb.header("Sec-Fetch-Mode", "navigate");
+                    rb.header("Sec-Fetch-Dest", "iframe");
+                    rb.header("Upgrade-Insecure-Requests", "1");
+                } else if ("GET".equals(currentMethod) && (currentUrl.contains("/player/redirect") || currentUrl.contains("/player/native/media/"))) {
+                    rb.removeHeader("Origin");
+                    String ref = hdr != null ? hdr.get("Referer") : null;
+                    if (ref == null || ref.isEmpty() || ref.contains("watchmovbr.vercel.app")) {
+                        ref = origin != null ? origin + "/" : currentUrl;
+                    }
+                    rb.header("Referer", ref);
+                    rb.header("Sec-Fetch-Site", "same-origin");
+                    rb.header("Sec-Fetch-Mode", "navigate");
+                    rb.header("Sec-Fetch-Dest", "iframe");
+                }
+
+                resp = httpSemNome.newCall(rb.build()).execute();
+                int code = resp.code();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String loc = resp.header("Location");
+                    try { resp.close(); } catch (Throwable ignored) {}
+                    if (loc == null || loc.isEmpty()) break;
+                    String absLoc = resolverUrlRelativa(currentUrl, loc);
+                    if (looksLikeVideo(absLoc) || currentUrl.contains("/player/native/media-source/")) {
+                        report(absLoc, null, mimeFor(absLoc), null);
+                        return blockedResponse();
+                    }
+                    if (!precisaEsconderApp(absLoc)) {
+                        String safeUrl = absLoc.replace("\\", "\\\\").replace("\"", "\\\"");
+                        String redir = "<!doctype html><html><head><meta charset=\"utf-8\"><script>location.replace(\"" + safeUrl + "\");</script></head><body></body></html>";
+                        return new android.webkit.WebResourceResponse("text/html", "utf-8", new java.io.ByteArrayInputStream(redir.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    }
+                    String curHost = extrairHost(currentUrl);
+                    String nextHost = extrairHost(absLoc);
+                    if (!currentTurnstilePost && curHost != null && nextHost != null && !curHost.equalsIgnoreCase(nextHost)) {
+                        String safeUrl = absLoc.replace("\\", "\\\\").replace("\"", "\\\"");
+                        String redir = "<!doctype html><html><head><meta charset=\"utf-8\"><script>location.replace(\"" + safeUrl + "\");</script></head><body></body></html>";
+                        return new android.webkit.WebResourceResponse("text/html", "utf-8", new java.io.ByteArrayInputStream(redir.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    }
+                    currentUrl = absLoc;
+                    currentMethod = "GET";
+                    currentBody = null;
+                    currentTurnstilePost = false;
+                    currentAjaxPost = false;
+                    continue;
+                }
+                break;
+            }
+            if (resp == null) return null;
+
+            byte[] bodyBytes = resp.body() != null ? resp.body().bytes() : new byte[0];
+            String ct = resp.header("Content-Type", "text/html; charset=utf-8");
+            String mime = "text/html", enc = "utf-8";
+            if (ct != null) {
+                String[] p = ct.split(";");
+                if (p.length > 0 && !p[0].trim().isEmpty()) mime = p[0].trim();
+                for (int i = 1; i < p.length; i++) {
+                    String s = p[i].trim().toLowerCase(java.util.Locale.ROOT);
+                    if (s.startsWith("charset=")) enc = s.substring(8).trim().replace("\"", "");
+                }
+            }
+            if ("text/html".equalsIgnoreCase(mime)) {
+                String html = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8);
+                String nmsUrl = extrairMediaSourceNativo(html);
+                if (nmsUrl != null) {
+                    final String finalRef = currentUrl;
+                    pool.submit(() -> resolverMediaSourceNativo(nmsUrl, finalRef, cleanUa));
+                }
+                bodyBytes = preparaHtmlVerificacao(html).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                enc = "utf-8";
+            }
+
+            android.webkit.WebResourceResponse out = new android.webkit.WebResourceResponse(
+                mime, enc, new java.io.ByteArrayInputStream(bodyBytes));
+            int code = resp.code();
+            if (code >= 300 && code < 400) code = 200;
+            String msg = resp.message();
+            try { out.setStatusCodeAndReasonPhrase(code, (msg == null || msg.isEmpty()) ? "OK" : msg); } catch (Throwable ignored) {}
+            Map<String, String> rHdr = new java.util.HashMap<>();
+            for (String name : resp.headers().names()) {
+                String low = name.toLowerCase(java.util.Locale.ROOT);
+                if (low.equals("content-encoding") || low.equals("content-length") || low.equals("transfer-encoding")
+                    || low.equals("x-frame-options") || low.equals("content-security-policy") || low.equals("set-cookie")) continue;
+                String val = resp.header(name);
+                if (val != null) rHdr.put(name, val);
+            }
+            out.setResponseHeaders(rHdr);
+            return out;
+        } catch (Throwable ignored) { return null; }
+    }
+
     // (SNIFF_TRACE da v4.51 removido em 15/09/2026: cumpriu o papel — 193 registros provaram como o
     // player Abyss entrega o vídeo — e inundava a aba Bugs. O ABYS agora toca via /abyss/ do ProxyServer.)
 
@@ -135,6 +542,7 @@ public class StreamSnifferPlugin extends Plugin {
 
     // Requests que NÃO vale a pena probar (recursos óbvios não-vídeo).
     private static boolean skipProbe(String url) {
+        if (precisaEsconderApp(url)) return true;
         String p = noQuery(url.toLowerCase());
         // v4.60: segmento/init de fMP4/HLS nunca é o link tocável sozinho (o master .m3u8/.mpd já os busca).
         // Antes o probe capturava o init.mp4 do WatchPlay (hclod.qzz.io) e o ExoPlayer dava ERROR_CODE_PARSING_CONTAINER_MALFORMED.

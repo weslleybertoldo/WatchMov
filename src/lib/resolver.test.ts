@@ -1,6 +1,6 @@
 // src/lib/resolver.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, ABYSS_PIECE_TIMEOUT_MS, STEPS_REPEAT, DEAD_TEXTS, bloggerNaBusca, BLOGGER_PROVIDERS } from './resolver';
+import { buildClickScript, buildInjectScript, buildAbyssScript, buildOptionCycleScript, buildBloggerScript, RESOLVER_OPT_MS, RESOLVER_BUDGET_ABYS_MS, CLICK_STEPS, CLICK_STEPS_ABYS, CLICK_STEPS_BYSE, CLICK_STEPS_F1, budgetFor, HOP_HOSTS, isHopHost, resolverEnabled, setResolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, COOLDOWN_MS, COOLDOWN_FAILS, ABYSS_PUMPS, usesAbys, ABYSS_LATE_MS, ABYSS_PIECE_TIMEOUT_MS, STEPS_REPEAT, DEAD_TEXTS, bloggerNaBusca, BLOGGER_PROVIDERS } from './resolver';
 
 describe('resolver oculto (regras puras)', () => {
   // __wmNoPlay: o motor ABYS marca o frame no ready — não pode vazar de um teste pro outro.
@@ -880,5 +880,13 @@ describe('busca leve na TV: leitor do Blogger só na Fonte 1', () => {
 
   it('sem dizer o aparelho, segue o isTv() do app (fora da TV = celular)', () => {
     expect(bloggerNaBusca('megaembed')).toBe(true);
+  });
+
+  it('04/11: Fontes 5 (superflix) e 6 (warezcdn) têm orçamento de 90 s (passam pelo Turnstile) e os scripts não tocam em cloudflare.com', () => {
+    expect(budgetFor('superflix')).toBe(RESOLVER_BUDGET_ABYS_MS);
+    expect(budgetFor('warezcdn')).toBe(RESOLVER_BUDGET_ABYS_MS);
+    expect(buildInjectScript()).toContain('cloudflare');
+    expect(buildOptionCycleScript()).toContain('cloudflare');
+    expect(buildBloggerScript()).toContain('cloudflare');
   });
 });
