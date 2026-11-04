@@ -44,6 +44,7 @@ const STEPS_TAIL = [
   '#optionList .option', '.option',      // playerflix (1ª = Blogger)
   '.captcha-gate__play',                 // Byse (f7hyg4q.org; 25/09/2026 n1mwq.org — o host troca)
   '#player-button',                      // UPNS (upns.xyz, Vidstack): o play próprio — os 1ºs toques abrem anúncio (STEPS_REPEAT)
+  '.play-button-outer', '.play-button',  // FirePlayer / SuperFlixAPI (04/11/2026)
   '.jw-icon-display', '.jw-display-icon-display', '.vjs-big-play-button', '.plyr__control--overlaid',
   "button[aria-label*='Play' i]", '.play-btn', '.btn-play', '#play', '.play',
 ];
@@ -77,7 +78,13 @@ export const DEAD_TEXTS = ['Video not found or deleted'];
 // Busca: play MUDO em todo <video> a cada tick (muitos players só pedem o vídeo depois do play). Com o motor ABYS
 // pronto (window.__wmNoPlay, 26/09/2026) não dá mais: o pump pausava o JW no ready, o tick dava play de novo e o
 // 360p escondido tocava o filme inteiro (~1,2 Mbps de internet + decodificação no motor da box).
-const PLAY_MUTED = "if(!window.__wmNoPlay)document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});";
+// 04/11/2026: o FirePlayer da SuperFlixAPI (Fontes 5/6) monta o JW com autostart false → play mudo pela API do JW.
+// NÃO chamar fireload(): a própria página já chama no ready, e a 2ª chamada fazia um 2º POST /layer/ com a mesma
+// assinatura de uso único (403, A Odisseia na Fonte 6).
+const PLAY_MUTED = "if(!window.__wmNoPlay){"
+  + "document.querySelectorAll('video').forEach(function(v){try{v.muted=true;v.volume=0;if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(_){}});"
+  + "try{if(window.jwplayer&&typeof window.jwplayer==='function'){var jw=window.jwplayer();if(jw&&typeof jw.play==='function'){var st=typeof jw.getState==='function'?jw.getState():'';if(st!=='playing'&&st!=='buffering'){if(typeof jw.setMute==='function')jw.setMute(true);jw.play();}}}}catch(_){}"
+  + "};";
 
 // Script injetado no document-start em TODOS os frames (androidx.webkit, origins '*'): cada frame
 // roda seu próprio loop clicando opção/gate/play e dando play mudo nos vídeos. Resolve o gate da
@@ -386,8 +393,14 @@ export function buildSemTituloScript(): string {
     + "if(H.indexOf('pomfy')>=0){var ss=document.scripts||[];for(var i=0;i<ss.length;i++){if(/\\bconst\\s+available\\s*=\\s*false\\b/.test(ss[i].text||'')){none('f4-indisponivel');return}}}"
     + "if(H.indexOf('warezcdn')>=0||H.indexOf('superflix')>=0||H.indexOf('overflix')>=0){"
     + "var sBox=typeof sfDomEl==='function'?sfDomEl('serverList'):document.getElementById('serverList');"
-    + "if(sBox&&!sBox.querySelector('a')&&document.readyState==='complete'){none('f56-sem-servidor');return}"
-    + "if(/não encontrado|conteúdo indisponível/i.test(document.body.innerText||document.body.textContent||'')){none('f56-nao-encontrado');return}}"
+    // 04/11/2026: a lista chega pelo POST /player/bootstrap DEPOIS da página completa → vazia e sem texto = carregando
+    // (A Odisseia na Fonte 6 pulava pra Fonte 7). Só decide quando a PÁGINA escreve na lista: "Nenhum servidor nesta
+    // opção." (não tem) ou "Não foi possível carregar os servidores…" (o bootstrap falhou).
+    + "var msg=sBox&&!sBox.querySelector('a')?String(sBox.innerText||sBox.textContent||'').trim():'';"
+    + "if(msg){none(/foi poss/i.test(msg)?'f56-erro-servidores':'f56-sem-servidor');return}"
+    + "var bt=document.body.innerText||document.body.textContent||'';"
+    + "if(/não encontrado|conteúdo indisponível/i.test(bt)){none('f56-nao-encontrado');return}"
+    + "if(/ainda não foi lançado/i.test(bt)){none('f56-nao-lancado');return}}"
     + "};"
     + 'var n=0,iv=setInterval(function(){n++;pagina();if(said||n>15)clearInterval(iv)},650);'
     + "if(document.readyState!=='loading')pagina();else document.addEventListener('DOMContentLoaded',pagina);"

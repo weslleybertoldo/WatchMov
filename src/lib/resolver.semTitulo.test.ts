@@ -133,6 +133,42 @@ describe('não tem o título (sinais por fonte)', () => {
     })).toEqual(['WMOPT|none|reason=f56-nao-encontrado|host=superflixapi.fun']);
   });
 
+  // 04/11/2026: a lista de servidores das Fontes 5/6 chega pelo POST /player/bootstrap DEPOIS da página completa.
+  // Lista vazia e sem texto = ainda carregando (A Odisseia na Fonte 6 pulava pra Fonte 7 com o vídeo lá).
+  it('Fonte 5 e 6: lista de servidores vazia e sem texto (bootstrap carregando) NÃO avisa, com a página completa', async () => {
+    expect(document.readyState).toBe('complete');
+    expect(await rodar('warezcdn.sbs', () => {
+      document.title = 'Player | A Odisseia';
+      document.body.innerHTML = '<div id="serverList">  </div>';
+    })).toEqual([]);
+  });
+
+  it('Fonte 5 e 6: avisa quando a PÁGINA escreve na lista que não há servidor (depois do bootstrap)', async () => {
+    expect(await rodar('warezcdn.sbs', () => {
+      document.body.innerHTML = '<div id="serverList"></div>';
+    }, () => {
+      document.getElementById('serverList')!.innerHTML = '<div class="text-center p-3 text-muted small">Nenhum servidor nesta opção.</div>';
+    })).toEqual(['WMOPT|none|reason=f56-sem-servidor|host=warezcdn.sbs']);
+  });
+
+  it('Fonte 5 e 6: o bootstrap falhou ("Não foi possível carregar os servidores") = f56-erro-servidores', async () => {
+    expect(await rodar('superflixapi.fun', () => {
+      document.body.innerHTML = '<div id="serverList"><div class="text-center">Não foi possível carregar os servidores agora. Tente atualizar a página em alguns segundos.</div></div>';
+    })).toEqual(['WMOPT|none|reason=f56-erro-servidores|host=superflixapi.fun']);
+  });
+
+  it('Fonte 5 e 6: episódio que ainda não saiu = f56-nao-lancado', async () => {
+    expect(await rodar('warezcdn.sbs', () => {
+      document.body.innerHTML = '<div id="serverList"></div><div class="waiting">Este episódio <b>ainda não foi lançado</b>.<br>Lançamento previsto para <b>amanhã</b>.</div>';
+    })).toEqual(['WMOPT|none|reason=f56-nao-lancado|host=warezcdn.sbs']);
+  });
+
+  it('Fonte 5 e 6: lista com servidor não avisa', async () => {
+    expect(await rodar('warezcdn.sbs', () => {
+      document.body.innerHTML = '<div id="serverList"><a href="javascript:void(0)"><span>Servidor Principal</span></a></div>';
+    })).toEqual([]);
+  });
+
   it('outros frames (myembed.biz, Byse, anúncio) não avisam nada', async () => {
     for (const h of ['myembed.biz', 'n1mwq.org']) {
       delete (window as Win).__wmSem;

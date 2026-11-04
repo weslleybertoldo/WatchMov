@@ -110,7 +110,8 @@ public class StreamSnifferPlugin extends Plugin {
     // sincronizando cookies em todos os hops e convertendo o POST da validação para sair sem o nome do app.
     private static final String[] HOSTS_SEM_NOME_DO_APP = {
         "superflixapi.", "superflixonline.", "superflix.",
-        "warezcdn.", "overflixhd.", "overflix."
+        "warezcdn.", "overflixhd.", "overflix.",
+        "megaflixonline.", "megaflix."
     };
 
     /** Desativa o cabeçalho automático X-Requested-With no WebView para que nenhuma requisição
@@ -124,11 +125,21 @@ public class StreamSnifferPlugin extends Plugin {
         } catch (Throwable ignored) {}
     }
 
+    // 04/11/2026: player final que a WarezCDN abre no iframe (FirePlayer da SuperFlixAPI, host disfarçado
+    // "ココ・レストラン予約センター", o mesmo desde 14/09/2026; o TLD troca). O access.js dele lê o X-Requested-With da
+    // página /video/ e troca o player por "Acesso bloqueado para este app" (A Odisseia na Fonte 6 parava ali; no
+    // WebView 155 do emulador o setRequestedWithHeaderOriginAllowList não tirou o cabeçalho). Só a página, o controle
+    // de acesso e os scripts vão sem o nome do app: o POST /layer/ (o jQuery já põe X-Requested-With: XMLHttpRequest)
+    // e a mídia (master.txt de uso único, faixas /m3/) seguem pelo próprio WebView — refeitos pelo OkHttp davam 403.
+    static boolean ehPlayerFinal(String url) {
+        return url != null && url.toLowerCase(java.util.Locale.ROOT).contains("xn--tckasiu6cvova0eb5fua2449g98vg.");
+    }
+
     public static boolean precisaEsconderApp(String url) {
         if (url == null) return false;
         String u = url.toLowerCase(java.util.Locale.ROOT);
         for (String h : HOSTS_SEM_NOME_DO_APP) if (u.contains(h)) return true;
-        return false;
+        return ehPlayerFinal(u) && (u.contains("/video/") || u.contains("/fireplayer-control/") || u.contains("/player/assets/"));
     }
 
     private static final OkHttpClient httpSemNome = new OkHttpClient.Builder()
@@ -267,10 +278,13 @@ public class StreamSnifferPlugin extends Plugin {
         + "},3200);"
         + "}catch(_){}})();</script>";
 
+    // 04/11/2026: a lista chega pelo POST /player/bootstrap DEPOIS da página completa (A Odisseia na Fonte 6 pulava
+    // pra Fonte 7) e a página tenta até 3× com 12 s cada → espera até ~42 s e só desiste quando a PÁGINA escreve na
+    // lista que não há servidor ("Nenhum servidor nesta opção.") ou que falhou ("Não foi possível carregar…").
     private static final String HOOK_AUTO_SERVER_PLAY =
         "<script>(function(){try{"
         + "var done=false,n=0,iv=setInterval(function(){"
-        + "n++;if(done||n>50){clearInterval(iv);return;}"
+        + "n++;if(done||n>120){clearInterval(iv);return;}"
         + "var box=typeof sfDomEl==='function'?sfDomEl('serverList'):null;"
         + "var list=box?box.querySelectorAll('a'):document.querySelectorAll('a[href=\"javascript:void(0)\"]');"
         + "for(var i=0;i<list.length;i++){"
@@ -280,10 +294,8 @@ public class StreamSnifferPlugin extends Plugin {
         + "done=true;clearInterval(iv);a.click();return;"
         + "}"
         + "}"
-        + "if(n>8&&!done&&document.readyState==='complete'){"
-        + "var has=false;for(var j=0;j<list.length;j++){var tx=(list[j].textContent||'').trim();if(!/download|voltar/i.test(tx)){has=true;break;}}"
-        + "if(!has){done=true;clearInterval(iv);try{console.log('WMOPT|none|reason=f56-sem-servidor|host='+location.hostname);}catch(_){}}"
-        + "}"
+        + "var msg=box&&!box.querySelector('a')?String(box.innerText||box.textContent||'').trim():'';"
+        + "if(msg){done=true;clearInterval(iv);try{console.log('WMOPT|none|reason='+(/foi poss/i.test(msg)?'f56-erro-servidores':'f56-sem-servidor')+'|host='+location.hostname);}catch(_){}}"
         + "},350);"
         + "}catch(_){}})();</script>";
 
@@ -504,8 +516,13 @@ public class StreamSnifferPlugin extends Plugin {
                     final String finalRef = currentUrl;
                     pool.submit(() -> resolverMediaSourceNativo(nmsUrl, finalRef, cleanUa));
                 }
-                bodyBytes = preparaHtmlVerificacao(html).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                enc = "utf-8";
+                // Player final (FirePlayer): o HTML vai como veio — sem o gancho de POST. O POST /layer/ dele sai pelo
+                // próprio WebView (o jQuery já põe X-Requested-With: XMLHttpRequest, que não entrega o app); refeito
+                // pelo OkHttp a página congelava esperando a resposta (A Odisseia na Fonte 6, 04/11/2026).
+                if (!ehPlayerFinal(currentUrl)) {
+                    bodyBytes = preparaHtmlVerificacao(html).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    enc = "utf-8";
+                }
             }
 
             android.webkit.WebResourceResponse out = new android.webkit.WebResourceResponse(
@@ -559,9 +576,11 @@ public class StreamSnifferPlugin extends Plugin {
     }
 
     // Requests que NÃO vale a pena probar (recursos óbvios não-vídeo).
-    private static boolean skipProbe(String url) {
+    static boolean skipProbe(String url) {
         if (precisaEsconderApp(url)) return true;
         String p = noQuery(url.toLowerCase());
+        // master.txt do player final = link de UM uso, do próprio player (o probe roubaria o pedido dele).
+        if (ehPlayerFinal(p) && p.endsWith("master.txt")) return true;
         // v4.60: segmento/init de fMP4/HLS nunca é o link tocável sozinho (o master .m3u8/.mpd já os busca).
         // Antes o probe capturava o init.mp4 do WatchPlay (hclod.qzz.io) e o ExoPlayer dava ERROR_CODE_PARSING_CONTAINER_MALFORMED.
         if (p.contains("seg-") || p.contains("/seg") || p.contains("init-") || p.contains("/init.") || p.contains("chunk") || p.endsWith(".m4s")) return true;
