@@ -102,13 +102,27 @@ public class StreamSnifferPlugin extends Plugin {
         "google-analytics.com", "googletagmanager.com",
     };
 
-    // 04/11/2026 (Fontes 5 e 6 — SuperFlix e WarezCDN): o servidor bloqueia com HTTP 403
+    // 04/11/2026 (Fontes 5 e 6 — SuperFlix, WarezCDN e rede OverFlix): o servidor bloqueia com HTTP 403
     // ("Acesso bloqueado para este app · com.weslley.watchmov") quando recebe o header
-    // automático do Android WebView `X-Requested-With: com.weslley.watchmov` (tanto no GET inicial
-    // quanto no POST do formulário de validação da Cloudflare). Interceptamos apenas os hosts das
-    // Fontes 5 e 6 via OkHttp (sem tocar em challenges.cloudflare.com), sincronizando cookies em
-    // todos os hops (inclusive 302) e convertendo o POST da validação para sair sem o nome do app.
-    private static final String[] HOSTS_SEM_NOME_DO_APP = { "superflixapi.", "warezcdn." };
+    // automático do Android WebView `X-Requested-With: com.weslley.watchmov` (no GET inicial,
+    // em iframes do servidor ou no POST do formulário de validação da Cloudflare). Interceptamos
+    // os hosts das Fontes 5 e 6 e domínios irmãos via OkHttp (sem tocar em challenges.cloudflare.com),
+    // sincronizando cookies em todos os hops e convertendo o POST da validação para sair sem o nome do app.
+    private static final String[] HOSTS_SEM_NOME_DO_APP = {
+        "superflixapi.", "superflixonline.", "superflix.",
+        "warezcdn.", "overflixhd.", "overflix."
+    };
+
+    /** Desativa o cabeçalho automático X-Requested-With no WebView para que nenhuma requisição
+     *  vaze a identificação com.weslley.watchmov para domínios externos. */
+    public static void desativarHeaderApp(android.webkit.WebView wv) {
+        if (wv == null) return;
+        try {
+            if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+                androidx.webkit.WebSettingsCompat.setRequestedWithHeaderOriginAllowList(wv.getSettings(), java.util.Collections.emptySet());
+            }
+        } catch (Throwable ignored) {}
+    }
 
     public static boolean precisaEsconderApp(String url) {
         if (url == null) return false;
@@ -225,7 +239,7 @@ public class StreamSnifferPlugin extends Plugin {
     private static final String HOOK_POST_E_LIMPA_URL =
         "<script>(function(){try{"
         + "if(location.search.indexOf('__wm_post=')>=0)history.replaceState(null,'',location.pathname+location.hash);"
-        + "var okU=function(u){try{var p=new URL(String(u||''),location.href);return p.hostname===location.hostname||/(superflixapi|warezcdn)\\./i.test(p.hostname)}catch(_){return false}};"
+        + "var okU=function(u){try{var p=new URL(String(u||''),location.href);return p.hostname===location.hostname||/(superflixapi|superflixonline|superflix|warezcdn|overflixhd|overflix)\\./i.test(p.hostname)}catch(_){return false}};"
         + "var b64=function(s){try{return btoa(unescape(encodeURIComponent(s)))}catch(_){return ''}};"
         + "var strBody=function(b){if(!b)return null;if(typeof b==='string')return {s:b,ct:''};"
         + "if(typeof URLSearchParams!=='undefined'&&b instanceof URLSearchParams)return {s:b.toString(),ct:'application/x-www-form-urlencoded;charset=UTF-8'};"
@@ -265,6 +279,10 @@ public class StreamSnifferPlugin extends Plugin {
         + "if((box&&box.contains(a))||/servidor\\s+(principal|alternativo)/i.test(t)){"
         + "done=true;clearInterval(iv);a.click();return;"
         + "}"
+        + "}"
+        + "if(n>8&&!done&&document.readyState==='complete'){"
+        + "var has=false;for(var j=0;j<list.length;j++){var tx=(list[j].textContent||'').trim();if(!/download|voltar/i.test(tx)){has=true;break;}}"
+        + "if(!has){done=true;clearInterval(iv);try{console.log('WMOPT|none|reason=f56-sem-servidor|host='+location.hostname);}catch(_){}}"
         + "}"
         + "},350);"
         + "}catch(_){}})();</script>";

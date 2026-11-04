@@ -156,6 +156,7 @@ public class ResolverPlugin extends Plugin {
                         super.onWindowVisibilityChanged(engine ? View.VISIBLE : visibility);
                     }
                 };
+                StreamSnifferPlugin.desativarHeaderApp(w);
                 WebSettings s = w.getSettings();
                 s.setJavaScriptEnabled(true);
                 s.setDomStorageEnabled(true);
@@ -239,12 +240,13 @@ public class ResolverPlugin extends Plugin {
                 // Injeta em TODOS os frames (inclusive cross-origin) no document-start: cada frame clica sua
                 // opção/gate/play. O gate da Byse (.captcha-gate__play) só renderiza DENTRO do iframe f7hyg4q
                 // (em branco no topo), então evaluateJavascript/hop não alcançavam; addDocumentStartJavaScript sim.
+                Throwable injectEx = null;
                 if (injectScript != null && !injectScript.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     try { injectHandler = WebViewCompat.addDocumentStartJavaScript(w, substK(injectScript, optK), java.util.Collections.singleton("*")); injected = true; }
-                    catch (Throwable t) { injected = false; }
+                    catch (Throwable t) { injected = false; injectEx = t; }
                 }
                 // Diagnóstico: a injeção em todos os frames ficou ativa? (aba Bugs)
-                report("RESOLVER_INJECT", injected ? "on" : (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ? "add-threw" : "unsupported"));
+                report("RESOLVER_INJECT", injected ? "on" : (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ? ("add-threw: " + (injectEx != null ? (injectEx.getClass().getSimpleName() + ":" + injectEx.getMessage()) : "null")) : "unsupported"));
                 Map<String, String> h = new HashMap<>();
                 if (referer != null && !referer.isEmpty()) h.put("Referer", referer);
                 loadStart(w, h);

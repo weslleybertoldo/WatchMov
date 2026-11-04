@@ -383,15 +383,19 @@ export function buildSemTituloScript(): string {
     + "var pagina=function(){if(said||!document.body)return;var t=String(document.title||'').trim();"
     + "if(H.indexOf('embedplayapi')>=0){if(document.querySelector('.movie-not-found')||/^assistir movie not found online$/i.test(t))none('f2-nao-encontrado');return}"
     + "if(H.indexOf('fshd')>=0){if(/^fshd\\s*\\S\\s*404$/i.test(t))none('f3-404');else if(document.querySelector('.episodeOption')&&!document.querySelector('.episodeOption.active'))none('f3-sem-episodio');return}"
-    + "if(H.indexOf('pomfy')>=0){var ss=document.scripts||[];for(var i=0;i<ss.length;i++){if(/\\bconst\\s+available\\s*=\\s*false\\b/.test(ss[i].text||'')){none('f4-indisponivel');return}}}};"
+    + "if(H.indexOf('pomfy')>=0){var ss=document.scripts||[];for(var i=0;i<ss.length;i++){if(/\\bconst\\s+available\\s*=\\s*false\\b/.test(ss[i].text||'')){none('f4-indisponivel');return}}}"
+    + "if(H.indexOf('warezcdn')>=0||H.indexOf('superflix')>=0||H.indexOf('overflix')>=0){"
+    + "var sBox=typeof sfDomEl==='function'?sfDomEl('serverList'):document.getElementById('serverList');"
+    + "if(sBox&&!sBox.querySelector('a')&&document.readyState==='complete'){none('f56-sem-servidor');return}"
+    + "if(/não encontrado|conteúdo indisponível/i.test(document.body.innerText||document.body.textContent||'')){none('f56-nao-encontrado');return}}"
+    + "};"
     + 'var n=0,iv=setInterval(function(){n++;pagina();if(said||n>15)clearInterval(iv)},650);'
     + "if(document.readyState!=='loading')pagina();else document.addEventListener('DOMContentLoaded',pagina);"
     + '}catch(_){}})();';
 }
 
-// Fontes que entram no pulo automático quando dizem "não tem" (Fontes 1 a 4 e a 7, na ordem da tela). A 5 e a 6 ficam
-// atrás da Cloudflare: só abrem pelo servidor. A 7 (MegaEmbed, 20/10/2026) responde por HTTP se tem o título.
-export const AUTO_PULO = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'megaembed'];
+// Fontes que entram no pulo automático quando dizem "não tem" (Fontes 1 a 7 na ordem da tela).
+export const AUTO_PULO = ['embedmovies', 'embedplayapi', 'fshd', 'pomfy', 'superflix', 'warezcdn', 'megaembed'];
 /** Próxima fonte do pulo automático depois de `atual` (segue a ordem da tela e dá a volta: 4 → 7 → 1 → 2), pulando as
  *  que já disseram "não tem" nesta abertura e as que estão em pausa. Nenhuma sobrando = null. */
 export function proximaFonte(ordem: string[], atual: string, descartadas: Set<string>, emPausa: (id: string) => boolean = () => false): string | null {
