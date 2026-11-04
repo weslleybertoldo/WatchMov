@@ -183,6 +183,30 @@ describe('resolver oculto (regras puras)', () => {
     expect(s).toContain('if(FLOW)flow();else for(var w=0;w<PUMPS;w++)pump()');
   });
 
+  // 04/11/2026 (A Odisseia na Fonte 6): o FirePlayer da SuperFlixAPI monta com autostart false e a PRÓPRIA página chama
+  // fireload() no ready. Chamar fireload() de novo criava um 2º FirePlayer e um 2º POST /layer/<assinatura>/ (uso
+  // único) → 403. A busca só dá o play pela API do JW (mudo).
+  it('FirePlayer (Fontes 5/6): dá o play mudo pela API do JW e não chama fireload() de novo', () => {
+    const w = window as unknown as Record<string, unknown>;
+    const chamadas: string[] = [];
+    w.jwplayer = () => ({ getState: () => 'idle', setMute: (m: boolean) => chamadas.push('mute:' + m), play: () => chamadas.push('play') });
+    w.fireload = () => chamadas.push('fireload');
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildOptionCycleScript().replace(/__OPT_K__/g, '1'))();
+      vi.advanceTimersByTime(1400);
+    } finally {
+      vi.useRealTimers();
+      delete w.jwplayer; delete w.fireload; delete w.__wmFireloadDone;
+      w.__wmInj = prevInj;
+    }
+    expect(chamadas).toContain('play');
+    expect(chamadas).toContain('mute:true');
+    expect(chamadas).not.toContain('fireload');
+  });
+
   it('clickScript é JS válido, leva os passos na ordem e muta os vídeos', () => {
     const s = buildClickScript();
     expect(() => new Function(s)).not.toThrow();

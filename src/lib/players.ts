@@ -109,13 +109,12 @@ export const PROVIDERS: Provider[] = [
     id: 'warezcdn',
     name: 'Fonte 6 (WarezCDN PT-BR)',
     tag: 'WarezCDN', color: '#fbbf24',
-    // Domínio final atual warezcdn.sbs (warezcdn.lat faz 301 → warezcdn.sbs). Usa TMDB id
-    // (/serie/276643 confirmado). Série abre no landing p/ escolher temporada/ep.
+    // Domínio final atual warezcdn.sbs (warezcdn.lat faz 301 → warezcdn.sbs). Usa TMDB id.
     build: (t) => {
       if (!t.tmdbId) return null;
       return t.type === 'movie'
         ? `https://warezcdn.sbs/filme/${t.tmdbId}`
-        : `https://warezcdn.sbs/serie/${t.tmdbId}`;
+        : `https://warezcdn.sbs/serie/${t.tmdbId}/${s(t)}/${e(t)}`;
     },
   },
   {

@@ -15,6 +15,14 @@ public class Fontes56DesbloqueioTest {
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://superflixonline.lat/filme/1368337"));
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://warezcdn.sbs/filme/39254"));
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://overflixhd.sbs/filme/1368337"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://megaflixonline.sbs/filme/1368337"));
+        // 04/11/2026: player final (FirePlayer da SuperFlixAPI) que a WarezCDN abre no iframe — o access.js dele bloqueia
+        // "com.weslley.watchmov" (fireAccessBlockType "app") quando a página /video/ chega com o X-Requested-With do app.
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/video/b568a8236bc5ff33ec47e46657336dcc"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.xn--tckasiu6cvova0eb5fua2449g98vg.best/fireplayer-control/access.js?url=x"));
+        // ...mas a mídia (master.txt de uso único, faixas /m3/) e o POST /layer/ seguem pelo WebView.
+        assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/OfJnAipASabPR4mZ250tqw/78f60a8b9d7e45018c7773c5fa360679/1793831847/master.txt"));
+        assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/layer/9e12322db46d4cc3/b568a8236bc5ff33ec47e46657336dcc/"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://challenges.cloudflare.com/turnstile/v0/api.js"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://myembed.biz/filme/39254"));
     }
@@ -61,5 +69,28 @@ public class Fontes56DesbloqueioTest {
         String out = StreamSnifferPlugin.preparaHtmlVerificacao(playerHtml);
         assertFalse(out.contains("event.originalEvent.isTrusted !== true"));
         assertTrue(out.contains("sfDomEl('serverList')"));
+    }
+
+    @Test
+    public void listaVaziaEnquantoOBootstrapCarregaNaoViraSemServidor() {
+        // 04/11/2026: a lista chega pelo POST /player/bootstrap DEPOIS da página completa (A Odisseia na Fonte 6
+        // pulava pra Fonte 7). Só desiste quando a página escreve na lista que não há servidor ou que falhou.
+        String playerHtml = "<html><head></head><body><script>const SF_DOM_IDS = {};"
+            + "function renderServerList(t){}</script></body></html>";
+        String out = StreamSnifferPlugin.preparaHtmlVerificacao(playerHtml);
+        assertFalse(out.contains("document.readyState==='complete'"));
+        assertTrue(out.contains("box.innerText||box.textContent"));
+        assertTrue(out.contains("f56-sem-servidor"));
+        assertTrue(out.contains("f56-erro-servidores"));
+    }
+
+    @Test
+    public void masterTxtDoPlayerFinalNaoViraLinkNemProbe() {
+        // 04/11/2026: o master.txt do FirePlayer só vale UMA vez, pro pedido do próprio player (o ExoPlayer e o OkHttp
+        // levavam 403). O link tocável sai das faixas /m3/ (re-buscáveis) pelo synth:// COMPLETO da v4.50.
+        String master = "https://xn--tckasiu6cvova0eb5fua2449g98vg.best/OfJnAipASabPR4mZ250tqw/78f60a8b9d7e45018c7773c5fa360679/1793831847/master.txt";
+        assertFalse(StreamSnifferPlugin.looksLikeVideo(master));
+        assertTrue(StreamSnifferPlugin.skipProbe(master));
+        assertFalse(StreamSnifferPlugin.skipProbe("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/m3/OfJnAipASabPR4mZ250tqw/1793831847/aHR0cHM6Ly9leGFtcGxl"));
     }
 }
