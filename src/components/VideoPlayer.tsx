@@ -70,10 +70,14 @@ interface VideoPlayerProps {
   // "atual" aqui podia ser outro ep — marcar o E24 marcava/desmarcava o E23.
   onSetWatchedFor?: (key: string, v: boolean) => void;
   onNext?: () => void;             // série: avança pro próximo episódio
+  // Série: painel "Episódios" do player nativo (pedido dele 06/11/2026). `dados()` = o JSON que vai na abertura
+  // (assistidos, progresso, chave da TMDB — com o player na frente a página não responde); `tocar` = abrir o
+  // episódio escolhido lá (o player fecha e devolve "T:E").
+  episodios?: { dados: () => string | null; tocar: (season: number, episode: number) => void };
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, onProgress, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, onProgress, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext, episodios } = props;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -155,6 +159,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
   const curEpRef = useRef<{ tmdbId?: number; type: 'movie' | 'tv'; season?: number; episode?: number }>({ tmdbId, type, season, episode });
   const onNextRef = useRef(onNext);
   useEffect(() => { onNextRef.current = onNext; });
+  const episodiosRef = useRef(episodios);
+  useEffect(() => { episodiosRef.current = episodios; });
 
   // Auto-oculta nossos controles após 4s (libera os controles do provedor embaixo).
   // Não esconde enquanto o dropdown de fonte está aberto.
@@ -628,6 +634,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       downloaded: !!(dlKey && isDownloaded(dlKey)),   // indicador no topo (⤓ em destaque)
       urls: group.map(s => s.url), mimes: group.map(s => s.mime ?? ''),
       qualities: group.map(s => s.quality ?? ''), hasNext: !!onNext,
+      // Série: botão "Episódios" na barra do player, com o que só o app sabe (06/11/2026).
+      episodios: type === 'tv' ? (episodios?.dados() ?? undefined) : undefined,
       key: `${tmdbId ?? 0}:${type}:${season ?? 0}:${episode ?? 0}`, watched: !!watched,
       // IMDb da série: o player completa as marcas (abertura/créditos) da TheIntroDB com as da IntroDB (18/10/2026).
       imdbId,
@@ -684,6 +692,16 @@ export default function VideoPlayer(props: VideoPlayerProps) {
         return;
       }
       if (res.server) { goServer(); return; }                 // "Abrir servidores" → modo servidor
+      // Escolheu um episódio no painel "Episódios" do player (06/11/2026): abre o escolhido como pela página da série
+      // (onde parou; link salvo ou resolvedor) e ele volta pro reprodutor sozinho, como no "Próximo".
+      if (res.episodio) {
+        const [s, e] = res.episodio.split(':').map(Number);
+        if (s > 0 && e > 0 && episodiosRef.current) {
+          // Já assistido = do zero (a posição salva é a do fim: abria nos créditos e a contagem pulava pro seguinte).
+          if (res.episodioVisto) setStreamPosition(0, tmdbId, type, s, e);
+          pendingNextInPlayer = true; episodiosRef.current.tocar(s, e); return;
+        }
+      }
       // O player fechou pedindo o próximo ep. Se o JS JÁ tinha avançado (in-place que
       // não achou link), NÃO avança de novo — senão pularia um episódio.
       if (res.next) { if (!advanced) { pendingNextInPlayer = true; onNext?.(); } return; }

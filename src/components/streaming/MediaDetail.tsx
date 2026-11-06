@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
-import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, type TmdbDetails, type TmdbEpisodeInfo, type TmdbCollectionRef } from '@/lib/tmdb';
+import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, chaveTmdb, type TmdbDetails, type TmdbEpisodeInfo, type TmdbCollectionRef } from '@/lib/tmdb';
 import { WatchItem, Season } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
@@ -9,7 +9,8 @@ import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast, Folder } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress, continuarDe, proximoEpisodio } from '@/lib/watchProgress';
-import { latestPosition } from '@/lib/streamCache';
+import { latestPosition, posicoesDaSerie } from '@/lib/streamCache';
+import { montarSerie } from '@/lib/episodiosPlayer';
 import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
 import type { DownloadItem } from '@/lib/downloader';
@@ -384,6 +385,23 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   const onSeriesCompleted = () => advanceEpisode(true);   // vídeo acabou → marca e segue
   const onSeriesNext = () => advanceEpisode(false);       // ⏭ → só segue
 
+  // Painel "Episódios" do player nativo (pedido dele 06/11/2026): o que só o app sabe vai na abertura do player
+  // (assistidos e progresso de cada temporada, chave da TMDB); escolher um episódio lá = abrir como pela página.
+  const episodiosDoPlayer = isSeries ? {
+    dados: () => {
+      const temporadas = details?.seasons ?? [];
+      if (!temporadas.length) return null;
+      return JSON.stringify(montarSerie({
+        tmdbId: media.tmdbId,
+        chave: chaveTmdb(),
+        temporadas,
+        vistos: n => { const live = liveItemRef.current?.seasons?.find(x => x.number === n); return live ? episodesWatched(live) : []; },
+        posicoes: posicoesDaSerie(media.tmdbId),
+      }));
+    },
+    tocar: (s: number, e: number) => { playEpisode(s, e); },
+  } : undefined;
+
   const movieWatched = !isSeries && (otimista.completed ?? !!liveItem?.completed);
 
   const rating = formatRating(details?.rating ?? media.rating, details?.votes ?? media.votes);
@@ -726,6 +744,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
           }
           onSetWatchedFor={setWatchedForKey}
           onNext={isSeries && hasNextEp ? onSeriesNext : undefined}
+          episodios={episodiosDoPlayer}
           onProgress={!isSeries ? onMovieProgress : undefined}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />

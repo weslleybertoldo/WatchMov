@@ -159,6 +159,18 @@ export function latestPosition(tmdbId?: number): { season: number; episode: numb
 
 // Posição SEM TTL: o link expira em 12h, mas "onde parei" não pode sumir (o
 // vídeo baixado continua lá). Fonte única lida pela home e pela aba Download.
+// Posições salvas de TODOS os episódios de uma série numa leitura só ("temporada:ep" → posição/duração): o painel
+// "Episódios" do player mostra a barra de quem parou no meio (06/11/2026). Ler ep por ep relia o storage inteiro.
+export function posicoesDaSerie(tmdbId: number): Record<string, { positionMs: number; durationMs?: number }> {
+  const out: Record<string, { positionMs: number; durationMs?: number }> = {};
+  for (const [k, e] of Object.entries(read())) {
+    const [tid, type, s, ep] = k.split(':');
+    if (tid !== String(tmdbId) || type !== 'tv' || !e.positionMs) continue;
+    out[`${Number(s)}:${Number(ep)}`] = { positionMs: e.positionMs, durationMs: e.durationMs };
+  }
+  return out;
+}
+
 export function getPosition(tmdbId?: number, type?: string, season?: number, episode?: number): { positionMs: number; durationMs?: number } | null {
   const e = read()[keyFor(tmdbId, type, season, episode)];
   if (!e?.positionMs) return null;

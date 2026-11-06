@@ -2,7 +2,7 @@
 <!-- Controller do PlayerView (Media3) — PLAYER NOVO (17/10/2026, pedido dele: "muito mais limpo e fluido … Parece
      igual da Netflix … hoje está muito bagunçado os botões").
      Em cima: voltar, título, servidor · player (à direita) e espelhar (só celular). No meio: −10 s, play, +10 s.
-     Embaixo: tempo + barra e, à direita, +1 min, assistido, próximo episódio (série), qualidade, legendas, servidor e ⚙
+     Embaixo: tempo + barra e, à direita, assistido, próximo episódio e Episódios (série), qualidade, legendas, servidor e ⚙
      (painel com o resto: velocidade, tela, áudio, links, baixar, enviar, girar). Antes eram 10 pílulas de texto em
      cima + 7 ícones embaixo.
      A barra de cima fica DENTRO do controller pra sumir junto (o alfa dela segue o do exo_controls_background). -->
@@ -98,23 +98,8 @@
         android:layout_gravity="center_vertical|end"
         android:layoutDirection="ltr">
 
-      <!-- +1 min e o assistido na barra, pedido dele 17/10/2026: "Não assistido" (sem ✓) ou "✓ Assistido" verde. -->
-      <TextView android:id="@+id/wm_fwd60"
-          android:layout_width="wrap_content"
-          android:layout_height="40dp"
-          android:layout_gravity="center_vertical"
-          android:gravity="center"
-          android:paddingStart="12dp"
-          android:paddingEnd="12dp"
-          android:background="?android:attr/selectableItemBackground"
-          android:focusable="true"
-          android:clickable="true"
-          android:text="+1 min"
-          android:textColor="#FFFFFF"
-          android:textSize="15sp"
-          android:textStyle="bold"
-          android:contentDescription="Avançar 1 minuto"/>
-
+      <!-- Assistido na barra, pedido dele 17/10/2026: "Não assistido" (sem ✓) ou "✓ Assistido" verde. O "+1 min" que
+           ficava antes dele saiu em 06/11/2026 (pedido dele: "remove o botão +1 min"). -->
       <TextView android:id="@+id/wm_assistido"
           android:layout_width="wrap_content"
           android:layout_height="40dp"
@@ -136,6 +121,27 @@
           android:src="@drawable/ic_skip_next"
           android:visibility="gone"
           android:contentDescription="Próximo episódio"/>
+
+      <!-- Episódios (só série, pedido dele 06/11/2026): abre a lista da temporada por cima do vídeo, com o foco no
+           episódio atual (EpisodiosPainel). Na TV vai com o nome; no celular o player tira o texto e fica o ícone. -->
+      <TextView android:id="@+id/wm_episodios"
+          android:layout_width="wrap_content"
+          android:layout_height="40dp"
+          android:layout_gravity="center_vertical"
+          android:gravity="center"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp"
+          android:background="?android:attr/selectableItemBackground"
+          android:focusable="true"
+          android:clickable="true"
+          android:drawableStart="@drawable/ic_video_library"
+          android:drawablePadding="7dp"
+          android:text="Episódios"
+          android:textColor="#FFFFFF"
+          android:textSize="15sp"
+          android:textStyle="bold"
+          android:visibility="gone"
+          android:contentDescription="Episódios"/>
 
       <!-- Qualidade que está tocando ("720p"); toque = lista só com as que o vídeo tem. Pedido dele 17/10/2026. -->
       <TextView android:id="@+id/wm_quality"
