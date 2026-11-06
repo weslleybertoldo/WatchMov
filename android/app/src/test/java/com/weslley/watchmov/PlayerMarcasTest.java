@@ -90,6 +90,28 @@ public class PlayerMarcasTest {
         assertEquals(PlayerMarcas.VOLTAR_CANCELA_CONTAGEM, PlayerMarcas.acaoDoVoltar(false, true, true, false, false));
     }
 
+    // "Cancelar" do "Pular abertura/resumo" (pedido dele 06/11/2026): o trecho cancelado não mostra mais o botão.
+    @Test public void cancelarOPularEscondeSoAteOFimDoTrecho() {
+        PlayerMarcas m = PlayerMarcas.deJson(REZERO_T1E2);
+        long de = m.inicioDoPulo(100_000), ate = m.fimDoPulo(100_000);
+        assertEquals(66_000, de, 1_000);              // a abertura do Re:Zero T1E2 começa ~1:06
+        assertEquals(156_099, ate);
+        assertEquals(-1, m.inicioDoPulo(200_000));    // fora de trecho: nada a cancelar
+        assertTrue(PlayerMarcas.puloCancelado(100_000, de, ate));
+        assertTrue(PlayerMarcas.puloCancelado(de, de, ate));
+        assertFalse(PlayerMarcas.puloCancelado(de - 1, de, ate));    // voltou pra antes: mostra de novo
+        assertFalse(PlayerMarcas.puloCancelado(ate, de, ate));       // passou do trecho
+        assertFalse(PlayerMarcas.puloCancelado(100_000, -1, -1));    // nada cancelado
+    }
+
+    @Test public void voltarCancelaOPularDepoisDoPainelEDaContagem() {
+        assertEquals(PlayerMarcas.VOLTAR_CANCELA_PULO, PlayerMarcas.acaoDoVoltar(false, false, true, true, true, false));
+        assertEquals(PlayerMarcas.VOLTAR_CANCELA_PULO, PlayerMarcas.acaoDoVoltar(false, false, true, false, false, false));
+        assertEquals(PlayerMarcas.VOLTAR_CANCELA_CONTAGEM, PlayerMarcas.acaoDoVoltar(false, true, true, true, true, false));
+        assertEquals(PlayerMarcas.VOLTAR_FECHA_PAINEL, PlayerMarcas.acaoDoVoltar(true, false, true, true, true, false));
+        assertEquals(PlayerMarcas.VOLTAR_ESCONDE_CONTROLES, PlayerMarcas.acaoDoVoltar(false, false, false, true, true, false));
+    }
+
     @Test public void contagemDe10sSoDescontaTocandoEPula() {
         PlayerMarcas.Contagem c = new PlayerMarcas.Contagem();
         long ini = 1_000_000;

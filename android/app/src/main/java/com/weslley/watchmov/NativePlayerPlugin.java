@@ -203,6 +203,9 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_KEY, call.getString("key"));
         intent.putExtra(PlayerActivity.EXTRA_IMDB, call.getString("imdbId"));
         intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));
+        // Painel "Episódios" (série, 06/11/2026): o que só o app sabe (assistidos, progresso, chave da TMDB) vai já
+        // na abertura — com o player na frente a página do app não responde.
+        intent.putExtra(PlayerActivity.EXTRA_EPISODIOS, call.getString("episodios"));
         intent.putExtra(PlayerActivity.EXTRA_WATCHED, Boolean.TRUE.equals(call.getBoolean("watched", false)));
         intent.putExtra(PlayerActivity.EXTRA_OFFLINE, Boolean.TRUE.equals(call.getBoolean("offline", false)));
         intent.putExtra(PlayerActivity.EXTRA_DOWNLOADED, Boolean.TRUE.equals(call.getBoolean("downloaded", false)));
@@ -252,6 +255,11 @@ public class NativePlayerPlugin extends Plugin {
             res.put("recapture", result.getData().getBooleanExtra(PlayerActivity.RESULT_RECAPTURE, false));
             String serverId = result.getData().getStringExtra(PlayerActivity.RESULT_SERVER_ID);
             if (serverId != null) res.put("serverId", serverId);
+            String episodio = result.getData().getStringExtra(PlayerActivity.RESULT_EPISODIO);
+            if (episodio != null) {   // "T:E" escolhido no painel Episódios (+ se já foi assistido: começa do zero)
+                res.put("episodio", episodio);
+                res.put("episodioVisto", result.getData().getBooleanExtra(PlayerActivity.RESULT_EPISODIO_VISTO, false));
+            }
             if (result.getData().hasExtra(PlayerActivity.RESULT_WATCHED)) {
                 res.put("watched", result.getData().getBooleanExtra(PlayerActivity.RESULT_WATCHED, false));
                 // A qual episódio o "watched" acima pertence — pode NÃO ser o que abriu

@@ -111,8 +111,25 @@ final class PlayerMarcas {
         return f >= 0 ? f : fim(resumo, posMs);
     }
 
+    /** Onde começa o trecho que dá pra pular em que a posição está (-1 = nenhum): o "Cancelar" esconde até o fim dele. */
+    long inicioDoPulo(long posMs) {
+        long i = inicio(abertura, posMs);
+        return i >= 0 ? i : inicio(resumo, posMs);
+    }
+
+    /**
+     * "Cancelar" do "Pular abertura/resumo" (pedido dele 06/11/2026, igual ao "Cancelar" da contagem do próximo): o
+     * trecho [de, ate) cancelado não mostra mais o botão. Voltar pra antes dele (ou passar dele) mostra de novo.
+     */
+    static boolean puloCancelado(long posMs, long de, long ate) { return de >= 0 && ate > de && posMs >= de && posMs < ate; }
+
     // Trecho sem fim conhecido não vira "Pular": não dá pra saber pra onde ir.
     private static boolean dentro(long[][] ts, long pos) { return fim(ts, pos) >= 0; }
+
+    private static long inicio(long[][] ts, long pos) {
+        for (long[] t : ts) if (t[1] > 0 && pos >= t[0] && pos < t[1] - MARGEM_FIM_PULO_MS) return t[0];
+        return -1;
+    }
 
     private static long fim(long[][] ts, long pos) {
         for (long[] t : ts) if (t[1] > 0 && pos >= t[0] && pos < t[1] - MARGEM_FIM_PULO_MS) return t[1];
@@ -189,13 +206,21 @@ final class PlayerMarcas {
     }
 
     // ── Voltar ─────────────────────────────────────────────────────────────────────────────────────────────
-    static final int VOLTAR_SAI = 0, VOLTAR_FECHA_PAINEL = 1, VOLTAR_CANCELA_CONTAGEM = 2, VOLTAR_ESCONDE_CONTROLES = 3;
+    static final int VOLTAR_SAI = 0, VOLTAR_FECHA_PAINEL = 1, VOLTAR_CANCELA_CONTAGEM = 2, VOLTAR_ESCONDE_CONTROLES = 3,
+        VOLTAR_CANCELA_PULO = 4;
 
     /** O que o "voltar" faz agora. Esconder os controles é só na TV e sem espelhar (o overlay do cast tem os dele). */
     static int acaoDoVoltar(boolean painelAberto, boolean contagemNaTela, boolean controlesNaTela, boolean naTv,
                             boolean espelhando) {
+        return acaoDoVoltar(painelAberto, contagemNaTela, false, controlesNaTela, naTv, espelhando);
+    }
+
+    /** Idem, com o "Pular abertura/resumo" na tela: o voltar cancela ele, como cancela a contagem (06/11/2026). */
+    static int acaoDoVoltar(boolean painelAberto, boolean contagemNaTela, boolean puloNaTela, boolean controlesNaTela,
+                            boolean naTv, boolean espelhando) {
         if (painelAberto) return VOLTAR_FECHA_PAINEL;
         if (contagemNaTela) return VOLTAR_CANCELA_CONTAGEM;
+        if (puloNaTela) return VOLTAR_CANCELA_PULO;
         if (naTv && controlesNaTela && !espelhando) return VOLTAR_ESCONDE_CONTROLES;
         return VOLTAR_SAI;
     }

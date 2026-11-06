@@ -8,6 +8,8 @@ const BASE = 'https://api.themoviedb.org/3';
 const IMG_BASE = 'https://image.tmdb.org/t/p';
 
 export const TMDB_ENABLED = !!API_KEY;
+// A chave vai junto pro painel "Episódios" do player nativo, que busca a temporada direto na TMDB (06/11/2026).
+export function chaveTmdb(): string { return API_KEY ?? ''; }
 
 export type TmdbMediaType = 'movie' | 'tv';
 

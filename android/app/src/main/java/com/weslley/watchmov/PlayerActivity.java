@@ -70,6 +70,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static final String EXTRA_SERVIDOR_ATUAL = "servidorAtual";
     public static final String EXTRA_DOWNLOADED = "downloaded";   // ep tem download concluído
     public static final String EXTRA_IMDB = "imdbId";             // IMDb da série: marcas da IntroDB (18/10/2026)
+    public static final String EXTRA_EPISODIOS = "episodios";     // série com o painel "Episódios" (06/11/2026)
     private static final long WATCHED_THRESHOLD_MS = 60000;   // "visto" quando falta 1 min pro fim
     private static final long AUTO_NEXT_THRESHOLD_MS = 30000; // auto-avanço pro próximo ep quando faltam 30 s (pedido 07/09/2026; era 1 min)
     public static final String RESUME_PREFS = "watchmov_resume";
@@ -79,6 +80,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     public static final String RESULT_SERVER = "server";
     public static final String RESULT_RECAPTURE = "recapture";
     public static final String RESULT_SERVER_ID = "serverId";      // servidor escolhido no popup (o app troca e resolve)
+    public static final String RESULT_EPISODIO = "episodio";       // "T:E" escolhido no painel Episódios (o app abre)
+    public static final String RESULT_EPISODIO_VISTO = "episodioVisto";   // …e ele já foi assistido (começa do zero)
     public static final String RESULT_WATCHED = "watched";
     // De QUAL episódio o "assistido" acima está falando (tmdbId:type:season:ep). Sem
     // isto o JS aplicava a marcação no ep que ABRIU o player: depois de um "Próximo"
@@ -202,6 +205,18 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private View painelCard;
     private android.widget.GridLayout painelGrade;
     private static okhttp3.OkHttpClient marcasHttp;
+    // Painel "Episódios" (pedido dele 06/11/2026): botão na barra de baixo (só em série) e a lista da temporada.
+    private TextView episodiosBtn;
+    private EpisodiosPainel episodios;
+    private EpisodiosDados.Serie serieEps;         // o que o app mandou na abertura (assistidos, progresso, TMDB)
+    private String episodioEscolhido;             // "T:E" escolhido no painel → volta no resultado pro app abrir
+    private boolean episodioEscolhidoVisto;
+    private final java.util.Map<String, Boolean> vistosNaSessao = new java.util.HashMap<>();   // marcados aqui dentro
+    private static final android.util.LruCache<String, String> TMDB_TEMPORADAS = new android.util.LruCache<>(12);
+    // "Cancelar" do "Pular abertura/resumo" (pedido dele 06/11/2026): o trecho cancelado não mostra mais o botão.
+    private LinearLayout pularLinha;
+    private Button pularCancelarBtn;
+    private long puloCanceladoDe = -1, puloCanceladoAte = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -278,7 +293,6 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         fonteTv = view.findViewById(R.id.wm_fonte);
         assistidoTv = view.findViewById(R.id.wm_assistido);
         assistidoTv.setOnClickListener(v -> toggleWatched());
-        view.findViewById(R.id.wm_fwd60).setOnClickListener(v -> avancar1Min());
         updateWatchedUi();
 
         castBtn = view.findViewById(R.id.wm_cast);
@@ -323,6 +337,28 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             }
         });
         nextBtn.setVisibility(hasNext ? View.VISIBLE : View.GONE);
+        // Episódios (só série, pedido dele 06/11/2026): logo depois do ⏭. Na TV com o nome; no celular só o ícone (a
+        // barra é estreita). A temporada que está tocando já é buscada aqui (TMDB), pra lista abrir sem esperar.
+        episodiosBtn = view.findViewById(R.id.wm_episodios);
+        final int[] tempEp = EpisodiosDados.temporadaEpisodio(resumeKey);
+        serieEps = EpisodiosDados.serieDoApp(getIntent().getStringExtra(EXTRA_EPISODIOS));
+        final boolean temEpisodios = serieEps != null && tempEp != null;
+        episodiosBtn.setVisibility(temEpisodios ? View.VISIBLE : View.GONE);
+        if (!tv) { episodiosBtn.setText(""); episodiosBtn.setCompoundDrawablePadding(0); }
+        episodiosBtn.setOnClickListener(v -> abrirEpisodios());
+        if (temEpisodios) {
+            episodios = new EpisodiosPainel(this, root, tv, new EpisodiosPainel.Acoes() {
+                @Override public boolean pedirTemporada(int temporada) { carregarTemporada(temporada); return true; }
+                @Override public void tocar(int temporada, int episodio, boolean visto) { escolherEpisodio(temporada, episodio, visto); }
+                @Override public void fechou(boolean escolheu) {
+                    // TV: volta pros controles com o foco no botão (de onde veio), como o ⚙.
+                    if (escolheu || !tvMode || view == null) return;
+                    view.showController();
+                    episodiosBtn.requestFocus();
+                }
+            });
+            carregarTemporada(tempEp[0]);   // já busca a temporada que está tocando: o painel abre sem esperar
+        }
         // Qualidade na barra, depois do ⏭ (pedido dele 17/10/2026: "Na barra de baixo precisa aparecer a qualidade
         // também, ex: 720p" e "clicando … as qualidades disponíveis … Só as que realmente tiver disponíveis").
         qualityBtn = view.findViewById(R.id.wm_quality);
@@ -347,7 +383,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             if (tv && visibility == View.VISIBLE && getCurrentFocus() == null) focarPlayTv();
             // Controles sumiram com a contagem ou o "Pular" na tela: o foco vai pra eles (o OK é deles e o destaque
             // mostra isso). Sem isso, o cartão que apareceu com os controles na tela ficava sem destaque.
-            if (tv && visibility != View.VISIBLE && !painelAberto()) {
+            if (tv && visibility != View.VISIBLE && !painelAberto() && !episodiosAberto()) {
                 if (proximoNaTela()) proximoAgoraBtn.requestFocus();
                 else if (pularNaTela()) pularBtn.requestFocus();
             }
@@ -927,6 +963,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void setWatched(boolean w) {
         if (watched == w) return;
         watched = w;
+        if (resumeKey != null) vistosNaSessao.put(resumeKey, w);
         android.util.Log.i("WatchMov", "assistido: " + w + " (" + resumeKey + ")");
         if (watchedBtn != null) watchedBtn.setColorFilter(w ? Color.parseColor("#4ADE80") : Color.WHITE);
         updateWatchedUi();
@@ -2742,6 +2779,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             contagem = new PlayerMarcas.Contagem();
             esconderProximo(); esconderPular();
             carregarMarcas(key);
+            puloCanceladoDe = -1; puloCanceladoAte = -1;   // episódio novo: o "Pular" dele aparece de novo
             final long start = 0;
             mReferer = referer;
             applyRefererHeaders(referer);
@@ -2821,6 +2859,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         data.putExtra(RESULT_SERVER, server);
         data.putExtra(RESULT_RECAPTURE, recapture);
         data.putExtra(RESULT_SERVER_ID, serverId);
+        if (episodioEscolhido != null) {
+            data.putExtra(RESULT_EPISODIO, episodioEscolhido);
+            data.putExtra(RESULT_EPISODIO_VISTO, episodioEscolhidoVisto);
+        }
         data.putExtra(RESULT_WATCHED, watched); // estado final do "assistido" (fonte da verdade no fechar)
         data.putExtra(RESULT_WATCHED_KEY, resumeKey);   // …e de qual episódio ele é
         setResult(RESULT_OK, data);
@@ -2849,12 +2891,16 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // controles é só na TV (no celular o voltar segue saindo, como antes).
     @Override
     public void onBackPressed() {
-        int acao = PlayerMarcas.acaoDoVoltar(painelAberto(), proximoNaTela(),
+        int acao = PlayerMarcas.acaoDoVoltar(painelAberto() || episodiosAberto(), proximoNaTela(), pularNaTela(),
             view != null && view.isControllerFullyVisible(), tvMode, castMode != CAST_NONE);
-        android.util.Log.i("WatchMov", "voltar: " + acao);   // 0 sai · 1 fecha painel · 2 cancela contagem · 3 esconde
+        // 0 sai · 1 fecha painel · 2 cancela contagem · 3 esconde · 4 cancela o "Pular"
+        android.util.Log.i("WatchMov", "voltar: " + acao);
         switch (acao) {
-            case PlayerMarcas.VOLTAR_FECHA_PAINEL: fecharPainel(); return;
+            case PlayerMarcas.VOLTAR_FECHA_PAINEL:
+                if (episodiosAberto()) episodios.fechar(false); else fecharPainel();
+                return;
             case PlayerMarcas.VOLTAR_CANCELA_CONTAGEM: cancelarProximo(); return;
+            case PlayerMarcas.VOLTAR_CANCELA_PULO: cancelarPulo(); return;
             case PlayerMarcas.VOLTAR_ESCONDE_CONTROLES: view.hideController(); return;
             default: finishWithResult(false, false);
         }
@@ -2891,8 +2937,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             default:
         }
         // Player novo (17/10/2026): painel ⚙ aberto = setas/OK andam pelos blocos (foco do Android); o voltar fecha
-        // (onBackPressed).
-        if (painelAberto()) return false;
+        // (onBackPressed). O painel "Episódios" (06/11/2026) idem: setas andam pelos episódios/temporadas.
+        if (painelAberto() || episodiosAberto()) return false;
         if (!view.isControllerFullyVisible()) {
             // Contagem do próximo na tela: setas ←/→ e OK ficam com os 2 botões dela ("Assistir agora"/"Cancelar").
             if (proximoNaTela() && (ok || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
@@ -2905,10 +2951,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 }
                 return false;
             }
-            // "Pular abertura/resumo" na tela: o OK aperta ele (←/→ seguem voltando/avançando 10 s).
-            if (pularNaTela() && ok) {
-                if (primeira) pularBtn.performClick();
-                return true;
+            // "Pular abertura/resumo" na tela, agora com o "Cancelar" ao lado (06/11/2026): setas ←/→ e OK ficam com os 2
+            // botões, igual à contagem do próximo. Sem foco neles: OK já pula; setas só põem o foco no "Pular".
+            if (pularNaTela() && (ok || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+                View f = getCurrentFocus();
+                if (f != pularBtn && f != pularCancelarBtn) {
+                    if (primeira) { if (ok) pularBtn.performClick(); else pularBtn.requestFocus(); }
+                    return true;
+                }
+                return false;
             }
         }
         if (view.isControllerFullyVisible()) {
@@ -2935,14 +2986,6 @@ public class PlayerActivity extends Activity implements MediaNotificationService
             default:
                 return false;
         }
-    }
-
-    // +1 min da barra de baixo: avança 60 s sem passar do fim.
-    private void avancar1Min() {
-        if (player == null) return;
-        long pos = player.getCurrentPosition() + 60_000, dur = player.getDuration();
-        if (dur != C.TIME_UNSET && dur > 0) pos = Math.min(pos, Math.max(0, dur - 1000));
-        player.seekTo(pos);
     }
 
     private void pularTv(long delta) {
@@ -3155,8 +3198,78 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
     private boolean painelAberto() { return painel != null && painel.getVisibility() == View.VISIBLE; }
+    private boolean episodiosAberto() { return episodios != null && episodios.aberto(); }
+
+    // ── Painel "Episódios" (pedido dele 06/11/2026) ──
+
+    // Botão "Episódios": a lista da temporada que está tocando, com o foco no episódio atual (estado AO VIVO dele:
+    // assistido e onde parou).
+    private void abrirEpisodios() {
+        int[] te = EpisodiosDados.temporadaEpisodio(resumeKey);
+        if (episodios == null || te == null) return;
+        view.hideController();
+        long pos = curPosMs(), dur = curDurMs();
+        int pct = dur > 0 ? (int) Math.min(100, pos * 100 / dur) : 0;
+        episodios.abrir(EpisodiosDados.serieDoTitulo(mTitle), te[0], te[1], watched, pct, pos);
+    }
+
+    // Episódios de uma temporada: a TMDB direto daqui (a página do app fica congelada com o player na frente — medido
+    // no emulador em 06/11/2026) + os assistidos/progresso que o app mandou na abertura + o que mudou nesta sessão.
+    // Sem rede = só os números (o painel continua mostrando assistidos e o atual).
+    private void carregarTemporada(final int temporada) {
+        if (serieEps == null) return;
+        final String url = EpisodiosDados.urlDaTemporada(serieEps, temporada);
+        String guardado = TMDB_TEMPORADAS.get(url);
+        if (guardado != null) { entregarTemporada(temporada, guardado); return; }
+        new Thread(() -> {
+            String corpo = null;
+            try {
+                okhttp3.Request req = new okhttp3.Request.Builder().url(url).header("User-Agent", "WatchMov-Android").build();
+                try (okhttp3.Response r = clienteMarcas().newCall(req).execute()) {
+                    if (r.isSuccessful() && r.body() != null) corpo = r.body().string();
+                    else android.util.Log.i("WatchMov", "episódios: TMDB T" + temporada + " respondeu " + r.code());
+                }
+            } catch (Exception e) {
+                android.util.Log.i("WatchMov", "episódios: TMDB T" + temporada + ": " + e);
+            }
+            if (corpo != null) TMDB_TEMPORADAS.put(url, corpo);
+            final String c = corpo;
+            runOnUiThread(() -> entregarTemporada(temporada, c));
+        }, "wm-episodios").start();
+    }
+
+    private void entregarTemporada(int temporada, String tmdbJson) {
+        if (episodios == null || serieEps == null || isFinishing()) return;
+        String hoje = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(new java.util.Date());
+        EpisodiosDados d = EpisodiosDados.montar(serieEps, temporada, tmdbJson, hoje);
+        // Assistido/desmarcado AQUI DENTRO (⏭, "Não assistido", fim do episódio): o app ainda não sabe, o painel sabe.
+        String prefixo = serieEps.tmdb + ":tv:" + temporada + ":";
+        for (EpisodiosDados.Ep e : d.eps) {
+            Boolean v = vistosNaSessao.get(prefixo + e.numero);
+            if (v != null) { e.visto = v; if (v) e.pct = 0; }
+        }
+        episodios.receber(d);
+    }
+
+    // Escolheu um episódio no painel: o player fecha devolvendo "T:E" e o app abre o escolhido como se fosse pela página
+    // da série (onde parou, com o link salvo ou pelo resolvedor) — e ele volta pro reprodutor sozinho. Não dá pra trocar
+    // aqui dentro como o ⏭ faz: com o player na frente a página do app não responde. Já assistido = começa do zero (a
+    // posição salva dele é a do fim: abria nos créditos e a contagem pulava pro seguinte — visto no emulador).
+    private void escolherEpisodio(int temporada, int episodio, boolean visto) {
+        int[] te = EpisodiosDados.temporadaEpisodio(resumeKey);
+        if (te != null && te[0] == temporada && te[1] == episodio) { episodios.fechar(false); return; }   // já está nele
+        if (awaitingNext) return;
+        android.util.Log.i("WatchMov", "episódios: escolheu T" + temporada + " E" + episodio + " (estava em " + resumeKey + ")");
+        if (player != null && castMode == CAST_NONE) player.pause();
+        castFollowNext = activeCastMode != CAST_NONE && !localOnly;   // espelhando: o player que reabrir segue na TV
+        episodioEscolhido = temporada + ":" + episodio;
+        episodioEscolhidoVisto = visto;
+        if (visto && resumePrefs != null && serieEps != null)
+            resumePrefs.edit().remove(serieEps.tmdb + ":tv:" + temporada + ":" + episodio).apply();
+        finishWithResult(false, false);
+    }
     private boolean proximoNaTela() { return proximoCard != null && proximoCard.getVisibility() == View.VISIBLE; }
-    private boolean pularNaTela() { return pularBtn != null && pularBtn.getVisibility() == View.VISIBLE; }
+    private boolean pularNaTela() { return pularLinha != null && pularLinha.getVisibility() == View.VISIBLE; }
 
     // Aparece e some com fade (modelo de navegação dele: nada aparece nem some "seco").
     private static void mostrarSuave(View v) {
@@ -3177,11 +3290,20 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void montarPularEProximo(FrameLayout root) {
         pularBtn = pill("Pular abertura", v -> pularTrecho());
         pularBtn.setBackground(pillBg(true));
-        pularBtn.setVisibility(View.GONE);
+        ((LinearLayout.LayoutParams) pularBtn.getLayoutParams()).leftMargin = 0;
+        // "Cancelar" ao lado (pedido dele 06/11/2026: "no botão pular resumo/abertura não tem a opção de cancelar igual no
+        // pular eps"): esconde o "Pular" até o fim deste trecho, como o "Cancelar" da contagem do próximo.
+        pularCancelarBtn = pill("Cancelar", v -> cancelarPulo());
+        pularCancelarBtn.setBackground(pillBg(true));
+        pularLinha = new LinearLayout(this);
+        pularLinha.setOrientation(LinearLayout.HORIZONTAL);
+        pularLinha.addView(pularBtn);
+        pularLinha.addView(pularCancelarBtn);
+        pularLinha.setVisibility(View.GONE);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
         lp.rightMargin = dp(28); lp.bottomMargin = dp(124);
-        root.addView(pularBtn, lp);
+        root.addView(pularLinha, lp);
 
         proximoCard = new LinearLayout(this);
         proximoCard.setOrientation(LinearLayout.VERTICAL);
@@ -3217,24 +3339,34 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         esconderPular();
     }
 
+    // "Cancelar" do "Pular": some e não volta até o fim deste trecho (voltar pra antes dele mostra de novo).
+    private void cancelarPulo() {
+        if (player == null) return;
+        long pos = player.getCurrentPosition();
+        puloCanceladoDe = marcas.inicioDoPulo(pos);
+        puloCanceladoAte = marcas.fimDoPulo(pos);
+        android.util.Log.i("WatchMov", "pular: cancelado em " + pos + " ms (trecho " + puloCanceladoDe + " → " + puloCanceladoAte + ")");
+        esconderPular();
+    }
+
     private void mostrarPular(int tipo) {
         String txt = tipo == PlayerMarcas.RESUMO ? "Pular resumo" : "Pular abertura";
         if (!txt.contentEquals(pularBtn.getText())) pularBtn.setText(txt);
         boolean novo = !pularNaTela();
         if (novo) android.util.Log.i("WatchMov", "pular: apareceu (" + txt + ") em " + player.getCurrentPosition() + " ms");
-        mostrarSuave(pularBtn);
+        mostrarSuave(pularLinha);
         // TV com os controles escondidos: o OK aperta o "Pular" (teclaTv); o foco vai nele pra ficar destacado.
-        if (novo && tvMode && !view.isControllerFullyVisible() && !painelAberto()) pularBtn.requestFocus();
+        if (novo && tvMode && !view.isControllerFullyVisible() && !painelAberto() && !episodiosAberto()) pularBtn.requestFocus();
     }
 
-    private void esconderPular() { esconderSuave(pularBtn); }
+    private void esconderPular() { esconderSuave(pularLinha); }
 
     private void mostrarProximo() {
         android.util.Log.i("WatchMov", "contagem: apareceu em " + (player != null ? player.getCurrentPosition() : -1) + " ms");
         atualizarTextoProximo();
         esconderPular();
         mostrarSuave(proximoCard);
-        if (tvMode && !view.isControllerFullyVisible() && !painelAberto()) proximoAgoraBtn.requestFocus();
+        if (tvMode && !view.isControllerFullyVisible() && !painelAberto() && !episodiosAberto()) proximoAgoraBtn.requestFocus();
     }
 
     private void atualizarTextoProximo() {
@@ -3275,6 +3407,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         boolean durOk = dur != C.TIME_UNSET && dur > 0;
         boolean espelhando = castMode != CAST_NONE;
         int tipo = !espelhando && durOk && !proximoNaTela() ? marcas.tipoDoPulo(pos) : PlayerMarcas.NENHUM;
+        if (tipo != PlayerMarcas.NENHUM && PlayerMarcas.puloCancelado(pos, puloCanceladoDe, puloCanceladoAte)) tipo = PlayerMarcas.NENHUM;
         if (tipo != PlayerMarcas.NENHUM) mostrarPular(tipo); else esconderPular();
         if (espelhando || !hasNext || awaitingNext || !durOk) { esconderProximo(); return; }
         boolean acabou = player.getPlaybackState() == androidx.media3.common.Player.STATE_ENDED;
