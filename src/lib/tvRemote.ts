@@ -15,6 +15,28 @@ export type TvCmd =
 // ok = a TV abriu · no_answer = a TV não respondeu · offline = este aparelho não conseguiu falar no canal
 export type SendResult = 'ok' | 'no_answer' | 'offline';
 
+// Controle remoto (pedido dele 07/11/2026): as teclas vão no evento 'ctl' do MESMO canal. Evento novo de propósito: a TV
+// com o app antigo só escuta 'cmd' e ignora o 'ctl' (se fosse 'cmd', ela tratava a tecla como "abrir título" e fechava
+// o player). 'ping' só pergunta se o WatchMov está aberto e o que está tocando; a resposta vem no próprio ack.
+export type TeclaControle =
+  | 'up' | 'down' | 'left' | 'right' | 'ok' | 'ok-hold' | 'back' | 'home'
+  | 'rew' | 'ff' | 'playpause' | 'prev-ep' | 'next-ep' | 'watched';
+export interface TocandoNaTv {
+  title: string;
+  season?: number;
+  episode?: number;
+  positionMs?: number;
+  durationMs?: number;
+  playing?: boolean;
+  posterUrl?: string;
+}
+export type CtlCmd =
+  | { id: string; to: string; action: 'key'; key: TeclaControle }
+  | { id: string; to: string; action: 'ping' };
+// tocando ausente = a TV não soube a tempo (o celular mantém o último); null = nada tocando.
+export interface CtlResposta { tocando?: TocandoNaTv | null }
+export const CTL_ACK_MS = 2500;
+
 export const ACK_TIMEOUT_MS = 6000;
 const JOIN_TIMEOUT_MS = 6000;
 const RETRY_MS = 10000;
@@ -40,25 +62,53 @@ export function newCmdId(): string {
 
 // Um canal por conta, reaproveitado: o realtime-js devolve o MESMO canal pro mesmo tópico, então abrir/fechar
 // a cada envio quebrava dois envios seguidos. Erro no canal = esquece e o próximo uso abre de novo.
+// Canal FECHADO pelo servidor (login vencido com o app no fundo, token trocado) também: antes ele ficava guardado e a TV
+// nunca mais ouvia o celular até reabrir o app (medido no emulador 07/11/2026: o canal saiu da lista e não voltou).
 let conn: { uid: string; ch: RealtimeChannel; ready: Promise<boolean> } | null = null;
-const waiters = new Map<string, () => void>();        // id do pedido → resolve quando a TV responde
+const waiters = new Map<string, (resposta: Record<string, unknown>) => void>();   // id do pedido → TV respondeu
 let onCmd: ((cmd: TvCmd) => void) | null = null;      // só na TV
+let onCtl: ((cmd: CtlCmd) => void) | null = null;     // só na TV (controle remoto)
+
+// Histórico curto do canal (só estados, sem dado nenhum) pra diagnosticar a TV pelo depurador: window.__wmCanal.
+const historico: string[] = [];
+function anotar(m: string) {
+  historico.push(`${new Date().toISOString().slice(11, 19)} ${m}`);
+  if (historico.length > 40) historico.shift();
+}
+if (typeof window !== 'undefined') (window as unknown as { __wmCanal?: string[] }).__wmCanal = historico;
 
 function connect(uid: string) {
   if (conn && conn.uid === uid) return conn;
   if (conn) void supabase.removeChannel(conn.ch);
   const ch = supabase.channel(topicFor(uid), { config: { private: true, broadcast: { self: false, ack: true } } });
+  // O realtime-js devolve o canal do mesmo tópico que ainda está saindo (o anterior, removido há pouco): o subscribe
+  // dele não faz nada e o conn ficava preso num canal morto — a TV nunca mais ouvia. Não usa; a próxima tentativa abre
+  // um novo (na TV, a volta de 10 s; no celular, o próximo envio).
+  if (ch.state !== 'closed') {
+    anotar(`canal anterior ainda ${ch.state}: tenta de novo`);
+    void supabase.removeChannel(ch);
+    conn = null;
+    return { uid, ch, ready: Promise.resolve(false) };
+  }
+  anotar('abrindo canal');
   ch.on('broadcast', { event: 'ack' }, ({ payload }) => {
     const w = waiters.get(payload?.id);
-    if (w) { waiters.delete(payload.id); w(); }
+    if (w) { waiters.delete(payload.id); w(payload ?? {}); }
   });
   ch.on('broadcast', { event: 'cmd' }, ({ payload }) => onCmd?.(payload as TvCmd));
+  ch.on('broadcast', { event: 'ctl' }, ({ payload }) => onCtl?.(payload as CtlCmd));
   const ready = new Promise<boolean>(resolve => {
     ch.subscribe(status => {
+      anotar(status);
       if (status === 'SUBSCRIBED') { resolve(true); return; }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         resolve(false);
         if (conn?.ch === ch) { conn = null; void supabase.removeChannel(ch); }
+      }
+      // Fechado já saiu da lista do realtime-js: só esquece (o próximo uso, ou a volta da TV, abre outro).
+      if (status === 'CLOSED') {
+        resolve(false);
+        if (conn?.ch === ch) conn = null;
       }
     });
   });
@@ -68,41 +118,87 @@ function connect(uid: string) {
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// Celular: manda o pedido pra TV `cmd.to` e espera ela responder.
-export async function sendToTv(uid: string, cmd: TvCmd, ackTimeoutMs = ACK_TIMEOUT_MS): Promise<SendResult> {
+// Manda no canal e espera a TV responder (o ack pode trazer dados, ex.: o que está tocando).
+async function enviar(uid: string, event: 'cmd' | 'ctl', cmd: TvCmd | CtlCmd, ackTimeoutMs: number):
+  Promise<{ result: SendResult; resposta?: Record<string, unknown> }> {
   const c = connect(uid);
   const joined = await Promise.race([c.ready, sleep(JOIN_TIMEOUT_MS).then(() => false)]);
-  if (!joined) return 'offline';
-  let answered!: () => void;
-  const ack = new Promise<boolean>(res => { answered = () => res(true); });
+  if (!joined) return { result: 'offline' };
+  let answered!: (r: Record<string, unknown>) => void;
+  const ack = new Promise<Record<string, unknown>>(res => { answered = res; });
   waiters.set(cmd.id, answered);
   try {
-    const r = await c.ch.send({ type: 'broadcast', event: 'cmd', payload: cmd });
-    if (r !== 'ok') return 'offline';
-    return (await Promise.race([ack, sleep(ackTimeoutMs).then(() => false)])) ? 'ok' : 'no_answer';
+    const r = await c.ch.send({ type: 'broadcast', event, payload: cmd });
+    if (r !== 'ok') return { result: 'offline' };
+    const resposta = await Promise.race([ack, sleep(ackTimeoutMs).then(() => null)]);
+    return resposta ? { result: 'ok', resposta } : { result: 'no_answer' };
   } finally {
     waiters.delete(cmd.id);
   }
 }
 
+// Celular: manda o pedido pra TV `cmd.to` e espera ela responder.
+export async function sendToTv(uid: string, cmd: TvCmd, ackTimeoutMs = ACK_TIMEOUT_MS): Promise<SendResult> {
+  return (await enviar(uid, 'cmd', cmd, ackTimeoutMs)).result;
+}
+
+// Celular (controle remoto): manda a tecla/ping e devolve se a TV atendeu e o que ela está tocando.
+export async function mandarControle(uid: string, cmd: CtlCmd, ackTimeoutMs = CTL_ACK_MS):
+  Promise<{ result: SendResult; tocando?: TocandoNaTv | null }> {
+  const { result, resposta } = await enviar(uid, 'ctl', cmd, ackTimeoutMs);
+  if (result !== 'ok') return { result };
+  return resposta && 'tocando' in resposta ? { result, tocando: (resposta.tocando as TocandoNaTv | null) ?? null } : { result };
+}
+
 // TV: escuta os pedidos pra ESTA sessão. `handle` devolve true quando atendeu (aí a TV responde "recebi");
-// false = não atende (app no fundo) e o celular mostra que ela está desligada.
-export function listenAsTv(uid: string, mySessionId: string, handle: (cmd: TvCmd) => Promise<boolean>): () => void {
+// false = não atende (app no fundo) e o celular mostra que ela está desligada. `handleCtl` (controle remoto) devolve a
+// resposta que vai junto do ack (o que está tocando) ou false.
+// Página que acabou de descongelar (o app voltou do fundo): os pedidos que ficaram presos chegam todos de uma vez, já
+// velhos — o celular já tinha mostrado "não respondeu" e a TV executaria teclas fantasmas. Uma batida por segundo mostra
+// se a página ficou parada; o que chega com a batida atrasada, ou logo depois de ela voltar, é ignorado (sem resposta).
+export const PARADA_MS = 3000;
+export const RECEM_DESCONGELADA_MS = 2000;
+export function pedidoVelho(agora: number, ultimaBatida: number, descongelouEm: number): boolean {
+  return agora - ultimaBatida > PARADA_MS || agora - descongelouEm < RECEM_DESCONGELADA_MS;
+}
+
+export function listenAsTv(uid: string, mySessionId: string, handle: (cmd: TvCmd) => Promise<boolean>,
+  handleCtl?: (cmd: CtlCmd) => Promise<CtlResposta | false>): () => void {
   const vistos: string[] = [];
+  let ultimaBatida = Date.now();
+  let descongelouEm = 0;
+  const batida = setInterval(() => {
+    const agora = Date.now();
+    if (agora - ultimaBatida > PARADA_MS) descongelouEm = agora;
+    ultimaBatida = agora;
+  }, 1000);
+  const velho = () => pedidoVelho(Date.now(), ultimaBatida, descongelouEm);
+  const novo = (c: { id?: unknown; to?: unknown } | null): c is { id: string; to: string } => {
+    if (!c || c.to !== mySessionId || typeof c.id !== 'string' || vistos.includes(c.id)) return false;
+    vistos.push(c.id);
+    if (vistos.length > 40) vistos.shift();
+    return true;
+  };
+  const responder = (id: string, extra: Record<string, unknown> = {}) => {
+    if (conn) void conn.ch.send({ type: 'broadcast', event: 'ack', payload: { id, ...extra } });
+  };
   onCmd = (cmd) => {
-    if (!cmd || cmd.to !== mySessionId || typeof cmd.id !== 'string' || vistos.includes(cmd.id)) return;
-    vistos.push(cmd.id);
-    if (vistos.length > 20) vistos.shift();
-    void handle(cmd).then(ok => {
-      if (ok && conn) void conn.ch.send({ type: 'broadcast', event: 'ack', payload: { id: cmd.id } });
-    }).catch(() => undefined);
+    if (!novo(cmd)) return;
+    if (cmd.action !== 'logout' && velho()) return;
+    void handle(cmd).then(ok => { if (ok) responder(cmd.id); }).catch(() => undefined);
+  };
+  onCtl = !handleCtl ? null : (cmd) => {
+    if (!novo(cmd) || velho()) return;
+    void handleCtl(cmd).then(r => { if (r) responder(cmd.id, r.tocando === undefined ? {} : { tocando: r.tocando }); }).catch(() => undefined);
   };
   connect(uid);
   // Canal caiu com erro (sem rede, token trocado no meio): volta sozinho.
   const timer = setInterval(() => { if (!conn) connect(uid); }, RETRY_MS);
   return () => {
     clearInterval(timer);
+    clearInterval(batida);
     onCmd = null;
+    onCtl = null;
     if (conn) { void supabase.removeChannel(conn.ch); conn = null; }
   };
 }

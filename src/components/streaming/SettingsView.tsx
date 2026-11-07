@@ -1,6 +1,7 @@
 import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { isTv } from '@/lib/device';
+import IconeControle from '@/components/streaming/IconeControle';
 
 export interface WatchedStats {
   moviesCount: number;
@@ -37,11 +38,12 @@ interface SettingsViewProps {
   onServers: () => void;
   onBugs: () => void;
   onTv: () => void;
+  onRemote: () => void;
   onSignOut: () => void;
   onBack: () => void;
 }
 
-export default function SettingsView({ stats, onHistory, onDownload, onServers, onBugs, onTv, onSignOut, onBack }: SettingsViewProps) {
+export default function SettingsView({ stats, onHistory, onDownload, onServers, onBugs, onTv, onRemote, onSignOut, onBack }: SettingsViewProps) {
   return (
     <div className="space-y-6 max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -72,6 +74,13 @@ export default function SettingsView({ stats, onHistory, onDownload, onServers, 
       {!isTv() && (
         <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onTv}>
           <Tv className="w-4 h-4" /> Entrar na TV
+        </Button>
+      )}
+
+      {/* Controle remoto (pedido dele 07/11/2026): escolhe uma das TVs conectadas e comanda o WatchMov dela. */}
+      {!isTv() && (
+        <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onRemote}>
+          <IconeControle className="w-4 h-4" /> Controle remoto
         </Button>
       )}
 

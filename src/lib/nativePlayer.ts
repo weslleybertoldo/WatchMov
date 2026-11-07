@@ -17,6 +17,9 @@ interface NativePlayerPlugin {
   pendingExits(): Promise<{ exits?: AppExit[] }>;
   ackExits(opts: { ts: number }): Promise<void>;
   closePlayer(): Promise<{ closed: boolean }>;
+  // Controle remoto (pedido dele 07/11/2026): a TV repassa a tecla do celular pro player aberto. handled=false = sem player.
+  remoteKey(opts: { key: TeclaDoPlayer }): Promise<{ handled: boolean }>;
+  remoteState(): Promise<EstadoDoPlayer>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
@@ -107,6 +110,30 @@ export async function clearResumeNative(key: string): Promise<void> {
   try { await NativePlayer.clearResume({ key }); } catch { /* ignore */ }
 }
 
+// Teclas que o player nativo entende quando vêm do controle remoto do celular (as de navegação viram KeyEvent).
+export type TeclaDoPlayer = 'up' | 'down' | 'left' | 'right' | 'ok' | 'back' | 'rew' | 'ff' | 'playpause'
+  | 'prev-ep' | 'next-ep' | 'watched';
+export interface EstadoDoPlayer {
+  open: boolean;
+  title?: string;
+  season?: number;
+  episode?: number;
+  positionMs?: number;
+  durationMs?: number;
+  playing?: boolean;
+}
+
+// true = o player aberto atendeu a tecla; false = não há player (ou o app não é o nativo).
+export async function teclaNoPlayer(key: TeclaDoPlayer): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try { return (await NativePlayer.remoteKey({ key })).handled === true; } catch { return false; }
+}
+
+export async function estadoDoPlayer(): Promise<EstadoDoPlayer> {
+  if (!Capacitor.isNativePlatform()) return { open: false };
+  try { return await NativePlayer.remoteState(); } catch { return { open: false }; }
+}
+
 // Enviar pra TV: fecha o player nativo aberto (como o Voltar, salvando a posição). true = havia player.
 export async function closeNativePlayer(): Promise<boolean> {
   if (!Capacitor.isNativePlatform()) return false;
@@ -151,13 +178,29 @@ function syncTvProgress(s: CastStatus): boolean {
   return ok;
 }
 
+// Players nativos abertos agora (o play só resolve quando o player fecha). Na TV a página segue "visível" pro Chromium
+// com o player na frente (PaginaViva.java, controle remoto 07/11/2026), então quem só serve pra tela de trás pergunta
+// isto (usePaginaVisivel) pra continuar parado como antes.
+let playersAbertos = 0;
+export const PLAYER_NATIVO_EVENTO = 'wm-player-nativo';
+export function playerNativoAberto(): boolean {
+  return playersAbertos > 0;
+}
+function marcarPlayer(delta: number) {
+  playersAbertos = Math.max(0, playersAbertos + delta);
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(PLAYER_NATIVO_EVENTO));
+}
+
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link
 // que ficou tocando. Só no APK; na web retorna null (o chamador usa o <video>/iframe).
 export async function playNative(opts: PlayOpts): Promise<PlayResult | null> {
   if (!Capacitor.isNativePlatform()) return null;
+  marcarPlayer(+1);
   try {
     return await NativePlayer.play(opts);
   } catch {
     return null;
+  } finally {
+    marcarPlayer(-1);
   }
 }

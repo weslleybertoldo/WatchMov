@@ -9,7 +9,9 @@ import {
   MOVIE_GENRES, TV_GENRES, ANIME_ROWS, ANIME_GENRES, type TmdbMediaType, type TmdbCollectionRef,
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
-import { getCastNow, closeNativePlayer, playNative, type CastNow } from '@/lib/nativePlayer';
+import { getCastNow, closeNativePlayer, playNative, teclaNoPlayer, estadoDoPlayer, type CastNow } from '@/lib/nativePlayer';
+import { executarTecla, oQueToca, type AcoesDaTv, comPrazo } from '@/lib/controleNaTv';
+import type { TvDevice } from '@/lib/tvPair';
 import { Capacitor } from '@capacitor/core';
 import { mimeDoLink } from '@/lib/iptvOrg';
 import { App as CapApp } from '@capacitor/app';
@@ -60,6 +62,7 @@ const HistoryView = telaSobDemanda(() => import('@/components/streaming/HistoryV
 const DownloadView = telaSobDemanda(() => import('@/components/streaming/DownloadView'));
 const ServersView = telaSobDemanda(() => import('@/components/streaming/ServersView'));
 const TvDevicesView = telaSobDemanda(() => import('@/components/streaming/TvDevicesView'));
+const ControleRemotoView = telaSobDemanda(() => import('@/components/streaming/ControleRemotoView'));
 const BugsView = telaSobDemanda(() => import('@/components/streaming/BugsView'));
 const NoticesView = telaSobDemanda(() => import('@/components/streaming/NoticesView'));
 const LiveTvView = telaSobDemanda(() => import('@/components/streaming/LiveTvView'));
@@ -230,6 +233,9 @@ export default function Index() {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [serversOpen, setServersOpen] = useState(false);    // aba Servidores (favorito do Assistir)
   const [tvOpen, setTvOpen] = useState(false);              // aba Entrar na TV (TVs conectadas + Conectar)
+  // Controle remoto (pedido dele 07/11/2026): a lista de TVs e, escolhida uma, o controle dela.
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remoteTv, setRemoteTv] = useState<TvDevice | null>(null);
   const [bugsOpen, setBugsOpen] = useState(false);
   const [liveChannel, setLiveChannel] = useState<Channel | null>(null); // canal ao vivo tocando
   const [exitAsk, setExitAsk] = useState(false);            // "Deseja sair?" do Voltar na aba Início
@@ -379,6 +385,8 @@ export default function Index() {
     if (downloadOpen) { setDownloadOpen(false); return true; }
     if (serversOpen) { setServersOpen(false); return true; }
     if (tvOpen) { setTvOpen(false); return true; }
+    if (remoteTv) { setRemoteTv(null); return true; }
+    if (remoteOpen) { setRemoteOpen(false); return true; }
     if (bugsOpen) { setBugsOpen(false); return true; }
     if (listFilter) { setListFilter(null); return true; }
     if (noticesOpen) { setNoticesOpen(false); return true; }
@@ -390,7 +398,7 @@ export default function Index() {
     // Aba Início sem nada aberto: antes saía direto (pedido dele 26/09/2026: perguntar "Deseja sair?").
     setExitAsk(true);
     return true;
-  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, colecao, universo, colecoesTudo, fecharColecao, fecharUniverso, fecharColecoesTudo, category, tab]);
+  }, [menuFavAberto, exitAsk, liveChannel, selected, closeDetail, historyOpen, downloadOpen, serversOpen, tvOpen, remoteTv, remoteOpen, bugsOpen, settingsOpen, noticesOpen, searchOpen, continueFilter, listFilter, colecao, universo, colecoesTudo, fecharColecao, fecharUniverso, fecharColecoesTudo, category, tab]);
   useAndroidBackButton(handleBack);
 
   // TV: o celular mandou abrir um título (enviar pra TV). Fecha o que estiver por cima e mostra a página dele.
@@ -402,6 +410,14 @@ export default function Index() {
     setAutoPlay(null);
     setSelected(m);
   }, []);
+  const acoesDaTv: AcoesDaTv = {
+    teclaNoPlayer, estadoDoPlayer, fecharPlayer: closeNativePlayer,
+    voltar: () => handleBack(),
+    inicio: () => changeTab('inicio'),
+    capa: () => selected?.posterUrl,
+  };
+  const acoesDaTvRef = useRef(acoesDaTv);
+  acoesDaTvRef.current = acoesDaTv;
   const openFromRemoteRef = useRef(openFromRemote);
   openFromRemoteRef.current = openFromRemote;
   const signOutRef = useRef(signOut);
@@ -418,6 +434,13 @@ export default function Index() {
       if (await closeNativePlayer()) await new Promise(r => setTimeout(r, 600));
       openFromRemoteRef.current(cmd.media);
       return true;
+    }, async (ctl) => {
+      // Controle remoto do celular: só com o WatchMov na frente (no fundo o celular mostra "não respondeu").
+      if (!(await appNaFrente())) return false;
+      // Responde em até ~2 s (o celular espera 2,5): tecla demorada (trocar de episódio) termina sozinha; o que está
+      // tocando sem resposta a tempo vai vazio e o celular mantém o último.
+      if (ctl.action === 'key') await comPrazo(executarTecla(ctl.key, acoesDaTvRef.current), 1200);
+      return { tocando: await comPrazo(oQueToca(acoesDaTvRef.current), 800) };
     });
   }, [tvSid, uid]);
 
@@ -472,7 +495,7 @@ export default function Index() {
   if (searchOpen) meio.push('busca');
   if (settingsOpen) {
     meio.push('painel');
-    const sub = historyOpen ? 'historico' : downloadOpen ? 'downloads' : serversOpen ? 'servidores' : tvOpen ? 'tvs' : bugsOpen ? 'bugs' : '';
+    const sub = historyOpen ? 'historico' : downloadOpen ? 'downloads' : serversOpen ? 'servidores' : tvOpen ? 'tvs' : remoteOpen ? 'controle' : bugsOpen ? 'bugs' : '';
     if (sub) meio.push(`painel:${sub}`);
   }
   if (noticesOpen) meio.push('avisos');
@@ -544,7 +567,7 @@ export default function Index() {
     if (t === tab || isTv()) memoriaRef.current!.esquecer(`aba:${t}`);
     if (t === tab && telaVisivel === telaAba) window.scrollTo(0, 0);   // já na aba, sem nada por cima: só sobe
     setAbasVivas(v => guardarAba(v, t, 'inicio', isTv() ? ABAS_GUARDADAS_TV : ABAS_GUARDADAS_CELULAR));
-    setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setUniverso(null); setColecoesTudo(false);
+    setTab(t); closeDetail(); setCategory(null); setSearchOpen(false); clearSearchCache(); setContinueFilter(null); setListFilter(null); setSettingsOpen(false); setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setRemoteOpen(false); setRemoteTv(null); setBugsOpen(false); setNoticesOpen(false); setLiveChannel(null); setColecao(null); setUniverso(null); setColecoesTudo(false);
   };
 
   // Lupa, sino e engrenagem (pedido dele 27/09/2026): de qualquer tela abrem a tela deles, sem liga/desliga — antes
@@ -553,7 +576,7 @@ export default function Index() {
   const abrirDoTopo = (alvo: 'busca' | 'avisos' | 'painel') => {
     closeDetail(); setCategory(null); setColecao(null); setUniverso(null); setColecoesTudo(false);
     setSearchOpen(alvo === 'busca'); setNoticesOpen(alvo === 'avisos'); setSettingsOpen(alvo === 'painel');
-    setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setBugsOpen(false); setListFilter(null);
+    setHistoryOpen(false); setDownloadOpen(false); setServersOpen(false); setTvOpen(false); setRemoteOpen(false); setRemoteTv(null); setBugsOpen(false); setListFilter(null);
   };
   // Menu de segurar a capa → põe/tira dos favoritos. Título que ainda não está na biblioteca ganha a ficha completa
   // da TMDB (o gênero separa Séries de Animes; as temporadas), igual ao botão de pastinha da página dele.
@@ -610,10 +633,13 @@ export default function Index() {
         <ServersView onBack={() => setServersOpen(false)} />
       ) : tvOpen ? (
         <TvDevicesView onBack={() => setTvOpen(false)} />
+      ) : remoteOpen ? (
+        <ControleRemotoView tv={remoteTv} onEscolherTv={setRemoteTv} onBack={() => setRemoteOpen(false)}
+          onConectarTv={() => { setRemoteOpen(false); setTvOpen(true); }} />
       ) : bugsOpen ? (
         <BugsView onBack={() => setBugsOpen(false)} />
       ) : (
-        <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
+        <SettingsView stats={watchedStats} onHistory={() => setHistoryOpen(true)} onDownload={() => setDownloadOpen(true)} onServers={() => setServersOpen(true)} onBugs={() => setBugsOpen(true)} onTv={() => setTvOpen(true)} onRemote={() => setRemoteOpen(true)} onSignOut={signOut} onBack={() => setSettingsOpen(false)} />
       )
     ) : searchOpen ? (
       <SearchView onOpen={openMedia} />
