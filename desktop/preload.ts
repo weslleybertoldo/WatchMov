@@ -10,4 +10,10 @@ contextBridge.exposeInMainWorld('wmDesktop', {
     ipcRenderer.on('wm:deep-link', ouvir);
     return () => { ipcRenderer.off('wm:deep-link', ouvir); };
   },
+  // Rede de app (rede.ts): cabeçalhos que o servidor usou, repetidos nos pedidos da página ao mesmo host.
+  rede: {
+    cabecalhos: (url: string, cabecalhos: Record<string, string>): Promise<boolean> =>
+      ipcRenderer.invoke('wm:rede-cabecalhos', url, cabecalhos),
+    estado: (): Promise<unknown> => ipcRenderer.invoke('wm:rede-estado'),
+  },
 });

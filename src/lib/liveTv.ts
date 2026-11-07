@@ -3,8 +3,9 @@ import { fetchIptvBrasil, fetchIptvMundo, type IptvChannel } from './iptvOrg';
 
 // Canais ao vivo do SuperFlix. O endpoint /lista?category=canais devolve id, nome,
 // logo, categoria e embed_url (iframe /canal/{id}). NÃO tem CORS → no aparelho a
-// busca vai por CapacitorHttp (nativo, sem CORS); no navegador (dev) cai no fetch
-// e provavelmente é bloqueado — é feature de APK.
+// busca vai por CapacitorHttp (nativo, sem CORS); no app do Windows vai pelo fetch e o
+// processo principal libera o CORS da lista (desktop/rede.ts); no navegador o fetch
+// é bloqueado e só os canais do iptv-org aparecem.
 const BASE = 'https://superflixapi.pro';
 const LIST_URL = `${BASE}/lista?category=canais&format=json`;
 const CACHE_KEY = 'watchmov_livetv';
@@ -52,7 +53,7 @@ async function fetchRaw(): Promise<RawChannel[]> {
     const body = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
     return body?.data ?? [];
   }
-  // navegador (dev): melhor esforço — CORS costuma bloquear.
+  // app do Windows: o CORS sai liberado (desktop/rede.ts). Navegador: melhor esforço — o CORS bloqueia.
   const r = await fetch(LIST_URL, { headers: { Accept: 'application/json' } });
   const body = await r.json();
   return body?.data ?? [];
