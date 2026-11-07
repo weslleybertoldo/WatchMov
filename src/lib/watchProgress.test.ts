@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isSeriesFinished, sortByLastWatched, continuarDe, proximoEpisodio } from './watchProgress';
+import { isSeriesFinished, sortByLastWatched, continuarDe, proximoEpisodio, escondidoDoContinuar } from './watchProgress';
 import type { WatchItem, Season } from '@/types/watch';
 
 const season = (number: number, total: number, watched: number[] | number): Season => ({
@@ -123,5 +123,21 @@ describe('proximoEpisodio — o "próximo" do player vira a temporada (27/10/202
   it('temporada fora da ficha ou ficha vazia → null', () => {
     expect(proximoEpisodio(dhm, 9, 1)).toBeNull();
     expect(proximoEpisodio(undefined, 1, 1)).toBeNull();
+  });
+});
+
+// "Remover da lista" do Continuar assistindo (pedido dele 07/11/2026).
+describe('escondidoDoContinuar', () => {
+  it('sem marca, aparece', () => {
+    expect(escondidoDoContinuar({ lastWatchedAt: '2026-11-07T01:00:00Z' })).toBe(false);
+  });
+  it('removido depois da última vez assistida: fica fora', () => {
+    expect(escondidoDoContinuar({ lastWatchedAt: '2026-11-07T01:00:00Z', continueHiddenAt: '2026-11-07T02:00:00Z' })).toBe(true);
+  });
+  it('assistiu de novo depois de remover: volta pra fileira', () => {
+    expect(escondidoDoContinuar({ lastWatchedAt: '2026-11-07T03:00:00Z', continueHiddenAt: '2026-11-07T02:00:00Z' })).toBe(false);
+  });
+  it('removido e sem data de assistido: fica fora', () => {
+    expect(escondidoDoContinuar({ continueHiddenAt: '2026-11-07T02:00:00Z' })).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ interface MediaRowProps {
   onOpen: (media: MediaSummary) => void;
   onSeeAll?: () => void;
   prioridade?: boolean;                 // 1ª fileira da tela: as capas da frente baixam já (sem esperar o lazy)
+  continuar?: boolean;                  // fileira do Continuar assistindo: o segurar oferece o "Remover da lista"
 }
 
 // cache simples em memória por cacheKey
@@ -52,7 +53,7 @@ const ESPERA_OCIOSO_MS = 1500;       // a aba aparece primeiro; o resto monta de
 const CARTAZES_DE_ENTRADA_TV = 8;
 const fileirasCompletas = new Set<string>();
 
-function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, prioridade }: MediaRowProps) {
+function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, prioridade, continuar }: MediaRowProps) {
   // Fileira com a lista pronta (continuar, favoritos) desenha a lista recebida direto; a da TMDB guarda a dela no estado.
   // W2 do raio-x (02/11/2026): antes a lista recebida era copiada pro estado num efeito — cada lista nova desenhava a
   // fileira 2 vezes, a 1ª ainda com a lista velha.
@@ -167,7 +168,7 @@ function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, 
               {data.slice(0, faltaCompletar ? CARTAZES_DE_ENTRADA_TV : 10).map((m, i) => (
                 <div key={`${m.type}-${m.tmdbId}`} className="snap-start">
                   <MediaCard media={m} onOpen={onOpen} rank={numbered ? i + 1 : undefined}
-                    prioridade={prioridade && i < CAPAS_PRIORITARIAS} />
+                    prioridade={prioridade && i < CAPAS_PRIORITARIAS} continuar={continuar} />
                 </div>
               ))}
               {onSeeAll && !faltaCompletar && (
@@ -196,7 +197,7 @@ function MediaRow({ title, items, loader, cacheKey, numbered, onOpen, onSeeAll, 
 // (setState, useCallback) — a fileira usa as do último desenho dela. `onOpen` entra (o Index passa um useCallback).
 function mesmaFileira(a: MediaRowProps, b: MediaRowProps): boolean {
   return a.title === b.title && a.items === b.items && a.cacheKey === b.cacheKey && a.numbered === b.numbered
-    && a.prioridade === b.prioridade && a.onOpen === b.onOpen && !!a.onSeeAll === !!b.onSeeAll;
+    && a.prioridade === b.prioridade && a.onOpen === b.onOpen && !!a.onSeeAll === !!b.onSeeAll && !!a.continuar === !!b.continuar;
 }
 
 export default memo(MediaRow, mesmaFileira);

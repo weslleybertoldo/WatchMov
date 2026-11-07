@@ -22,6 +22,9 @@ export interface WatchItem {
   // Common fields
   comment?: string;
   lastWatchedAt?: string; // ISO date
+  // "Remover da lista" do Continuar assistindo (pedido dele 07/11/2026): quando saiu da fileira. Volta sozinho quando
+  // ele assiste de novo (lastWatchedAt mais novo); o progresso e os episódios marcados não mudam.
+  continueHiddenAt?: string | null;
   createdAt: string;
   // TMDB metadata
   tmdbId?: number;

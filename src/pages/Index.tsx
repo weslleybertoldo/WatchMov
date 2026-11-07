@@ -235,10 +235,10 @@ export default function Index() {
   const [exitAsk, setExitAsk] = useState(false);            // "Deseja sair?" do Voltar na aba Início
   // Menu de segurar a capa (favoritos). O alvo fica guardado depois de fechar pra animação de saída.
   const [menuFavAberto, setMenuFavAberto] = useState(false);
-  const [menuFavAlvo, setMenuFavAlvo] = useState<{ media: MediaSummary; favorito: boolean } | null>(null);
+  const [menuFavAlvo, setMenuFavAlvo] = useState<{ media: MediaSummary; favorito: boolean; continuar?: boolean } | null>(null);
   useEffect(() => {
-    registrarMenuFavorito((m) => {
-      setMenuFavAlvo({ media: m, favorito: ehFavorito(m.type, m.tmdbId) });
+    registrarMenuFavorito((m, origem) => {
+      setMenuFavAlvo({ media: m, favorito: ehFavorito(m.type, m.tmdbId), continuar: !!origem.continuar });
       setMenuFavAberto(true);
     });
     return () => registrarMenuFavorito(null);
@@ -559,6 +559,16 @@ export default function Index() {
   // da TMDB (o gênero separa Séries de Animes; as temporadas), igual ao botão de pastinha da página dele.
   // W4 do raio-x (02/11/2026): o aviso sai NA HORA do OK (estado otimista) — antes ele esperava a TMDB e o banco (título
   // fora da biblioteca: 0,3–0,8 s no celular). Deu erro → o aviso de erro troca o de sucesso.
+  // "Remover da lista" (pedido dele 07/11/2026): sai do Continuar assistindo e volta sozinho quando ele assistir de novo;
+  // o progresso e os episódios marcados ficam como estão.
+  const removerDoContinuar = (m: MediaSummary) => {
+    const tipo: 'movie' | 'series' = m.type === 'tv' ? 'series' : 'movie';
+    const item = store.data.items.find(i => i.tmdbId === m.tmdbId && i.type === tipo);
+    if (!item) return;
+    void store.updateItem(item.id, { continueHiddenAt: new Date().toISOString() });
+    toast.success('Removido do Continuar assistindo');
+  };
+
   const alternarFavorito = async (m: MediaSummary, favoritar: boolean) => {
     const aviso = toast.success(favoritar ? 'Adicionado aos favoritos' : 'Removido dos favoritos');
     const tipo: 'movie' | 'series' = m.type === 'tv' ? 'series' : 'movie';
@@ -619,13 +629,13 @@ export default function Index() {
       <div className="space-y-6">
         <HeroCarousel onOpen={openMedia} />
         {continueMovies.length > 0 && (
-          <MediaRow title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} prioridade={primeiraDoInicio === 'cf'} />
+          <MediaRow continuar title="Continuar assistindo seus filmes" items={continueMovies} onOpen={openMedia} onSeeAll={() => openContinue('movie')} prioridade={primeiraDoInicio === 'cf'} />
         )}
         {continueSeries.length > 0 && (
-          <MediaRow title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} prioridade={primeiraDoInicio === 'cs'} />
+          <MediaRow continuar title="Continuar assistindo suas séries" items={continueSeries} onOpen={openMedia} onSeeAll={() => openContinue('series')} prioridade={primeiraDoInicio === 'cs'} />
         )}
         {continueAnimes.length > 0 && (
-          <MediaRow title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} prioridade={primeiraDoInicio === 'ca'} />
+          <MediaRow continuar title="Continuar assistindo seus animes" items={continueAnimes} onOpen={openMedia} onSeeAll={() => openContinue('anime')} prioridade={primeiraDoInicio === 'ca'} />
         )}
         <MediaRow title="🔥 Top 10 da semana" numbered cacheKey="top10-movie"
           loader={() => trendingWeek('movie')} onOpen={openMedia} prioridade={primeiraDoInicio === 'top10'} />
@@ -805,7 +815,8 @@ export default function Index() {
       </AlertDialog>
 
       <FavoriteMenu aberto={menuFavAberto} alvo={menuFavAlvo} onFechar={() => setMenuFavAberto(false)}
-        onAlternar={(m, favoritar) => { void alternarFavorito(m, favoritar); }} />
+        onAlternar={(m, favoritar) => { void alternarFavorito(m, favoritar); }}
+        onRemoverDaLista={removerDoContinuar} />
 
       {/* Bottom nav (mobile) */}
       <nav className="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-background border-t border-border flex">

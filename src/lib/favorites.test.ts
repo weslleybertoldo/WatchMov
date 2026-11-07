@@ -60,7 +60,16 @@ describe('menu de segurar a capa', () => {
     const abrir = vi.fn();
     registrarMenuFavorito(abrir);
     expect(pedirMenuFavorito(m)).toBe(true);
-    expect(abrir).toHaveBeenCalledWith(m);
+    expect(abrir).toHaveBeenCalledWith(m, {});
+    registrarMenuFavorito(null);
+  });
+
+  it('a capa do Continuar assistindo avisa a origem pro menu (Remover da lista)', () => {
+    const m: MediaSummary = { tmdbId: 2, title: 'B', type: 'tv' };
+    const abrir = vi.fn();
+    registrarMenuFavorito(abrir);
+    pedirMenuFavorito(m, { continuar: true });
+    expect(abrir).toHaveBeenCalledWith(m, { continuar: true });
     registrarMenuFavorito(null);
   });
 });

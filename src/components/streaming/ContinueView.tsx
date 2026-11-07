@@ -39,7 +39,7 @@ export default function ContinueView({ entries, title = 'Continuar assistindo', 
         <Grade itens={entries} chave={e => `${e.summary.type}-${e.summary.tmdbId}`}>
           {({ id, summary }) => (
             <div className="relative">
-              <MediaCard media={summary} onClick={() => editing ? onRemove(id) : onOpen(summary)} />
+              <MediaCard media={summary} continuar onClick={() => editing ? onRemove(id) : onOpen(summary)} />
               {editing && (
                 <button
                   onClick={() => onRemove(id)}
