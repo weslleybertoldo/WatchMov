@@ -98,6 +98,36 @@
             android:stopWithTask="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Widget "Controle da TV" na tela inicial: os botões do Controle remoto sem abrir o app. Exportado porque
+             é o sistema que manda as atualizações; ele só desenha (quem manda tecla é o ControleWidgetTecla). Na TV
+             (mesmo APK) não existe tela inicial com widget: ele simplesmente não aparece. -->
+        <receiver
+            android:name=".ControleWidget"
+            android:label="@string/wm_widget_nome"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/wm_widget_controle_info" />
+        </receiver>
+
+        <!-- Toque nos botões do widget → tecla pra TV. NÃO exportado: nenhum outro app manda tecla pra TV. -->
+        <receiver
+            android:name=".ControleWidgetTecla"
+            android:exported="false" />
+
+        <!-- "Trocar TV" do widget: janelinha com as TVs da conta. Tarefa própria (taskAffinity vazio) e fora dos
+             recentes: abre por cima da tela inicial sem trazer o app junto; sem histórico, some ao sair dela. -->
+        <activity
+            android:name=".TrocarTvActivity"
+            android:theme="@style/WmDialogoTv"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:noHistory="true"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -125,6 +155,8 @@
     <!-- Espelhamento com o app fechado: WifiLock (alto desempenho) + wake lock parcial
          enquanto a TV puxa o vídeo do proxy do celular -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Vibração curtinha a cada toque nos botões do widget "Controle da TV" -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Exportar o baixado pra Movies/WatchMov: só Android ≤ 9 precisa (10+ usa MediaStore) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />

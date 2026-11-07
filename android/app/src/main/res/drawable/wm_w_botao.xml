@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Botão largo do widget (Voltar, Início, episódios, aviso): fundo do botão do app; o toque acende roxo por dentro. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/wm_w_roxo_toque">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/wm_w_botao" />
+            <stroke android:width="1dp" android:color="@color/wm_w_borda" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</ripple>

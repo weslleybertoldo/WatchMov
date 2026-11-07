@@ -5,12 +5,19 @@ import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 const m = vi.hoisted(() => ({
   mandar: vi.fn(),
   listar: vi.fn(),
+  preparar: vi.fn(),
+  guardarTv: vi.fn(),
+  estadoWidget: vi.fn(),
+  fixar: vi.fn(),
 }));
 vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "jwt", user: { id: "u1" } } } })) } },
 }));
 vi.mock("@/lib/tvPair", () => ({ listTvDevices: m.listar }));
 vi.mock("@/lib/tvRemote", () => ({ mandarControle: m.mandar, newCmdId: () => `id-${Math.random()}` }));
+vi.mock("@/lib/widgetControle", () => ({
+  prepararWidget: m.preparar, guardarTvNoWidget: m.guardarTv, estadoDoWidget: m.estadoWidget, fixarWidget: m.fixar,
+}));
 
 import ControleRemotoView, { ULTIMA_TV } from "./ControleRemotoView";
 
@@ -19,7 +26,11 @@ const projetor = { ...sala, session_id: "tv-proj", name: "Projetor", model: "TV 
 const tocando = { title: "Re:ZERO", season: 1, episode: 2, positionMs: 492000, durationMs: 1420000, playing: true };
 const teclas = () => m.mandar.mock.calls.map((c) => c[1]).filter((c) => c.action === "key").map((c) => c.key);
 
-beforeEach(() => { m.mandar.mockReset(); m.listar.mockReset(); localStorage.clear(); });
+beforeEach(() => {
+  for (const f of [m.mandar, m.listar, m.preparar, m.guardarTv, m.estadoWidget, m.fixar]) f.mockReset();
+  m.estadoWidget.mockResolvedValue(null);   // navegador: sem widget
+  localStorage.clear();
+});
 afterEach(() => { vi.useRealTimers(); });
 
 describe("ControleRemotoView — escolher a TV", () => {
@@ -33,6 +44,9 @@ describe("ControleRemotoView — escolher a TV", () => {
     fireEvent.click(screen.getByText("TV da sala"));
     expect(escolher).toHaveBeenCalledWith(sala);
     expect(JSON.parse(localStorage.getItem(ULTIMA_TV)!)).toEqual({ session_id: "tv-sala", name: "TV da sala" });
+    // Widget da tela inicial: fica com a lista (e o token, com o login do app) e com a TV escolhida.
+    expect(m.preparar).toHaveBeenCalledWith("jwt", [sala, projetor]);
+    expect(m.guardarTv).toHaveBeenCalledWith(sala);
   });
   it("conta sem TV: tela vazia com Conectar uma TV", async () => {
     m.listar.mockResolvedValue([]);
@@ -85,6 +99,23 @@ describe("ControleRemotoView — o controle", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
     expect(await screen.findByText("Conectada")).toBeTruthy();
     expect(screen.queryByText("A TV da sala não respondeu")).toBeNull();
+  });
+  it("celular sem o widget na tela: botão Adicionar o controle à tela inicial", async () => {
+    m.mandar.mockResolvedValue({ result: "ok", tocando: null });
+    m.estadoWidget.mockResolvedValue({ temToken: true, tv: null, widgets: 0, suportaFixar: true });
+    m.fixar.mockResolvedValue(true);
+    render(<ControleRemotoView tv={sala} onEscolherTv={() => {}} onBack={() => {}} onConectarTv={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Adicionar o controle à tela inicial/ }));
+    expect(m.fixar).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Adicionar o controle à tela inicial/ })).toBeNull();
+  });
+  it("widget já na tela (ou launcher que não aceita): sem o botão", async () => {
+    m.mandar.mockResolvedValue({ result: "ok", tocando: null });
+    m.estadoWidget.mockResolvedValue({ temToken: true, tv: null, widgets: 1, suportaFixar: true });
+    render(<ControleRemotoView tv={sala} onEscolherTv={() => {}} onBack={() => {}} onConectarTv={() => {}} />);
+    await screen.findByText("Conectada");
+    await waitFor(() => expect(m.estadoWidget).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /Adicionar o controle à tela inicial/ })).toBeNull();
   });
   it("resposta sem 'tocando' (a TV não soube a tempo) mantém a faixa que já estava", async () => {
     m.mandar.mockResolvedValueOnce({ result: "ok", tocando });

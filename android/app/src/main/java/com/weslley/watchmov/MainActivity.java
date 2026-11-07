@@ -89,8 +89,12 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(Mp4DownloadPlugin.class);
         registerPlugin(ResolverPlugin.class);
         registerPlugin(TvMode.class);
+        registerPlugin(WidgetControlePlugin.class);   // widget "Controle da TV" da tela inicial
         super.onCreate(savedInstanceState);
         if (TvMode.isTv(this)) tirarBrowserNaTv();
+        // Widget "Controle da TV": "forçar parada" (pela pessoa ou pela economia de bateria de alguns aparelhos) cancela
+        // os PendingIntents do app e os botões param de responder. Abrir o app redesenha o widget com cliques novos.
+        if (!TvMode.isTv(this)) ControleWidget.atualizarTodos(this);
 
         WebView webView = this.bridge.getWebView();
         StreamSnifferPlugin.desativarHeaderApp(webView);
