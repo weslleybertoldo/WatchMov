@@ -16,11 +16,19 @@ if (-not $app) {
   throw 'o instalador não pôs o WatchMov.exe em LOCALAPPDATA\Programs'
 }
 Write-Output "app instalado: $app"
-reg query "HKCU\Software\Classes\com.weslley.watchmov" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não foi registrado no Windows' }
-Write-Output 'endereço de volta do login registrado no Windows'
 # Se o instalador abriu o app no fim, fecha: o smoke abre o dele (o app só aceita 1 cópia aberta).
 Get-Process WatchMov -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 node smoke.mjs --exe $app --saida smoke-prints
 if ($LASTEXITCODE -ne 0) { throw "smoke falhou ($LASTEXITCODE)" }
+# O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
+reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
+if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }
+# E o Windows abre o app pelo link, como na volta do navegador depois do login do Google.
+Get-Process WatchMov -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process 'com.weslley.watchmov://login-callback#error=teste_do_ci'
+$aberto = $false
+for ($i = 0; $i -lt 15 -and -not $aberto; $i++) { Start-Sleep -Seconds 1; $aberto = [bool](Get-Process WatchMov -ErrorAction SilentlyContinue) }
+Get-Process WatchMov -ErrorAction SilentlyContinue | Stop-Process -Force
+if (-not $aberto) { throw 'o Windows não abriu o app pelo link com.weslley.watchmov://' }
+Write-Output 'o Windows abriu o app pelo link de volta do login'
