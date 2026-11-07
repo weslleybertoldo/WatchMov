@@ -46,14 +46,7 @@ jobs:
           WM_SUPABASE_ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           WM_SMOKE_EMAIL: smoke-claude@teste.com
           WM_SMOKE_SENHA: ${{ secrets.WM_SMOKE_SENHA }}
-        run: |
-          $setup = Get-ChildItem release\WatchMov-Setup-*.exe | Select-Object -First 1
-          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
-          $app = "$env:LOCALAPPDATA\Programs\WatchMov\WatchMov.exe"
-          if (-not (Test-Path $app)) { throw 'o instalador não pôs o app em LOCALAPPDATA\Programs\WatchMov' }
-          reg query "HKCU\Software\Classes\com.weslley.watchmov"
-          if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login não foi registrado no Windows' }
-          node smoke.mjs --exe $app --saida smoke-prints
+        run: ./ci-windows.ps1
 
       - name: Upload prints and installer
         if: always()
