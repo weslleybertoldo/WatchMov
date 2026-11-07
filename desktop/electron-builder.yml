@@ -1,0 +1,35 @@
+# Instalador do WatchMov para Windows. A janela abre o site de verdade (main.ts); aqui vai só o app (out/).
+appId: com.weslley.watchmov
+productName: WatchMov
+copyright: Copyright © 2026 Weslley Bertoldo
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+win:
+  target: nsis
+  icon: build/icon.ico
+nsis:
+  # Por usuário, sem pedir administrador; atalho na área de trabalho e no menu Iniciar.
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: WatchMov
+  differentialPackage: false
+  artifactName: WatchMov-Setup-${version}.${ext}
+linux:
+  # Só pra testar no notebook (npm run pasta); não vai pra release.
+  target: dir
+  icon: build/icon.png
+protocols:
+  - name: WatchMov
+    schemes:
+      - com.weslley.watchmov
+# Atualização automática: o latest.yml e o .exe vão como anexos da release do APK (mesma versão). O endereço
+# releases/latest/download não passa pela API do GitHub (sem o limite de 60 consultas por hora).
+publish:
+  - provider: generic
+    url: https://github.com/weslleybertoldo/WatchMov/releases/latest/download

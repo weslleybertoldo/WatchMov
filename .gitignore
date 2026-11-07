@@ -31,3 +31,8 @@ supabase/.temp
 
 # Firebase (repo publico): vem de secret no CI
 android/app/google-services.json
+
+# App do Windows (Electron, pasta desktop/)
+desktop/out
+desktop/release
+smoke-prints

@@ -18,6 +18,9 @@ jobs:
     # quebra o YAML (escalar plano) e o workflow INTEIRO falha com 0s/sem jobs.
     if: "github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore: bump version')"
     runs-on: ubuntu-latest
+    outputs:
+      # Versão do APK = a do app do Windows (job windows, mesma release).
+      version: ${{ steps.version.outputs.current }}
 
     steps:
       - name: Checkout code
@@ -159,3 +162,72 @@ jobs:
           done
           echo "::error::Falha bump apos 5 tentativas"
           exit 1
+
+  windows:
+    # App do Windows (desktop/): o instalador e o latest.yml vão na MESMA release do APK, com a mesma versão.
+    # O atualizador do celular só pega .apk (UpdateChecker.tsx) e o do Windows só o latest.yml + .exe.
+    # Só publica se o app instalado passar no smoke contra o site de produção já com o código deste commit.
+    needs: build
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run windows
+
+      - name: Wait for the Vercel production deploy of this commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for ($i = 0; $i -lt 60; $i++) {
+            $dep = gh api "repos/${{ github.repository }}/deployments?sha=${{ github.sha }}&environment=Production" --jq '.[0].id'
+            if ($dep) {
+              $estado = gh api "repos/${{ github.repository }}/deployments/$dep/statuses" --jq '.[0].state'
+              Write-Output "deploy $dep : $estado"
+              if ($estado -eq 'success') { exit 0 }
+              if ($estado -eq 'failure' -or $estado -eq 'error') { throw "deploy da Vercel falhou ($estado)" }
+            }
+            Start-Sleep -Seconds 10
+          }
+          throw 'o deploy da Vercel não ficou pronto em 10 min'
+
+      - name: Install and smoke test (production site)
+        shell: pwsh
+        env:
+          WM_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          WM_SUPABASE_ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          WM_SMOKE_EMAIL: smoke-claude@teste.com
+          WM_SMOKE_SENHA: ${{ secrets.WM_SMOKE_SENHA }}
+        run: ./ci-windows.ps1
+
+      - name: Upload smoke prints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WatchMov-Windows-v${{ needs.build.outputs.version }}-prints
+          path: desktop/smoke-prints/
+          retention-days: 30
+
+      - name: Add the Windows installer to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          files: |
+            desktop/release/WatchMov-Setup-*.exe
+            desktop/release/latest.yml
+          make_latest: true
