@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { AppData, Section, WatchItem, Season, DashboardStats } from '@/types/watch';
 import { supabase } from '@/lib/supabase';
-import { isSeriesFinished } from '@/lib/watchProgress';
+import { escondidoDoContinuar, isSeriesFinished } from '@/lib/watchProgress';
 import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
 
@@ -31,6 +31,7 @@ interface DbItemRow {
   seasons: Season[] | null;
   comment: string | null;
   last_watched_at: string | null;
+  continue_hidden_at?: string | null;
   created_at: string;
   tmdb_id: number | null;
   imdb_id: string | null;
@@ -63,6 +64,7 @@ function dbItemToLocal(row: DbItemRow): WatchItem {
     seasons: row.seasons ?? undefined,
     comment: row.comment ?? undefined,
     lastWatchedAt: row.last_watched_at ?? undefined,
+    continueHiddenAt: row.continue_hidden_at ?? undefined,
     createdAt: row.created_at,
     tmdbId: row.tmdb_id ?? undefined,
     imdbId: row.imdb_id ?? undefined,
@@ -279,6 +281,7 @@ export function useWatchStore(userId?: string) {
     if (updates.seasons !== undefined) dbUpdates.seasons = updates.seasons;
     if (updates.comment !== undefined) dbUpdates.comment = updates.comment;
     if (updates.lastWatchedAt !== undefined) dbUpdates.last_watched_at = updates.lastWatchedAt;
+    if (updates.continueHiddenAt !== undefined) dbUpdates.continue_hidden_at = updates.continueHiddenAt;
     if (updates.tmdbId !== undefined) dbUpdates.tmdb_id = updates.tmdbId;
     if (updates.imdbId !== undefined) dbUpdates.imdb_id = updates.imdbId;
     if (updates.posterUrl !== undefined) dbUpdates.poster_url = updates.posterUrl;
@@ -596,7 +599,7 @@ export function useWatchStore(userId?: string) {
   // W2 do raio-x (02/11/2026): as duas listas só são refeitas quando a biblioteca muda — eram listas novas a cada
   // desenho e as fileiras do Início (memo) redesenhariam todas as capas à toa.
   const continueWatching = useMemo(() => data.items
-    .filter(i => !i.completed && !isSeriesFinished(i) && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false) || !!i.lastWatchedAt))
+    .filter(i => !i.completed && !isSeriesFinished(i) && !escondidoDoContinuar(i) && ((i.watchedDuration || 0) > 0 || (i.seasons?.some(s => s.watchedEpisodes > 0) ?? false) || !!i.lastWatchedAt))
     .sort((a, b) => (b.lastWatchedAt ? new Date(b.lastWatchedAt).getTime() : 0) - (a.lastWatchedAt ? new Date(a.lastWatchedAt).getTime() : 0)), [data.items]);
 
   const myList = useMemo(() => data.items

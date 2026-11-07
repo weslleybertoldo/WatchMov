@@ -3,22 +3,25 @@ import type { MediaSummary } from '@/lib/tmdb';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { BookmarkMinus, BookmarkPlus, Film, Tv, X } from 'lucide-react';
+import { BookmarkMinus, BookmarkPlus, Film, ListX, Tv, X } from 'lucide-react';
 
 interface FavoriteMenuProps {
   aberto: boolean;
   // Capa que foi segurada e se era favorita na hora. Fica guardada depois de fechar, pra animação de saída não
   // mostrar a caixa vazia.
-  alvo: { media: MediaSummary; favorito: boolean } | null;
+  // `continuar`: a capa segurada é do Continuar assistindo — só aí aparece o "Remover da lista" (pedido dele 07/11/2026).
+  alvo: { media: MediaSummary; favorito: boolean; continuar?: boolean } | null;
   onAlternar: (m: MediaSummary, favoritar: boolean) => void;
+  onRemoverDaLista?: (m: MediaSummary) => void;
   onFechar: () => void;
 }
 
 // Menu de segurar a capa (pedido dele 01/11/2026): o título, se já está nos favoritos e a ação de pôr/tirar com o
 // foco nela (na TV o OK confirma direto; Voltar ou Cancelar fecham sem mudar nada).
-export default function FavoriteMenu({ aberto, alvo, onAlternar, onFechar }: FavoriteMenuProps) {
+export default function FavoriteMenu({ aberto, alvo, onAlternar, onRemoverDaLista, onFechar }: FavoriteMenuProps) {
   const media = alvo?.media;
   const favorito = !!alvo?.favorito;
+  const removerDaLista = alvo?.continuar && onRemoverDaLista ? onRemoverDaLista : null;
   const acao = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog open={aberto && !!alvo} onOpenChange={(abrir) => { if (!abrir) onFechar(); }}>
@@ -46,6 +49,12 @@ export default function FavoriteMenu({ aberto, alvo, onAlternar, onFechar }: Fav
                 {favorito ? <BookmarkMinus className="w-4 h-4" /> : <BookmarkPlus className="w-4 h-4" />}
                 {favorito ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
               </AlertDialogAction>
+              {removerDaLista && (
+                <AlertDialogAction className="w-full justify-start gap-2.5 h-11 border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => removerDaLista(media)}>
+                  <ListX className="w-4 h-4" /> Remover da lista
+                </AlertDialogAction>
+              )}
               <AlertDialogCancel className="w-full justify-start gap-2.5 h-11 mt-0 sm:mt-0">
                 <X className="w-4 h-4" /> Cancelar
               </AlertDialogCancel>

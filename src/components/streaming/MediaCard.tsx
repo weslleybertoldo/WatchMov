@@ -14,6 +14,7 @@ interface MediaCardProps {
   onOpen?: (media: MediaSummary) => void;
   rank?: number; // numeração Top 10
   prioridade?: boolean; // W1 do raio-x: capa da frente da 1ª fileira baixa já (sem o lazy)
+  continuar?: boolean;   // capa do Continuar assistindo: o menu de segurar ganha o "Remover da lista"
 }
 
 // Ainda não lançou (data futura) → tag "Em breve": avisa que não dá pra assistir.
@@ -49,11 +50,11 @@ function ouvirSegurarOk() {
   document.addEventListener('tv-segurar', (e) => {
     const capa = (e.target as Element | null)?.closest?.('[data-tv-card]');
     const ficha = capa ? fichaDaCapa.get(capa) : undefined;
-    if (ficha) pedirMenuFavorito(ficha.current);
+    if (ficha) pedirMenuFavorito(ficha.current, { continuar: capa?.hasAttribute('data-continuar') });
   });
 }
 
-function MediaCard({ media, onClick, onOpen, rank, prioridade }: MediaCardProps) {
+function MediaCard({ media, onClick, onOpen, rank, prioridade, continuar }: MediaCardProps) {
   const rating = formatRating(media.rating, media.votes);
   // W1 do raio-x (02/11/2026): no cartaz a capa é sempre a w342 (a da biblioteca vem em w500, a da página do título).
   const capa = capaDeFileira(media.posterUrl);
@@ -67,7 +68,9 @@ function MediaCard({ media, onClick, onOpen, rank, prioridade }: MediaCardProps)
   const favorito = useEhFavorito(media.type, media.tmdbId);
   const mediaRef = useRef(media);
   mediaRef.current = media;
-  const { handlers: segurar, engolirClique } = useSegurar(() => { pedirMenuFavorito(mediaRef.current); });
+  const continuarRef = useRef(continuar);
+  continuarRef.current = continuar;
+  const { handlers: segurar, engolirClique } = useSegurar(() => { pedirMenuFavorito(mediaRef.current, { continuar: !!continuarRef.current }); });
   const registrarCapa = useCallback((el: HTMLButtonElement | null) => {
     if (!el) return;
     ouvirSegurarOk();
@@ -84,6 +87,7 @@ function MediaCard({ media, onClick, onOpen, rank, prioridade }: MediaCardProps)
       {...segurar}
       data-tv-card
       data-tv-hold
+      data-continuar={continuar ? '' : undefined}
       data-tv-key={`${media.type}-${media.tmdbId}`}
       className="toque relative shrink-0 w-28 sm:w-32 text-left group select-none [-webkit-touch-callout:none]"
     >

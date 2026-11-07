@@ -138,7 +138,30 @@ describe("MediaCard — favoritos", () => {
     const [, segunda] = getAllByRole("button");
     act(() => { segunda.dispatchEvent(new CustomEvent("tv-segurar", { bubbles: true })); });
     expect(abrirMenu).toHaveBeenCalledTimes(1);
-    expect(abrirMenu).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 27 }));
+    expect(abrirMenu).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 27 }), { continuar: false });
+  });
+
+  // Remover da lista (pedido dele 07/11/2026): só a capa do Continuar assistindo avisa o menu.
+  it("capa do Continuar: segurar (celular) e segurar o OK (TV) avisam a origem; capa comum não", () => {
+    vi.useFakeTimers();
+    const { getAllByRole } = render(<div>
+      <MediaCard media={cartaz(30)} continuar onClick={() => {}} />
+      <MediaCard media={cartaz(31)} onClick={() => {}} />
+    </div>);
+    const [doContinuar, comum] = getAllByRole("button");
+    expect(doContinuar.hasAttribute("data-continuar")).toBe(true);
+    expect(comum.hasAttribute("data-continuar")).toBe(false);
+
+    fireEvent.pointerDown(doContinuar, { button: 0, clientX: 10, clientY: 10 });
+    act(() => { vi.advanceTimersByTime(SEGURAR_TOQUE_MS); });
+    fireEvent.pointerUp(doContinuar, { button: 0 });
+    expect(abrirMenu).toHaveBeenLastCalledWith(expect.objectContaining({ tmdbId: 30 }), { continuar: true });
+
+    act(() => { doContinuar.dispatchEvent(new CustomEvent("tv-segurar", { bubbles: true })); });
+    expect(abrirMenu).toHaveBeenLastCalledWith(expect.objectContaining({ tmdbId: 30 }), { continuar: true });
+
+    act(() => { comum.dispatchEvent(new CustomEvent("tv-segurar", { bubbles: true })); });
+    expect(abrirMenu).toHaveBeenLastCalledWith(expect.objectContaining({ tmdbId: 31 }), { continuar: false });
   });
 
   it("onOpen (o da fileira) recebe a ficha da capa no toque", () => {
@@ -153,6 +176,6 @@ describe("MediaCard — favoritos", () => {
     const capa = getByRole("button");
     expect(capa).toHaveAttribute("data-tv-hold");
     act(() => { capa.dispatchEvent(new CustomEvent("tv-segurar", { bubbles: true })); });
-    expect(abrirMenu).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 25 }));
+    expect(abrirMenu).toHaveBeenCalledWith(expect.objectContaining({ tmdbId: 25 }), { continuar: false });
   });
 });

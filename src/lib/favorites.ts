@@ -41,15 +41,17 @@ export function chavesDosFavoritos(items: WatchItem[]): Set<string> {
 }
 
 // Menu do "segurar": a capa pede, o Index (dono do store) mostra. Um menu só pro app inteiro.
-let abrirMenu: ((m: MediaSummary) => void) | null = null;
+// `continuar`: a capa é do Continuar assistindo — só ali o menu mostra o "Remover da lista" (pedido dele 07/11/2026).
+export interface OrigemDoMenu { continuar?: boolean }
+let abrirMenu: ((m: MediaSummary, origem: OrigemDoMenu) => void) | null = null;
 
-export function registrarMenuFavorito(f: ((m: MediaSummary) => void) | null) {
+export function registrarMenuFavorito(f: ((m: MediaSummary, origem: OrigemDoMenu) => void) | null) {
   abrirMenu = f;
 }
 
-export function pedirMenuFavorito(m: MediaSummary): boolean {
+export function pedirMenuFavorito(m: MediaSummary, origem: OrigemDoMenu = {}): boolean {
   if (!abrirMenu) return false;
-  abrirMenu(m);
+  abrirMenu(m, origem);
   return true;
 }
 

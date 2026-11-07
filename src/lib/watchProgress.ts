@@ -139,3 +139,11 @@ export function continueLabel(item: WatchItem): string | undefined {
   const total = s?.totalEpisodes;
   return `EP ${episode}${total ? `/${total}` : ''} | Temporada ${season}`;
 }
+
+// "Remover da lista" (pedido dele 07/11/2026): o título fica fora do Continuar assistindo até ser assistido de novo —
+// qualquer gravação de progresso renova o lastWatchedAt e ele volta sozinho pra fileira.
+export function escondidoDoContinuar(i: Pick<WatchItem, 'continueHiddenAt' | 'lastWatchedAt'>): boolean {
+  if (!i.continueHiddenAt) return false;
+  if (!i.lastWatchedAt) return true;
+  return new Date(i.continueHiddenAt).getTime() >= new Date(i.lastWatchedAt).getTime();
+}
