@@ -36,7 +36,7 @@ function VersaoDe($caminho) {
 }
 $antes = VersaoDe $exe
 Write-Output "app instalado: $exe (versão $antes)"
-if ($antes -eq $Versao) { throw "a anterior instalou como $antes: não dá pra provar a atualização" }
+if ($antes -eq $Versao) { throw "a anterior instalou como ${antes}: não dá pra provar a atualização" }
 Get-Process WatchMov -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 

@@ -14,9 +14,14 @@ on:
       site:
         description: 'Site que o app abre'
         default: 'https://watchmov-staging.vercel.app/'
+      atualizacao:
+        description: 'Só a prova da atualização: o .exe da release anterior se atualiza sozinho pra Latest'
+        type: boolean
+        default: false
 
 jobs:
   windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.atualizacao }}
     runs-on: windows-latest
     defaults:
       run:
@@ -60,3 +65,36 @@ jobs:
             desktop/smoke-prints/
             desktop/release/WatchMov-Setup-*.exe
           retention-days: 7
+
+  atualizacao:
+    # Prova sob demanda (gh workflow run desktop-pr.yml -f atualizacao=true): instala o .exe da release anterior e
+    # confere que ele acha a Latest, baixa e se instala sozinho — o mesmo caminho do PC dele, sem gastar uma release.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.atualizacao }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Update test (previous release updates itself to Latest)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = gh release view --repo ${{ github.repository }} --json tagName --jq .tagName
+          $versao = $tag.TrimStart('v')
+          if (($versao -split '\.').Count -eq 2) { $versao = "$versao.0" }   # = versao.cjs: 5.21 vira 5.21.0
+          Write-Output "Latest: $tag (app $versao)"
+          ./ci-atualizacao.ps1 -Tag $tag -Versao $versao
