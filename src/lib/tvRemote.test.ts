@@ -9,10 +9,11 @@ const rt = vi.hoisted(() => {
     sent: [] as { event: string; payload: Record<string, unknown> }[],
     onSend: null as null | ((m: { event: string; payload: Record<string, unknown> }) => void),
     removed: 0,
+    subCb: null as null | ((st: string) => void),
   };
   const ch = {
     on(_t: string, f: { event: string }, cb: (m: { payload: unknown }) => void) { s.handlers[f.event] = cb; return ch; },
-    subscribe(cb: (st: string) => void) { setTimeout(() => cb(s.status), 0); return ch; },
+    subscribe(cb: (st: string) => void) { s.subCb = cb; setTimeout(() => cb(s.status), 0); return ch; },
     async send(m: { event: string; payload: Record<string, unknown> }) { s.sent.push(m); s.onSend?.(m); return "ok"; },
   };
   return { s, ch };
@@ -29,7 +30,7 @@ const media = { tmdbId: 1, title: "Lanternas", type: "tv" as const };
 const b64url = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 beforeEach(() => {
-  rt.s.status = "SUBSCRIBED"; rt.s.handlers = {}; rt.s.sent = []; rt.s.onSend = null; rt.s.removed = 0;
+  rt.s.status = "SUBSCRIBED"; rt.s.handlers = {}; rt.s.sent = []; rt.s.onSend = null; rt.s.removed = 0; rt.s.subCb = null;
 });
 
 describe("qual TV é esta", () => {
@@ -157,5 +158,78 @@ describe("controle remoto", () => {
     await flush();
     expect(rt.s.sent).toHaveLength(0);
     stop();
+  });
+});
+
+describe("canal fechado e página congelada (achados no emulador, 07/11/2026)", () => {
+  it("canal FECHADO pelo servidor → o próximo envio abre outro (antes ficava preso no fechado)", async () => {
+    const { sendToTv } = await fresh();
+    const { supabase } = await import("@/lib/supabase");
+    vi.mocked(supabase.channel).mockClear();
+    rt.s.onSend = (m) => setTimeout(() => rt.s.handlers.ack({ payload: { id: m.payload.id } }), 1);
+    expect(await sendToTv("u1", { id: "f1", to: "tv-1", action: "open", media }, 200)).toBe("ok");
+    rt.s.subCb?.("CLOSED");
+    expect(await sendToTv("u1", { id: "f2", to: "tv-1", action: "open", media }, 200)).toBe("ok");
+    expect(vi.mocked(supabase.channel)).toHaveBeenCalledTimes(2);
+  });
+  it("TV: canal fechado volta sozinho na próxima tentativa (10 s)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { listenAsTv } = await fresh();
+      const { supabase } = await import("@/lib/supabase");
+      vi.mocked(supabase.channel).mockClear();
+      const stop = listenAsTv("u1", "tv-1", async () => true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(vi.mocked(supabase.channel)).toHaveBeenCalledTimes(1);
+      rt.s.subCb?.("CLOSED");
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(vi.mocked(supabase.channel)).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("pedidoVelho: só a página parada (batida atrasada) ou recém-descongelada", async () => {
+    const { pedidoVelho } = await fresh();
+    expect(pedidoVelho(10_000, 9_500, 0)).toBe(false);        // página viva
+    expect(pedidoVelho(20_000, 9_500, 0)).toBe(true);         // batida parada há 10 s: chegou no descongelar
+    expect(pedidoVelho(20_000, 19_800, 19_000)).toBe(true);   // a batida voltou agora: ainda é o lote preso
+    expect(pedidoVelho(22_500, 22_000, 19_000)).toBe(false);  // passou o lote: tecla nova vale
+  });
+  it("TV: teclas presas enquanto a página estava congelada são ignoradas; as novas valem", async () => {
+    vi.useFakeTimers();
+    try {
+      const { listenAsTv } = await fresh();
+      const atendidos: string[] = [];
+      const stop = listenAsTv("u1", "tv-1", async () => true, async (c) => { atendidos.push(c.id); return { tocando: null }; });
+      await vi.advanceTimersByTimeAsync(1500);
+      rt.s.handlers.ctl({ payload: { id: "vivo", to: "tv-1", action: "ping" } });
+      vi.setSystemTime(Date.now() + 60_000);                   // congelou 1 min: o relógio andou, a batida não
+      rt.s.handlers.ctl({ payload: { id: "preso", to: "tv-1", action: "key", key: "ok" } });
+      await vi.advanceTimersByTimeAsync(1000);                  // a batida volta e marca o descongelar
+      rt.s.handlers.ctl({ payload: { id: "lote", to: "tv-1", action: "key", key: "down" } });
+      await vi.advanceTimersByTimeAsync(2500);
+      rt.s.handlers.ctl({ payload: { id: "novo", to: "tv-1", action: "key", key: "up" } });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(atendidos).toEqual(["vivo", "novo"]);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("resposta sem o que está tocando", () => {
+  it("TV que não soube a tempo responde sem 'tocando' e o celular recebe undefined (mantém o último)", async () => {
+    const { listenAsTv, mandarControle } = await fresh();
+    const stop = listenAsTv("u1", "tv-1", async () => true, async () => ({ tocando: undefined }));
+    rt.s.handlers.ctl({ payload: { id: "s1", to: "tv-1", action: "key", key: "next-ep" } });
+    await new Promise(r => setTimeout(r, 5));
+    const ack = rt.s.sent.find(m => m.event === "ack");
+    expect(ack?.payload).toEqual({ id: "s1" });
+    stop();
+    rt.s.sent = [];
+    rt.s.onSend = (m) => setTimeout(() => rt.s.handlers.ack({ payload: { id: m.payload.id } }), 1);
+    expect(await mandarControle("u1", { id: "s2", to: "tv-1", action: "ping" }, 200)).toEqual({ result: "ok" });
   });
 });

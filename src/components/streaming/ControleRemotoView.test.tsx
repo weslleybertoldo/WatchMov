@@ -76,4 +76,23 @@ describe("ControleRemotoView — o controle", () => {
     fireEvent.click(screen.getByRole("button", { name: /Tentar de novo/ }));
     expect(await screen.findByText("Conectada")).toBeTruthy();
   });
+  it("não respondeu e a TV voltou (trocou de episódio): o aviso some sozinho no próximo ping", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    m.mandar.mockResolvedValueOnce({ result: "no_answer" });
+    render(<ControleRemotoView tv={sala} onEscolherTv={() => {}} onBack={() => {}} onConectarTv={() => {}} />);
+    expect(await screen.findByText("A TV da sala não respondeu")).toBeTruthy();
+    m.mandar.mockResolvedValue({ result: "ok", tocando });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+    expect(await screen.findByText("Conectada")).toBeTruthy();
+    expect(screen.queryByText("A TV da sala não respondeu")).toBeNull();
+  });
+  it("resposta sem 'tocando' (a TV não soube a tempo) mantém a faixa que já estava", async () => {
+    m.mandar.mockResolvedValueOnce({ result: "ok", tocando });
+    render(<ControleRemotoView tv={sala} onEscolherTv={() => {}} onBack={() => {}} onConectarTv={() => {}} />);
+    expect(await screen.findByText("Tocando na TV")).toBeTruthy();
+    m.mandar.mockResolvedValue({ result: "ok" });
+    fireEvent.click(screen.getByRole("button", { name: "Avançar 10 s" }));
+    await waitFor(() => expect(teclas()).toEqual(["ff"]));
+    expect(screen.getByText("Tocando na TV")).toBeTruthy();
+  });
 });

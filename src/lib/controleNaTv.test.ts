@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { executarTecla, oQueToca, type AcoesDaTv } from "./controleNaTv";
+import { comPrazo, executarTecla, oQueToca, type AcoesDaTv } from "./controleNaTv";
 
 // Controle remoto, lado da TV (pedido dele 07/11/2026).
 function acoes(over: Partial<AcoesDaTv> = {}): AcoesDaTv {
@@ -87,5 +87,23 @@ describe("oQueToca", () => {
   });
   it("sem player: null", async () => {
     expect(await oQueToca(acoes())).toBeNull();
+  });
+  it("título do player 'Série — T5 E17' vira só a série (a faixa já mostra temporada e EP); filme fica igual", async () => {
+    const serie = acoes({ estadoDoPlayer: vi.fn(async () => ({ open: true, title: "Dois Homens e Meio — T5 E17", season: 5, episode: 17 })) });
+    expect((await oQueToca(serie))?.title).toBe("Dois Homens e Meio");
+    const filme = acoes({ estadoDoPlayer: vi.fn(async () => ({ open: true, title: "A Odisseia — Parte 1" })) });
+    expect((await oQueToca(filme))?.title).toBe("A Odisseia — Parte 1");
+  });
+});
+
+describe("comPrazo — a TV responde a tempo mesmo com a tecla demorada", () => {
+  it("terminou antes do prazo: o valor; demorou: undefined (e o trabalho segue); erro: undefined", async () => {
+    expect(await comPrazo(Promise.resolve(7), 50)).toBe(7);
+    let terminou = false;
+    const lenta = new Promise<number>(r => setTimeout(() => { terminou = true; r(1); }, 80));
+    expect(await comPrazo(lenta, 10)).toBeUndefined();
+    await lenta;
+    expect(terminou).toBe(true);
+    expect(await comPrazo(Promise.reject(new Error("x")), 50)).toBeUndefined();
   });
 });

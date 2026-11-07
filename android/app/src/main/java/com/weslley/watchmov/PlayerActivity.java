@@ -3226,6 +3226,20 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         return true;
     }
 
+    // Controle remoto (07/11/2026): com o player na frente, a página do app segue viva na TV (PaginaViva) pra ouvir o
+    // celular. onStart/onStop: o player na tela ou não (fechou ou o app foi pro fundo).
+    @Override
+    protected void onStart() {
+        super.onStart();
+        PaginaViva.player(true);
+    }
+
+    @Override
+    protected void onStop() {
+        PaginaViva.player(false);
+        super.onStop();
+    }
+
     @Override
     protected void onPause() {
         saveResume();

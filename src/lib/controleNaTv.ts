@@ -55,8 +55,19 @@ export async function executarTecla(key: TeclaControle, acoes: AcoesDaTv): Promi
 export async function oQueToca(acoes: AcoesDaTv): Promise<TocandoNaTv | null> {
   const e = await acoes.estadoDoPlayer();
   if (!e.open || !e.title) return null;
+  // O player escreve "Série — T5 E17" no título; a faixa do celular já mostra a temporada e o episódio embaixo.
+  const title = e.season && e.episode ? e.title.replace(/\s+[—-]\s+T\d+\s*E\d+\s*$/i, '') || e.title : e.title;
   return {
-    title: e.title, season: e.season, episode: e.episode, positionMs: e.positionMs, durationMs: e.durationMs,
+    title, season: e.season, episode: e.episode, positionMs: e.positionMs, durationMs: e.durationMs,
     playing: e.playing, posterUrl: acoes.capa?.(),
   };
+}
+
+// Espera no máximo `ms`: o que não terminou segue sozinho e a resposta vai sem esperar (undefined = não deu tempo).
+// Trocar de episódio carrega o vídeo e passava dos 2,5 s que o celular espera → "não respondeu" com a TV funcionando.
+export function comPrazo<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+  return new Promise(resolve => {
+    const t = setTimeout(() => resolve(undefined), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(undefined); });
+  });
 }

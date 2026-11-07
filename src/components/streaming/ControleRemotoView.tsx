@@ -130,9 +130,9 @@ function EscolherTv({ onEscolher, onBack, onConectarTv }: { onEscolher: (tv: TvD
 
 type Estado = 'conectando' | 'conectada' | 'sem-resposta';
 
-function Tecla({ children, rotulo, onPress, larga = false }: { children: ReactNode; rotulo?: string; onPress: () => void; larga?: boolean }) {
+function Tecla({ children, rotulo, aria, onPress, larga = false }: { children: ReactNode; rotulo?: string; aria?: string; onPress: () => void; larga?: boolean }) {
   return (
-    <button onClick={onPress} aria-label={rotulo}
+    <button onClick={onPress} aria-label={aria ?? rotulo}
       className={`toque ${larga ? 'flex-1 h-14 rounded-2xl gap-2' : 'h-16 w-16 rounded-full flex-col gap-0.5'} flex items-center justify-center
         bg-secondary text-foreground border border-border/60 active:scale-95 active:bg-primary/25 transition select-none`}>
       {children}
@@ -169,15 +169,17 @@ function Controle({ tv, onTrocar }: { tv: TvDevice; onTrocar: () => void }) {
     if (r.result === 'ok') {
       falhas.current = 0;
       mudar('conectada');
-      setTocando(r.tocando ?? null);
+      if (r.tocando !== undefined) setTocando(r.tocando);
     } else if (estadoRef.current === 'conectando' || ++falhas.current >= 2) {
       mudar('sem-resposta');
     }
   }, [tv.session_id]);
 
   useEffect(() => { void enviar({ action: 'ping' }); }, [enviar]);
+  // Pergunta a cada 5 s (faixa "Tocando na TV"); no "não respondeu" segue perguntando e volta sozinho quando a TV
+  // responder (uma troca de episódio deixava o aviso na tela com a TV já funcionando).
   useEffect(() => {
-    if (estado !== 'conectada') return;
+    if (estado === 'conectando') return;
     const t = setInterval(() => { if (document.visibilityState === 'visible') void enviar({ action: 'ping' }); }, PING_MS);
     return () => clearInterval(t);
   }, [estado, enviar]);
@@ -271,12 +273,12 @@ function Controle({ tv, onTrocar }: { tv: TvDevice; onTrocar: () => void }) {
           <Tecla larga rotulo="Início" onPress={tecla('home')}><House className="w-5 h-5" /></Tecla>
         </div>
         <div className={`w-full max-w-sm flex items-center justify-between px-4 ${off}`}>
-          <Tecla rotulo="10 s" onPress={tecla('rew')}><Rewind className="w-5 h-5" /></Tecla>
+          <Tecla rotulo="10 s" aria="Voltar 10 s" onPress={tecla('rew')}><Rewind className="w-5 h-5" /></Tecla>
           <button onClick={tecla('playpause')} aria-label="Play/pausa"
             className="toque h-[4.5rem] w-[4.5rem] rounded-full bg-secondary border border-border/60 flex items-center justify-center gap-0.5 active:scale-95 active:bg-primary/25 transition select-none">
             <Play className="w-5 h-5 fill-current" /><Pause className="w-5 h-5 fill-current" />
           </button>
-          <Tecla rotulo="10 s" onPress={tecla('ff')}><FastForward className="w-5 h-5" /></Tecla>
+          <Tecla rotulo="10 s" aria="Avançar 10 s" onPress={tecla('ff')}><FastForward className="w-5 h-5" /></Tecla>
         </div>
         <div className={`w-full max-w-sm flex gap-3 ${off}`}>
           <TeclaEp rotulo="Ep. anterior" onPress={tecla('prev-ep')}><SkipBack className="w-5 h-5" /></TeclaEp>

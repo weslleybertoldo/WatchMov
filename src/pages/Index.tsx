@@ -10,7 +10,7 @@ import {
 } from '@/lib/tmdb';
 import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
 import { getCastNow, closeNativePlayer, playNative, teclaNoPlayer, estadoDoPlayer, type CastNow } from '@/lib/nativePlayer';
-import { executarTecla, oQueToca, type AcoesDaTv } from '@/lib/controleNaTv';
+import { executarTecla, oQueToca, type AcoesDaTv, comPrazo } from '@/lib/controleNaTv';
 import type { TvDevice } from '@/lib/tvPair';
 import { Capacitor } from '@capacitor/core';
 import { mimeDoLink } from '@/lib/iptvOrg';
@@ -437,8 +437,10 @@ export default function Index() {
     }, async (ctl) => {
       // Controle remoto do celular: só com o WatchMov na frente (no fundo o celular mostra "não respondeu").
       if (!(await appNaFrente())) return false;
-      if (ctl.action === 'key') await executarTecla(ctl.key, acoesDaTvRef.current);
-      return { tocando: await oQueToca(acoesDaTvRef.current) };
+      // Responde em até ~2 s (o celular espera 2,5): tecla demorada (trocar de episódio) termina sozinha; o que está
+      // tocando sem resposta a tempo vai vazio e o celular mantém o último.
+      if (ctl.action === 'key') await comPrazo(executarTecla(ctl.key, acoesDaTvRef.current), 1200);
+      return { tocando: await comPrazo(oQueToca(acoesDaTvRef.current), 800) };
     });
   }, [tvSid, uid]);
 
