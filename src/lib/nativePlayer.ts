@@ -17,6 +17,9 @@ interface NativePlayerPlugin {
   pendingExits(): Promise<{ exits?: AppExit[] }>;
   ackExits(opts: { ts: number }): Promise<void>;
   closePlayer(): Promise<{ closed: boolean }>;
+  // Controle remoto (pedido dele 07/11/2026): a TV repassa a tecla do celular pro player aberto. handled=false = sem player.
+  remoteKey(opts: { key: TeclaDoPlayer }): Promise<{ handled: boolean }>;
+  remoteState(): Promise<EstadoDoPlayer>;
   addListener(event: 'playerNext', cb: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerProgress', cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'playerQuality', cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle>;
@@ -105,6 +108,30 @@ export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> 
 export async function clearResumeNative(key: string): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   try { await NativePlayer.clearResume({ key }); } catch { /* ignore */ }
+}
+
+// Teclas que o player nativo entende quando vêm do controle remoto do celular (as de navegação viram KeyEvent).
+export type TeclaDoPlayer = 'up' | 'down' | 'left' | 'right' | 'ok' | 'back' | 'rew' | 'ff' | 'playpause'
+  | 'prev-ep' | 'next-ep' | 'watched';
+export interface EstadoDoPlayer {
+  open: boolean;
+  title?: string;
+  season?: number;
+  episode?: number;
+  positionMs?: number;
+  durationMs?: number;
+  playing?: boolean;
+}
+
+// true = o player aberto atendeu a tecla; false = não há player (ou o app não é o nativo).
+export async function teclaNoPlayer(key: TeclaDoPlayer): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  try { return (await NativePlayer.remoteKey({ key })).handled === true; } catch { return false; }
+}
+
+export async function estadoDoPlayer(): Promise<EstadoDoPlayer> {
+  if (!Capacitor.isNativePlatform()) return { open: false };
+  try { return await NativePlayer.remoteState(); } catch { return { open: false }; }
 }
 
 // Enviar pra TV: fecha o player nativo aberto (como o Voltar, salvando a posição). true = havia player.

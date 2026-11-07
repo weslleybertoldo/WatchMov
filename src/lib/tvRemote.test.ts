@@ -115,3 +115,47 @@ describe("TV escuta", () => {
     stop();
   });
 });
+
+// Controle remoto (pedido dele 07/11/2026): evento 'ctl' no mesmo canal; o ack traz o que está tocando.
+describe("controle remoto", () => {
+  const flush = () => new Promise((r) => setTimeout(r, 5));
+  const tocando = { title: "Re:ZERO", season: 1, episode: 2, positionMs: 492000, durationMs: 1420000, playing: true };
+
+  it("celular: a tecla vai no evento ctl e a resposta traz o que a TV está tocando", async () => {
+    const { mandarControle } = await fresh();
+    rt.s.onSend = (m) => { if (m.event === "ctl") setTimeout(() => rt.s.handlers.ack({ payload: { id: m.payload.id, tocando } }), 1); };
+    const r = await mandarControle("u1", { id: "k1", to: "tv-1", action: "key", key: "up" });
+    expect(rt.s.sent[0]).toMatchObject({ event: "ctl", payload: { id: "k1", action: "key", key: "up" } });
+    expect(r).toEqual({ result: "ok", tocando });
+  });
+  it("TV com o app antigo (não escuta ctl) não responde → no_answer, e não confunde com 'abrir título'", async () => {
+    const { mandarControle } = await fresh();
+    const r = await mandarControle("u1", { id: "k2", to: "tv-1", action: "ping" }, 30);
+    expect(r).toEqual({ result: "no_answer" });
+    expect(rt.s.sent.every((m) => m.event === "ctl")).toBe(true);
+  });
+  it("TV: atende o ctl dela e responde com o que está tocando; sem player, tocando null", async () => {
+    const { listenAsTv } = await fresh();
+    const handleCtl = vi.fn(async (c: { action: string }) => (c.action === "ping" ? { tocando: null } : { tocando }));
+    const stop = listenAsTv("u1", "tv-1", async () => true, handleCtl);
+    rt.s.handlers.ctl({ payload: { id: "c1", to: "tv-2", action: "ping" } });   // outra TV
+    rt.s.handlers.ctl({ payload: { id: "c2", to: "tv-1", action: "ping" } });
+    rt.s.handlers.ctl({ payload: { id: "c3", to: "tv-1", action: "key", key: "ok" } });
+    rt.s.handlers.ctl({ payload: { id: "c3", to: "tv-1", action: "key", key: "ok" } });   // repetido
+    await flush();
+    expect(handleCtl).toHaveBeenCalledTimes(2);
+    expect(rt.s.sent).toEqual([
+      { type: "broadcast", event: "ack", payload: { id: "c2", tocando: null } },
+      { type: "broadcast", event: "ack", payload: { id: "c3", tocando } },
+    ]);
+    stop();
+  });
+  it("TV com o WatchMov no fundo (handleCtl = false) não responde", async () => {
+    const { listenAsTv } = await fresh();
+    const stop = listenAsTv("u1", "tv-1", async () => true, async () => false);
+    rt.s.handlers.ctl({ payload: { id: "c9", to: "tv-1", action: "ping" } });
+    await flush();
+    expect(rt.s.sent).toHaveLength(0);
+    stop();
+  });
+});

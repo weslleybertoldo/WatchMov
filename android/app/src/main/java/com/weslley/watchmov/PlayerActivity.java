@@ -3041,6 +3041,191 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         progressHandler.postDelayed(esconderAvisoTv, 1500);
     }
 
+    // ═══ Controle remoto pelo celular (pedido dele 07/11/2026) ═══════════════════════════════════════════════════════
+    // O celular manda a tecla pela internet, o web da TV recebe e, com o player aberto, repassa pra cá
+    // (NativePlayerPlugin.remoteKey/remoteState). O mapa das teclas fica no ControleRemoto.
+
+    /** Tecla do celular no player. Só na thread da tela. true = o player atendeu; false = não há o que fazer aqui. */
+    boolean teclaRemota(String tecla) {
+        if (isFinishing() || isDestroyed()) return false;
+        boolean atendeu;
+        switch (ControleRemoto.acao(tecla)) {
+            case ControleRemoto.TECLA: atendeu = apertarTecla(ControleRemoto.codigo(tecla)); break;
+            case ControleRemoto.VOLTAR_10S: atendeu = pularRemoto(-ControleRemoto.PULO_MS); break;
+            case ControleRemoto.AVANCAR_10S: atendeu = pularRemoto(ControleRemoto.PULO_MS); break;
+            case ControleRemoto.PLAY_PAUSE: atendeu = playPauseRemoto(); break;
+            case ControleRemoto.EP_SEGUINTE: atendeu = proximoRemoto(); break;
+            case ControleRemoto.EP_ANTERIOR: atendeu = anteriorRemoto(); break;
+            case ControleRemoto.ASSISTIDO: atendeu = assistidoRemoto(); break;
+            default: atendeu = false;
+        }
+        android.util.Log.i("WatchMov", "controle remoto: " + tecla + (atendeu ? "" : " (não atendeu)"));
+        return atendeu;
+    }
+
+    /** O que está tocando, pro celular (NativePlayerPlugin.remoteState). Só na thread da tela. */
+    com.getcapacitor.JSObject estadoRemoto() {
+        boolean aberto = !isFinishing() && !isDestroyed();
+        return ControleRemoto.estado(new com.getcapacitor.JSObject(), aberto, mTitle, resumeKey,
+            aberto ? curPosMs() : 0, aberto ? curDurMs() : 0, aberto && tocando());
+    }
+
+    // Seta/OK/Voltar: apertar e soltar como a tecla do controle de verdade, na janela que está com o foco — o player
+    // (o próprio dispatchKeyEvent → teclaTv, sem mudar nada) ou um diálogo/lista dele por cima (Servidor, Qualidade,
+    // Áudio, Links, legenda…). Seta que ninguém usou: o foco anda como o Android faria com a tecla física — chamando o
+    // dispatchKeyEvent direto essa parte (ViewRootImpl) não acontece e as setas não andariam pelos botões.
+    private boolean apertarTecla(int codigo) {
+        if (codigo == 0) return false;
+        final View janela = janelaComFoco();
+        final boolean noPlayer = janela == getWindow().getDecorView();
+        final long t = android.os.SystemClock.uptimeMillis();
+        KeyEvent desce = teclaDoControle(t, t, KeyEvent.ACTION_DOWN, codigo);
+        if (!(noPlayer ? dispatchKeyEvent(desce) : janela.dispatchKeyEvent(desce))) moverFoco(janela, codigo);
+        KeyEvent sobe = teclaDoControle(t, android.os.SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, codigo);
+        boolean soltou = noPlayer ? dispatchKeyEvent(sobe) : janela.dispatchKeyEvent(sobe);
+        // Voltar preditivo (Android 16+ com alvo 36): o Activity não chama mais o onBackPressed pela tecla → chama aqui.
+        if (codigo == KeyEvent.KEYCODE_BACK && noPlayer && !soltou && !isFinishing()) onBackPressed();
+        return true;
+    }
+
+    // Tecla "de mentira" com a cara da do controle da TV: fonte D-pad e repetição 0 (um toque curto, nunca segurar).
+    private static KeyEvent teclaDoControle(long desceu, long quando, int acao, int codigo) {
+        return new KeyEvent(desceu, quando, acao, codigo, ControleRemoto.REPETICAO, 0,
+            android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0,
+            android.view.InputDevice.SOURCE_DPAD | android.view.InputDevice.SOURCE_KEYBOARD);
+    }
+
+    // Janela que receberia a tecla física agora: a do player ou um diálogo/lista dele por cima (o Android entrega a
+    // tecla à janela com o foco). A lista das janelas do app é API escondida do Android (WindowManagerGlobal, liberada
+    // pra apps): se ela falhar, a tecla vai pro player.
+    private View janelaComFoco() {
+        View decor = getWindow().getDecorView();
+        if (decor.hasWindowFocus()) return decor;
+        try {
+            Class<?> wmg = Class.forName("android.view.WindowManagerGlobal");
+            java.lang.reflect.Field views = wmg.getDeclaredField("mViews");
+            views.setAccessible(true);
+            Object lista = views.get(wmg.getMethod("getInstance").invoke(null));
+            if (lista instanceof List) for (Object o : new ArrayList<>((List<?>) lista)) {
+                if (o instanceof View && o != decor && ((View) o).hasWindowFocus() && destaTela((View) o)) return (View) o;
+            }
+        } catch (Throwable e) {
+            android.util.Log.w("WatchMov", "controle remoto: sem a lista de janelas, vai pro player: " + e);
+        }
+        return decor;
+    }
+
+    // A janela é do player (diálogo ou lista aberta por ele) — não da página do app nem de outro app.
+    private boolean destaTela(View raiz) {
+        android.content.Context c = raiz.getContext();
+        while (c instanceof android.content.ContextWrapper) {
+            if (c == this) return true;
+            c = ((android.content.ContextWrapper) c).getBaseContext();
+        }
+        return false;
+    }
+
+    // O que o Android faz com a seta que ninguém usou (ViewRootImpl.performFocusNavigation): o foco vai pro vizinho
+    // naquela direção (valem as buscas próprias do ⚙ e do painel Episódios); sem foco nenhum, volta pro padrão.
+    @SuppressWarnings("deprecation")
+    private static void moverFoco(View janela, int codigo) {
+        int dir = ControleRemoto.direcaoDoFoco(codigo);
+        if (dir == 0 || !(janela instanceof ViewGroup)) return;
+        ViewGroup raiz = (ViewGroup) janela;
+        View focado = raiz.findFocus();
+        if (focado == null) {
+            if (Build.VERSION.SDK_INT >= 26) raiz.restoreDefaultFocus();
+            else {
+                View v = android.view.FocusFinder.getInstance().findNextFocus(raiz, null, dir);
+                if (v != null) v.requestFocus(dir);
+            }
+            return;
+        }
+        View v = focado.focusSearch(dir);
+        if (v != null && v != focado) {
+            android.graphics.Rect r = new android.graphics.Rect();
+            focado.getFocusedRect(r);
+            try {
+                raiz.offsetDescendantRectToMyCoords(focado, r);
+                raiz.offsetRectIntoDescendantCoords(v, r);
+            } catch (IllegalArgumentException ignored) {}   // fora da janela: o retângulo é só uma dica
+            if (v.requestFocus(dir, r)) {
+                raiz.playSoundEffect(android.view.SoundEffectConstants.getContantForFocusDirection(dir));
+                return;
+            }
+        }
+        raiz.dispatchUnhandledMove(focado, dir);
+    }
+
+    // ⏪/⏩ do celular: ±10 s direto, com ou sem os controles na tela, com o aviso do ←/→ da TV (pularTv). Espelhando,
+    // o −10s/+10s do overlay (quem toca é a TV).
+    private boolean pularRemoto(long delta) {
+        if (castMode != CAST_NONE) {
+            castMsg((delta > 0 ? "+" : "−") + (Math.abs(delta) / 1000) + "s…", 1500);
+            remoteSeekBy(delta);
+            return true;
+        }
+        if (player == null) return false;
+        pularTv(delta);
+        return true;
+    }
+
+    // ⏯ do celular: o ⏯ do controle da TV (alternarTv); espelhando, o do overlay.
+    private boolean playPauseRemoto() {
+        if (castMode != CAST_NONE) { castPlayBtn.callOnClick(); return true; }
+        if (player == null) return false;
+        alternarTv(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE);
+        return true;
+    }
+
+    // ⏭ do celular: o mesmo ⏭ da barra (ou o "Próximo episódio" do overlay, espelhando). Filme/último episódio = não
+    // atende. A lista do painel Episódios é do episódio que está saindo: fecha.
+    private boolean proximoRemoto() {
+        if (!hasNext) return false;
+        if (episodiosAberto()) episodios.fechar(true);
+        (castMode != CAST_NONE ? nextCastBtn : nextBtn).callOnClick();
+        return true;
+    }
+
+    // ⏮ do celular: o episódio de antes pelo caminho do painel Episódios (o player fecha devolvendo "T:E" e o app abre
+    // esse, como pela página da série). No E1, o último da temporada anterior. Filme, 1º episódio da série ou série sem
+    // os dados do painel (o app não mandou) = não atende.
+    private boolean anteriorRemoto() {
+        int[] te = EpisodiosDados.temporadaEpisodio(resumeKey);
+        if (te == null || serieEps == null || awaitingNext) return false;
+        int[] ant = ControleRemoto.episodioAnterior(te[0], te[1], serieEps.numeros, this::ultimoEpisodioDa);
+        if (ant == null) return false;
+        escolherEpisodio(ant[0], ant[1], vistoNaSerie(ant[0], ant[1]));
+        return true;
+    }
+
+    // Último episódio da temporada: o total que o app mandou na abertura; sem ele, a TMDB, se o painel já buscou essa
+    // temporada. 0 = não sabe.
+    private int ultimoEpisodioDa(int temporada) {
+        EpisodiosDados.Temporada t = serieEps.temporadas.get(temporada);
+        if (t != null && t.total > 0) return t.total;
+        String tmdb = TMDB_TEMPORADAS.get(EpisodiosDados.urlDaTemporada(serieEps, temporada));
+        return tmdb == null ? 0 : EpisodiosDados.montar(serieEps, temporada, tmdb, null).eps.size();
+    }
+
+    // Já assistido? O que mudou aqui dentro vale mais que o que o app mandou na abertura (igual ao painel).
+    private boolean vistoNaSerie(int temporada, int episodio) {
+        Boolean v = vistosNaSessao.get(serieEps.tmdb + ":tv:" + temporada + ":" + episodio);
+        if (v != null) return v;
+        EpisodiosDados.Temporada t = serieEps.temporadas.get(temporada);
+        return t != null && t.vistos.contains(episodio);
+    }
+
+    // ✓ do celular: marca o que está tocando como assistido pelo caminho dos botões do player (setWatched → evento
+    // playerWatched → o app grava como sempre). Só marca — já assistido fica como está — e não pula pro fim nem fecha o
+    // player: o "✓ Marcar como concluído" do overlay, sem o desmarcar.
+    private boolean assistidoRemoto() {
+        userUnwatched = false;
+        setWatched(true);
+        if (castMode != CAST_NONE) castMsg("Marcado como concluído", 2500); else avisoTv("✓ Assistido");
+        return true;
+    }
+
     @Override
     protected void onPause() {
         saveResume();
@@ -3121,22 +3306,30 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void refreshMediaNotification() {
         if (isFinishing() || isDestroyed()) return;
         boolean cast = castMode != CAST_NONE;
-        boolean playing; long pos, dur; String sub;
+        if (!cast && player == null) return;
+        boolean playing = tocando(); long pos, dur; String sub;
         if (cast) {
-            if (castMode == CAST_DLNA) playing = !dlnaPaused;
-            else { com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc(); playing = r != null && r.isPlaying(); }
             pos = lastRemotePosMs; dur = castDurMs();
             String onde = castMode == CAST_CC ? "no Chromecast" : "na TV (DLNA)";
             sub = (playing ? "Reproduzindo " : "Pausado ") + onde;
         } else {
-            if (player == null) return;
-            int st = player.getPlaybackState();
-            playing = player.getPlayWhenReady() && st != androidx.media3.common.Player.STATE_ENDED && st != androidx.media3.common.Player.STATE_IDLE;
             pos = player.getCurrentPosition();
             dur = player.getDuration() > 0 ? player.getDuration() : 0;
             sub = playing ? "Reproduzindo" : "Pausado";
         }
         MediaNotificationService.update(this, mTitle, sub, playing, hasNext, cast, pos, dur);
+    }
+
+    // Tocando (não pausado) — espelhando, o estado da TV. O mesmo pra notificação e pro controle remoto do celular.
+    private boolean tocando() {
+        if (castMode == CAST_DLNA) return !dlnaPaused;
+        if (castMode == CAST_CC) {
+            com.google.android.gms.cast.framework.media.RemoteMediaClient r = rmc();
+            return r != null && r.isPlaying();
+        }
+        if (player == null) return false;
+        int st = player.getPlaybackState();
+        return player.getPlayWhenReady() && st != androidx.media3.common.Player.STATE_ENDED && st != androidx.media3.common.Player.STATE_IDLE;
     }
 
     // Android 13+: sem POST_NOTIFICATIONS a notificação de mídia não aparece. O app já

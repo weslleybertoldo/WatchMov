@@ -188,6 +188,36 @@ public class NativePlayerPlugin extends Plugin {
         cur.runOnUiThread(() -> { cur.fecharPorFora(); call.resolve(new JSObject().put("closed", true)); });
     }
 
+    // Controle remoto pelo celular (07/11/2026): a tecla chega no web da TV, que repassa pro player aberto — setas, OK e
+    // Voltar viram as teclas do controle lá dentro (PlayerActivity.teclaRemota). Sem player = handled:false: o web anda
+    // pela página. Resolve assim que a ação foi feita (o próximo episódio, por ex., segue carregando depois).
+    @PluginMethod
+    public void remoteKey(final PluginCall call) {
+        final String key = call.getString("key");
+        final PlayerActivity act = PlayerActivity.current();
+        if (act == null || act.isFinishing() || act.isDestroyed()) { call.resolve(new JSObject().put("handled", false)); return; }
+        act.runOnUiThread(() -> {
+            boolean handled;
+            try {
+                handled = act.teclaRemota(key);
+            } catch (RuntimeException e) {
+                // Não derruba o app no meio do filme; com o player aberto o web não pode andar pela página por trás.
+                android.util.Log.w("WatchMov", "controle remoto: " + key + " deu erro: " + e);
+                handled = !act.isFinishing() && !act.isDestroyed();
+            }
+            call.resolve(new JSObject().put("handled", handled));
+        });
+    }
+
+    // O que o player aberto está tocando (a faixa "Tocando na TV" do celular): título, temporada/episódio (série),
+    // posição, duração e se está tocando. Sem player = { open: false }.
+    @PluginMethod
+    public void remoteState(final PluginCall call) {
+        final PlayerActivity act = PlayerActivity.current();
+        if (act == null || act.isFinishing() || act.isDestroyed()) { call.resolve(new JSObject().put("open", false)); return; }
+        act.runOnUiThread(() -> call.resolve(act.estadoRemoto()));
+    }
+
     @PluginMethod
     public void play(final PluginCall call) {
         final String url = call.getString("url");
