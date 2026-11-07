@@ -1,0 +1,66 @@
+name: App do Windows (PR)
+
+# Staging do app do Windows: em cada PR que mexe no app (ou no site que ele abre), gera o instalador numa máquina
+# Windows, instala, abre o app no site de staging e confere login, Início e player (prints no artefato).
+# O staging (watchmov-staging.vercel.app) tem que estar com o código da PR (preview da Vercel + alias) antes.
+on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'src/**'
+      - '.github/workflows/desktop-pr.yml'
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Site que o app abre'
+        default: 'https://watchmov-staging.vercel.app/'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run windows
+
+      - name: Install and smoke test (staging site)
+        shell: pwsh
+        env:
+          WM_SITE: ${{ inputs.site || 'https://watchmov-staging.vercel.app/' }}
+          WM_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          WM_SUPABASE_ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          WM_SMOKE_EMAIL: smoke-claude@teste.com
+          WM_SMOKE_SENHA: ${{ secrets.WM_SMOKE_SENHA }}
+        run: |
+          $setup = Get-ChildItem release\WatchMov-Setup-*.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $app = "$env:LOCALAPPDATA\Programs\WatchMov\WatchMov.exe"
+          if (-not (Test-Path $app)) { throw 'o instalador não pôs o app em LOCALAPPDATA\Programs\WatchMov' }
+          reg query "HKCU\Software\Classes\com.weslley.watchmov"
+          if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login não foi registrado no Windows' }
+          node smoke.mjs --exe $app --saida smoke-prints
+
+      - name: Upload prints and installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WatchMov-Windows-PR-prints
+          path: |
+            desktop/smoke-prints/
+            desktop/release/WatchMov-Setup-*.exe
+          retention-days: 7

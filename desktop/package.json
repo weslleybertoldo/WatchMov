@@ -1,0 +1,26 @@
+{
+  "name": "watchmov-desktop",
+  "productName": "WatchMov",
+  "version": "5.20.0",
+  "description": "WatchMov para Windows",
+  "author": "Weslley Bertoldo",
+  "private": true,
+  "main": "out/main.js",
+  "scripts": {
+    "compilar": "tsc -p tsconfig.json",
+    "versao": "node versao.cjs",
+    "dev": "npm run compilar && electron .",
+    "pasta": "npm run compilar && npm run versao && electron-builder --config electron-builder.yml --dir --publish never",
+    "windows": "npm run compilar && npm run versao && electron-builder --config electron-builder.yml --win --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@types/node": "^22.10.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "typescript": "^5.8.3"
+  }
+}
