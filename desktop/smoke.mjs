@@ -185,7 +185,8 @@ async function cenarioRede(app, w, print) {
     await print('01-ao-vivo.png');
   });
 
-  let ultimoIframe = null;
+  let fonteOk = null;   // a última fonte que carregou: o teste da propaganda usa o servidor dela
+  let fonteAtual = null;
   await passo('cada fonte abre no iframe do player', async () => {
     await w.locator('nav button', { hasText: /^Início$/ }).first().click();
     await w.locator('[data-tv-hold]').first().waitFor({ timeout: 30000 });
@@ -209,24 +210,44 @@ async function cenarioRede(app, w, print) {
       const src = await iframe.getAttribute('src');
       const frame = await iframe.contentFrame();
       let info = { url: '', titulo: '', texto: '' };
+      let lenta = false;
       try {
         await frame.waitForLoadState('domcontentloaded', { timeout: 30000 });
         await w.waitForTimeout(10000);   // o player do servidor monta depois do HTML
         info = await frame.evaluate(() => ({ url: location.href, titulo: document.title, texto: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 140) }));
-      } catch (e) { info.url = frame?.url() ?? ''; info.texto = String(e?.message ?? e).split('\n')[0]; }
+      } catch (e) {
+        info.url = frame?.url() ?? '';
+        info.texto = String(e?.message ?? e).split('\n')[0];
+        lenta = /Timeout/i.test(info.texto);
+      }
       const erroDeRede = info.url.startsWith('chrome-error:') || /ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_TIMED_OUT/i.test(info.texto);
       const bloqueado = /acesso bloqueado|access denied|forbidden/i.test(`${info.titulo} ${info.texto}`);
-      resultados.push(`${erroDeRede || bloqueado ? '⚠️' : 'ℹ️'} Fonte ${n}: ${new URL(src).host} → ${info.url.slice(0, 70)} · "${info.titulo.slice(0, 40)}" · ${info.texto.slice(0, 80)}`);
+      // Servidor que não termina de carregar em 30 s: aviso, não falha (o da máquina do teste às vezes segura o
+      // pedido; erro de rede, página de erro e bloqueio continuam falhando).
+      const marca = erroDeRede || bloqueado ? '❌' : lenta ? '⚠️' : 'ℹ️';
+      const resumo = lenta ? 'não terminou de carregar em 30 s' : `${info.url.slice(0, 70)} · "${info.titulo.slice(0, 40)}" · ${info.texto.slice(0, 80)}`;
+      resultados.push(`${marca} Fonte ${n}: ${new URL(src).host} → ${resumo}`);
       if (erroDeRede || bloqueado) falhas.push(`Fonte ${n}`);
       await print(`02-fonte-${n}.png`);
-      ultimoIframe = iframe;
+      fonteAtual = nome.trim();
+      if (!lenta && !erroDeRede && !bloqueado) fonteOk = fonteAtual;
     }
+    if (!fonteOk) throw new Error('nenhuma fonte terminou de carregar');
     if (falhas.length) throw new Error(`não abriram: ${falhas.join(', ')}`);
   });
 
   await passo('propaganda do servidor não abre janela nem troca a página; link de fora da página vai pro PC', async () => {
+    // Volta pra última fonte que carregou (o player remonta o iframe a cada troca de fonte).
+    if (fonteAtual !== fonteOk) {
+      await w.locator('button[title="Trocar fonte"]').first().click();
+      await w.getByRole('button', { name: fonteOk }).click();
+      await w.waitForTimeout(1000);
+    }
+    const iframe = await w.locator('iframe').first().elementHandle();
+    const frame = await iframe.contentFrame();
+    if (!frame) throw new Error(`sem o iframe da ${fonteOk}`);
+    await frame.waitForLoadState('domcontentloaded', { timeout: 30000 });
     const antes = await estadoRede();
-    const frame = await ultimoIframe.contentFrame();
     // 1) janela nova pedida pelo servidor (sem e com clique)
     await frame.evaluate(() => { window.open('https://propaganda.invalid/janela-sem-clique'); });
     await frame.evaluate(() => {
@@ -254,7 +275,7 @@ async function cenarioRede(app, w, print) {
     await w.evaluate(() => { window.open('https://github.com/weslleybertoldo/WatchMov'); });
     await w.waitForTimeout(800);
     if (!(await externos()).includes('https://github.com/weslleybertoldo/WatchMov')) throw new Error('o link de fora da página não foi pro navegador do PC');
-    resultados.push(`ℹ️ bloqueadas: ${janelas} janelas e ${navs} troca(s) da página (total do app: ${depois.janelasBloqueadas} janelas, ${depois.navegacoesBloqueadas} navegações; última: ${depois.ultimaBloqueada})`);
+    resultados.push(`ℹ️ ${fonteOk}: bloqueadas ${janelas} janelas e ${navs} troca(s) da página (total do app: ${depois.janelasBloqueadas} janelas, ${depois.navegacoesBloqueadas} navegações; última: ${depois.ultimaBloqueada})`);
     await print('03-propaganda-bloqueada.png');
   });
 }

@@ -212,6 +212,7 @@ jobs:
       - name: Install and smoke test (production site)
         shell: pwsh
         env:
+          WM_REDE_SO_AVISA: '1'
           WM_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           WM_SUPABASE_ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           WM_SMOKE_EMAIL: smoke-claude@teste.com

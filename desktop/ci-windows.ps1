@@ -22,8 +22,12 @@ Start-Sleep -Seconds 2
 node smoke.mjs --exe $app --saida smoke-prints
 if ($LASTEXITCODE -ne 0) { throw "smoke falhou ($LASTEXITCODE)" }
 # Rede de app (rede.ts): DNS próprio, Ao Vivo, as fontes no iframe e a propaganda bloqueada.
+# Na release (WM_REDE_SO_AVISA=1) ele só avisa: depende das fontes e do SuperFlix, que caem sem o app mudar. Na PR barra.
 node smoke.mjs --exe $app --saida smoke-prints --cenario rede
-if ($LASTEXITCODE -ne 0) { throw "smoke da rede falhou ($LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 0) {
+  if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke da rede falhou ($LASTEXITCODE): fonte ou lista de terceiro fora do ar; a release segue" }
+  else { throw "smoke da rede falhou ($LASTEXITCODE)" }
+}
 # O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
 reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
 if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }
