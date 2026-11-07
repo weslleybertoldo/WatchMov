@@ -69,10 +69,28 @@ const waiters = new Map<string, (resposta: Record<string, unknown>) => void>(); 
 let onCmd: ((cmd: TvCmd) => void) | null = null;      // só na TV
 let onCtl: ((cmd: CtlCmd) => void) | null = null;     // só na TV (controle remoto)
 
+// Histórico curto do canal (só estados, sem dado nenhum) pra diagnosticar a TV pelo depurador: window.__wmCanal.
+const historico: string[] = [];
+function anotar(m: string) {
+  historico.push(`${new Date().toISOString().slice(11, 19)} ${m}`);
+  if (historico.length > 40) historico.shift();
+}
+if (typeof window !== 'undefined') (window as unknown as { __wmCanal?: string[] }).__wmCanal = historico;
+
 function connect(uid: string) {
   if (conn && conn.uid === uid) return conn;
   if (conn) void supabase.removeChannel(conn.ch);
   const ch = supabase.channel(topicFor(uid), { config: { private: true, broadcast: { self: false, ack: true } } });
+  // O realtime-js devolve o canal do mesmo tópico que ainda está saindo (o anterior, removido há pouco): o subscribe
+  // dele não faz nada e o conn ficava preso num canal morto — a TV nunca mais ouvia. Não usa; a próxima tentativa abre
+  // um novo (na TV, a volta de 10 s; no celular, o próximo envio).
+  if (ch.state !== 'closed') {
+    anotar(`canal anterior ainda ${ch.state}: tenta de novo`);
+    void supabase.removeChannel(ch);
+    conn = null;
+    return { uid, ch, ready: Promise.resolve(false) };
+  }
+  anotar('abrindo canal');
   ch.on('broadcast', { event: 'ack' }, ({ payload }) => {
     const w = waiters.get(payload?.id);
     if (w) { waiters.delete(payload.id); w(payload ?? {}); }
@@ -81,6 +99,7 @@ function connect(uid: string) {
   ch.on('broadcast', { event: 'ctl' }, ({ payload }) => onCtl?.(payload as CtlCmd));
   const ready = new Promise<boolean>(resolve => {
     ch.subscribe(status => {
+      anotar(status);
       if (status === 'SUBSCRIBED') { resolve(true); return; }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         resolve(false);

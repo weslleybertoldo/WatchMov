@@ -12,6 +12,7 @@ const rt = vi.hoisted(() => {
     subCb: null as null | ((st: string) => void),
   };
   const ch = {
+    state: "closed",
     on(_t: string, f: { event: string }, cb: (m: { payload: unknown }) => void) { s.handlers[f.event] = cb; return ch; },
     subscribe(cb: (st: string) => void) { s.subCb = cb; setTimeout(() => cb(s.status), 0); return ch; },
     async send(m: { event: string; payload: Record<string, unknown> }) { s.sent.push(m); s.onSend?.(m); return "ok"; },
@@ -231,5 +232,21 @@ describe("resposta sem o que está tocando", () => {
     rt.s.sent = [];
     rt.s.onSend = (m) => setTimeout(() => rt.s.handlers.ack({ payload: { id: m.payload.id } }), 1);
     expect(await mandarControle("u1", { id: "s2", to: "tv-1", action: "ping" }, 200)).toEqual({ result: "ok" });
+  });
+});
+
+describe("canal anterior ainda saindo (TV aberta logo depois de ligar)", () => {
+  it("o realtime-js devolve o canal velho: não usa (offline agora) e a próxima tentativa abre um novo", async () => {
+    const { sendToTv } = await fresh();
+    rt.ch.state = "leaving";
+    try {
+      expect(await sendToTv("u1", { id: "v1", to: "tv-1", action: "open", media }, 60)).toBe("offline");
+      expect(rt.s.sent).toHaveLength(0);
+    } finally {
+      rt.ch.state = "closed";
+    }
+    rt.s.onSend = (m) => setTimeout(() => rt.s.handlers.ack({ payload: { id: m.payload.id } }), 1);
+    expect(await sendToTv("u1", { id: "v2", to: "tv-1", action: "open", media }, 200)).toBe("ok");
+    expect((window as unknown as { __wmCanal: string[] }).__wmCanal.some(l => l.includes("ainda leaving"))).toBe(true);
   });
 });
