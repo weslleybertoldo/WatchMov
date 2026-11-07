@@ -8,6 +8,7 @@
   "main": "out/main.js",
   "scripts": {
     "compilar": "tsc -p tsconfig.json",
+    "testar": "npm run compilar && node --test regras.test.cjs",
     "versao": "node versao.cjs",
     "dev": "npm run compilar && electron .",
     "pasta": "npm run compilar && npm run versao && electron-builder --config electron-builder.yml --dir --publish never",

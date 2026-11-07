@@ -9,6 +9,21 @@ export interface WmDesktop {
   linkPendente(): Promise<string | null>;
   /** Link de retorno que chega com o app aberto. Devolve a função que para de ouvir. */
   aoAbrirLink(cb: (url: string) => void): () => void;
+  /** Rede de app (desktop/rede.ts, v5.21+; o .exe mais velho não tem): DNS próprio, CORS do vídeo e das listas do
+   *  Ao Vivo, sem janelas de propaganda. `cabecalhos` guarda os que o servidor usou (Referer, Origin, token…) e o app
+   *  repete nos pedidos da página ao mesmo host, igual ao ProxyServer do APK. */
+  rede?: {
+    cabecalhos(url: string, cabecalhos: Record<string, string>): Promise<boolean>;
+    estado(): Promise<EstadoRedeDesktop>;
+  };
+}
+
+export interface EstadoRedeDesktop {
+  janelasBloqueadas: number;
+  navegacoesBloqueadas: number;
+  ultimaBloqueada: string;
+  dns: string;
+  hosts: number;
 }
 
 export const desktop: WmDesktop | undefined =

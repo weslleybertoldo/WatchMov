@@ -1,11 +1,12 @@
 // WatchMov para Windows (Electron). A janela abre o SITE de verdade (https://watchmovbr.vercel.app), igual ao navegador:
 // os servidores de vídeo conferem quem os abre e, com a interface empacotada no instalador (https interceptado aqui no
 // processo principal), mostravam uma página falsa no lugar do vídeo (teste de 07/11/2026; com o site direto, o mesmo
-// título tocou). O que o navegador não faz passa pela ponte (preload.ts → window.wmDesktop; src/lib/desktop.ts):
-// por enquanto, o login do Google pelo navegador do PC. Funções novas da ponte são opcionais no site (o .exe que ainda
-// não atualizou não as tem).
+// título tocou). O que o navegador não faz passa pela ponte (preload.ts → window.wmDesktop; src/lib/desktop.ts): o
+// login do Google pelo navegador do PC e a rede de app (rede.ts: DNS próprio, cabeçalhos/CORS do vídeo, sem
+// propaganda). Funções novas da ponte são opcionais no site (o .exe que ainda não atualizou não as tem).
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { ligarRede, protegerJanela } from './rede';
 
 const SITE = 'https://watchmovbr.vercel.app/';
 // Retorno do login do Google (src/lib/capacitorAuth.ts, REDIRECT_SCHEME): o mesmo do APK, que o Supabase já aceita.
@@ -20,9 +21,6 @@ function siteDoApp(): string {
 }
 const INICIO = siteDoApp();
 const ORIGEM = new URL(INICIO).origin;
-const doApp = (url: string): boolean => {
-  try { return new URL(url).origin === ORIGEM; } catch { return false; }
-};
 
 let janela: BrowserWindow | null = null;
 let linkPendente: string | null = null;
@@ -45,17 +43,8 @@ function abrirJanela() {
     webPreferences: { preload: `${__dirname}/preload.js`, contextIsolation: true, sandbox: true },
   });
   janela.once('ready-to-show', () => janela?.show());
-  // Janela nova: só a do próprio app abre, e no navegador do PC. Propaganda dos servidores (iframes) não abre nada.
-  janela.webContents.setWindowOpenHandler(({ url, referrer }) => {
-    if (doApp(referrer.url) && /^https?:\/\//.test(url)) void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  // A janela principal nunca sai do app: endereço de fora vai pro navegador do PC.
-  janela.webContents.on('will-navigate', (e, url) => {
-    if (doApp(url)) return;
-    e.preventDefault();
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
-  });
+  // Janela nova só da própria página (no navegador do PC); propaganda dos servidores não abre nada nem troca a página.
+  protegerJanela(janela.webContents, ORIGEM);
   janela.on('closed', () => { janela = null; });
   void janela.loadURL(INICIO);
 }
@@ -91,6 +80,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(() => {
+    ligarRede(ORIGEM);
     abrirJanela();
     // Atualização: baixa a versão nova da release do GitHub e instala ao fechar (avisa pelo Windows).
     if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch((e: unknown) => console.warn('[wm] atualização:', e));

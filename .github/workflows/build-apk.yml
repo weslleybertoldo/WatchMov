@@ -186,6 +186,9 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci
 
+      - name: Unit tests (network rules)
+        run: npm run testar
+
       - name: Build Windows installer
         run: npm run windows
 
@@ -231,3 +234,10 @@ jobs:
             desktop/release/WatchMov-Setup-*.exe
             desktop/release/latest.yml
           make_latest: true
+
+      - name: Update test (the previous version updates itself to this one)
+        # O .exe da release anterior (o que está no PC dele) acha esta versão, baixa e se instala sozinho.
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./ci-atualizacao.ps1 -Tag "v${{ needs.build.outputs.version }}" -Versao (Get-Content package.json -Raw | ConvertFrom-Json).version
