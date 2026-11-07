@@ -25,4 +25,22 @@
         <item name="windowSplashScreenBackground">@color/wm_fundo</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
+
+    <!-- "Trocar TV" do widget: diálogo escuro sem a barra de título do sistema, no cartão do app (#15181E).
+         Tocar fora fecha, como um diálogo comum. -->
+    <style name="WmDialogoTv" parent="Theme.AppCompat.Dialog">
+        <item name="windowNoTitle">true</item>
+        <item name="windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@drawable/wm_w_dialogo_fundo</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
+        <item name="android:windowMinWidthMajor">55%</item>
+        <item name="android:windowMinWidthMinor">90%</item>
+        <item name="colorPrimary">@color/wm_w_roxo</item>
+        <item name="colorPrimaryDark">@color/wm_w_cartao</item>
+        <item name="colorAccent">@color/wm_w_roxo</item>
+    </style>
 </resources>

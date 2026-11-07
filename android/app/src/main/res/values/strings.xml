@@ -7,4 +7,33 @@
     <string name="download_channel_name">Downloads</string>
     <string name="download_done_channel_name">Downloads concluídos</string>
     <string name="playback_channel_name">Reprodução</string>
+
+    <!-- Widget "Controle da TV" na tela inicial (pedido dele 07/11/2026) -->
+    <string name="wm_widget_nome">Controle da TV</string>
+    <string name="wm_widget_descricao">Comanda o WatchMov da TV sem abrir o app</string>
+    <string name="wm_widget_trocar_tv">Trocar TV</string>
+    <string name="wm_widget_aviso">Abra o WatchMov → Painel → Controle remoto e escolha a TV</string>
+    <string name="wm_widget_cima">Cima</string>
+    <string name="wm_widget_baixo">Baixo</string>
+    <string name="wm_widget_esquerda">Esquerda</string>
+    <string name="wm_widget_direita">Direita</string>
+    <string name="wm_widget_ok">OK</string>
+    <string name="wm_widget_voltar">Voltar</string>
+    <string name="wm_widget_inicio">Início</string>
+    <string name="wm_widget_10s">10 s</string>
+    <string name="wm_widget_voltar_10s">Voltar 10 s</string>
+    <string name="wm_widget_play_pausa">Play/pausa</string>
+    <string name="wm_widget_avancar_10s">Avançar 10 s</string>
+    <string name="wm_widget_ep_anterior">Ep. anterior</string>
+    <string name="wm_widget_assistido">Assistido</string>
+    <string name="wm_widget_proximo_ep">Próximo ep.</string>
+    <!-- Janelinha "Trocar TV" -->
+    <string name="wm_widget_escolha_tv">Escolha a TV</string>
+    <string name="wm_widget_tv_atual">%1$s, TV atual</string>
+    <string name="wm_widget_abrir_app">Abrir o WatchMov</string>
+    <string name="wm_widget_nenhuma_tv">Nenhuma TV conectada. Conecte no app: Painel → Entrar na TV</string>
+    <string name="wm_widget_cancelar">Cancelar</string>
+    <string name="wm_widget_atualizando">Atualizando a lista…</string>
+    <string name="wm_widget_sem_internet_lista">Sem internet: mostrando a última lista</string>
+    <string name="wm_widget_falha_lista">Não deu pra atualizar: mostrando a última lista</string>
 </resources>

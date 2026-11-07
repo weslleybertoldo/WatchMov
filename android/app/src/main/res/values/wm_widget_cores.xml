@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget "Controle da TV" e a janelinha Trocar TV: as cores do app (index.css, tema escuro). -->
+    <color name="wm_w_fundo">#EB0E1115</color>      <!-- background com 92% de opacidade: a tela inicial aparece de leve -->
+    <color name="wm_w_cartao">#15181E</color>       <!-- card -->
+    <color name="wm_w_botao">#22272F</color>        <!-- secondary -->
+    <color name="wm_w_borda">#272C34</color>        <!-- border -->
+    <color name="wm_w_texto">#EDEBE9</color>        <!-- foreground -->
+    <color name="wm_w_apagado">#737B8C</color>      <!-- muted-foreground -->
+    <color name="wm_w_roxo">#7D1FEF</color>         <!-- primary -->
+    <color name="wm_w_roxo_toque">#407D1FEF</color> <!-- primary a 25%: o "active:bg-primary/25" dos botões do app -->
+    <color name="wm_w_roxo_halo">#2E7D1FEF</color>  <!-- brilho em volta do OK -->
+    <color name="wm_w_roxo_fundo">#267D1FEF</color> <!-- linha da TV atual na janelinha -->
+</resources>

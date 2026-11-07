@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OK da cruz do widget: círculo roxo com um brilho em volta (o "shadow" roxo do OK do app). Tamanho próprio pra
+     continuar círculo em qualquer célula (fitCenter); a onda do toque fica dentro do desenho. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#4DFFFFFF">
+    <item>
+        <shape android:shape="oval">
+            <size android:width="64dp" android:height="64dp" />
+            <solid android:color="@color/wm_w_roxo_halo" />
+        </shape>
+    </item>
+    <item android:left="6dp" android:top="6dp" android:right="6dp" android:bottom="6dp">
+        <shape android:shape="oval">
+            <solid android:color="@color/wm_w_roxo" />
+        </shape>
+    </item>
+</ripple>

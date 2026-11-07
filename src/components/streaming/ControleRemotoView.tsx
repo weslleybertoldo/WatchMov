@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleCheck, FastForward, House, Loader2,
-  Pause, Play, Plus, RefreshCw, Rewind, SkipBack, SkipForward, Tv, Undo2,
+  Pause, Play, Plus, RefreshCw, Rewind, SkipBack, SkipForward, SquarePlus, Tv, Undo2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import IconeControle from '@/components/streaming/IconeControle';
 import { supabase } from '@/lib/supabase';
 import { listTvDevices, type TvDevice } from '@/lib/tvPair';
 import { mandarControle, newCmdId, type CtlCmd, type TeclaControle, type TocandoNaTv } from '@/lib/tvRemote';
+import { estadoDoWidget, fixarWidget, guardarTvNoWidget, prepararWidget } from '@/lib/widgetControle';
 
 // Controle remoto (pedido dele 07/11/2026, fotos aprovadas): Painel → Controle remoto → escolhe uma das TVs conectadas
 // (as do "Entrar na TV") → controle com setas, OK (segurar = menu do título), Voltar, Início, ⏪ ⏯ ⏩ e os episódios.
 // Cada toque vai pelo canal da conta (tvRemote, evento 'ctl'); a TV só atende com o WatchMov aberto na frente.
+// O widget da tela inicial (widgetControle) fica com a mesma TV e a mesma lista.
 
-export const ULTIMA_TV = 'wm_controle_tv';   // a última TV usada (o widget da tela inicial também vai usar)
+export const ULTIMA_TV = 'wm_controle_tv';   // a última TV usada no app (o widget guarda a dele no nativo)
 const SEGURAR_OK_MS = 600;
 const PING_MS = 5000;
 
@@ -42,7 +44,7 @@ interface Props {
 
 export default function ControleRemotoView({ tv, onEscolherTv, onBack, onConectarTv }: Props) {
   if (tv) return <Controle tv={tv} onTrocar={() => onEscolherTv(null)} />;
-  return <EscolherTv onEscolher={(t) => { lembrarTv(t); onEscolherTv(t); }} onBack={onBack} onConectarTv={onConectarTv} />;
+  return <EscolherTv onEscolher={(t) => { lembrarTv(t); void guardarTvNoWidget(t); onEscolherTv(t); }} onBack={onBack} onConectarTv={onConectarTv} />;
 }
 
 type Situacao = 'verificando' | 'aberta' | 'fechada';
@@ -61,6 +63,7 @@ function EscolherTv({ onEscolher, onBack, onConectarTv }: { onEscolher: (tv: TvD
         const lista = await listTvDevices(s.access_token);
         if (!vivo) return;
         setTvs(lista);
+        void prepararWidget(s.access_token, lista);
         setSituacao(Object.fromEntries(lista.map(t => [t.session_id, 'verificando' as Situacao])));
         // Bolinha verde: pergunta a cada TV se o WatchMov está aberto nela agora.
         await Promise.all(lista.map(async (t) => {
@@ -203,6 +206,15 @@ function Controle({ tv, onTrocar }: { tv: TvDevice; onTrocar: () => void }) {
   const okCancelou = () => { if (segurando.current) clearTimeout(segurando.current.timer); segurando.current = null; };
   useEffect(() => () => okCancelou(), []);
 
+  // "Adicionar à tela inicial": só no celular com launcher que aceita e enquanto ainda não tem o widget lá.
+  const [podeFixar, setPodeFixar] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    void estadoDoWidget().then(e => { if (vivo) setPodeFixar(!!e?.suportaFixar && e.widgets === 0); });
+    return () => { vivo = false; };
+  }, []);
+  const fixar = () => { setPodeFixar(false); void fixarWidget(); };
+
   const off = estado === 'sem-resposta' ? 'opacity-35 pointer-events-none' : '';
   const seta = 'toque absolute w-20 h-20 flex items-center justify-center text-foreground/90 active:text-primary select-none';
 
@@ -285,6 +297,11 @@ function Controle({ tv, onTrocar }: { tv: TvDevice; onTrocar: () => void }) {
           <TeclaEp rotulo="Assistido" onPress={tecla('watched')}><CircleCheck className="w-5 h-5" /></TeclaEp>
           <TeclaEp rotulo="Próximo ep." onPress={tecla('next-ep')}><SkipForward className="w-5 h-5" /></TeclaEp>
         </div>
+        {podeFixar && (
+          <button onClick={fixar} className="toque flex items-center gap-2 text-sm text-primary py-1 select-none">
+            <SquarePlus className="w-4 h-4" /> Adicionar o controle à tela inicial
+          </button>
+        )}
       </div>
     </div>
   );

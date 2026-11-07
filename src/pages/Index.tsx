@@ -46,6 +46,7 @@ import { continueLabel, continueProgress, totalEpisodesWatched, isEpisodeWatched
 import UpdateChecker from '@/components/UpdateChecker';
 import { fillRow, isPrimaryGenre } from '@/lib/rowFill';
 import { depoisDeAssentar } from '@/lib/ocioso';
+import { sincronizarWidget } from '@/lib/widgetControle';
 import { telaSobDemanda } from '@/lib/telaSobDemanda';
 import { Button } from '@/components/ui/button';
 import {
@@ -413,7 +414,8 @@ export default function Index() {
   const acoesDaTv: AcoesDaTv = {
     teclaNoPlayer, estadoDoPlayer, fecharPlayer: closeNativePlayer,
     voltar: () => handleBack(),
-    inicio: () => changeTab('inicio'),
+    // Início do controle (app ou widget) também fecha o "sair do app?" que o Voltar abre na aba Início.
+    inicio: () => { setExitAsk(false); changeTab('inicio'); },
     capa: () => selected?.posterUrl,
   };
   const acoesDaTvRef = useRef(acoesDaTv);
@@ -443,6 +445,15 @@ export default function Index() {
       return { tocando: await comPrazo(oQueToca(acoesDaTvRef.current), 800) };
     });
   }, [tvSid, uid]);
+
+  // Widget do controle na tela inicial (celular): abrir o app deixa ele pronto (token, lista de TVs e, com uma TV só,
+  // ela mesma), sem precisar passar pelo Controle remoto. Uma vez por conta, depois que a abertura assenta.
+  const tokenRef = useRef(session?.access_token);
+  tokenRef.current = session?.access_token;
+  useEffect(() => {
+    if (!uid || isTv()) return;
+    return depoisDeAssentar(() => { if (tokenRef.current) void sincronizarWidget(tokenRef.current); }, 4000);
+  }, [uid]);
 
   // W2 do raio-x (02/11/2026): as listas das fileiras (e as contas do Painel) só são refeitas quando a biblioteca muda —
   // listas novas a cada desenho faziam as fileiras (memo) redesenharem todas as capas.

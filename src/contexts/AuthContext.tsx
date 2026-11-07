@@ -3,6 +3,7 @@ import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { signInWithGoogle as capacitorSignIn, setupDeepLinkListener } from "@/lib/capacitorAuth";
 import { Capacitor } from "@capacitor/core";
+import { esquecerWidget } from "@/lib/widgetControle";
 
 const SESSION_KEY = "watchmov_cached_session";
 
@@ -94,6 +95,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    // O widget do controle esquece a conta junto (o token dele morre no servidor).
+    await esquecerWidget().catch(() => undefined);
     try {
       // Só ESTE aparelho: o padrão ("global") derrubava a conta no celular e nas TVs juntos
       // (26/09/2026: Sair na box deslogou o celular e o Fire TV).
