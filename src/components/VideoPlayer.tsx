@@ -15,6 +15,8 @@ import { pickDefaultServer, loadFavoriteServer } from '@/lib/favoriteServer';
 import { playNative, loadNextNative, clearResumeNative, onPlayerProgress, onPlayerQuality, onPlayerWatched, onPlayerError, onPlayerNext } from '@/lib/nativePlayer';
 import { listExternalApps, castToExternal, type ExternalApp } from '@/lib/externalCast';
 import { enqueueDownload, removeDownload, isDownloaded, useDownloadItem, getDownloadMeta, saveDownloadMeta, movieKey, epKey } from '@/lib/downloads';
+import { downloadsNative } from '@/lib/downloader';
+import { isDesktop } from '@/lib/desktop';
 import { downloadAsMp4, useMp4, removeMp4 } from '@/lib/mp4Download';
 import { setLogProvider, logPlaybackError } from '@/lib/playbackLog';
 import { textoDaBusca, BUSCA_TEMPO, type ResultadoBusca } from '@/lib/fonteTempo';
@@ -379,6 +381,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
     // Fecha a lista de links antes: os dois modais ficam na mesma camada e o
     // "Como quer baixar?" nascia ATRÁS — parecia que o toque não fez nada.
     setPickerOpen(false);
+    // App do Windows: um formato só (o .mp4 em Vídeos\WatchMov, que qualquer player abre), sem a pergunta.
+    if (isDesktop()) { startStandardDownload(r); return; }
     setDlAsk(r);   // pergunta o formato: padrão (Media3) ou MP4
   };
 
@@ -1145,7 +1149,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                           </div>
                           {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </button>
-                        {!track && !s.ephemeral && dlKey && Capacitor.isNativePlatform() && (() => {
+                        {!track && !s.ephemeral && dlKey && downloadsNative() && (() => {
                           const mine = isDlLink(s.url);          // este link é o do download?
                           const busy = !!dlItem && dlItem.state !== 'removed';
                           if (busy && !mine) return null;         // outro link já está baixando

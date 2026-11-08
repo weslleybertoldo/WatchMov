@@ -6,6 +6,7 @@ import {
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
+import { isDesktop } from '@/lib/desktop';
 import { tileReason } from '@/lib/downloadReason';
 import { useMp4, useMp4All, mp4Native, convertToMp4, openMp4, cancelMp4 } from '@/lib/mp4Download';
 import {
@@ -448,7 +449,7 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
       {!empty && (totalBytes > 0 || freeBytes > 0) && (
         <p className="text-xs text-muted-foreground -mt-4">
           Ocupando <span className="text-foreground font-medium">{fmtBytes(totalBytes)}</span>
-          {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres no aparelho</>}
+          {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres {isDesktop() ? 'no PC' : 'no aparelho'}</>}
         </p>
       )}
 

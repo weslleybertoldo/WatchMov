@@ -8,14 +8,15 @@
   "main": "out/main.js",
   "scripts": {
     "compilar": "tsc -p tsconfig.json",
-    "testar": "npm run compilar && node --test regras.test.cjs regrasCaptura.test.cjs",
+    "testar": "npm run compilar && node --test regras.test.cjs regrasCaptura.test.cjs regrasDownload.test.cjs",
     "versao": "node versao.cjs",
     "dev": "npm run compilar && electron .",
     "pasta": "npm run compilar && npm run versao && electron-builder --config electron-builder.yml --dir --publish never",
     "windows": "npm run compilar && npm run versao && electron-builder --config electron-builder.yml --win --publish never"
   },
   "dependencies": {
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "ffmpeg-static": "^5.3.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

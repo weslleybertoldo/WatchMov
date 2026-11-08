@@ -40,4 +40,19 @@ contextBridge.exposeInMainWorld('wmDesktop', {
       return () => { ipcRenderer.off('wm:captura', ouvir); };
     },
   },
+  // Downloads (downloads.ts, v5.27+): os mesmos métodos e eventos do Downloader do APK; o arquivo baixado toca pelo
+  // esquema do vídeo (wm-video://arquivo/…), com a mesma chave que só a página do app recebe.
+  downloads: {
+    enfileirar: (o: unknown): Promise<boolean> => ipcRenderer.invoke('wm:dl-enfileirar', o),
+    remover: (key: string): Promise<boolean> => ipcRenderer.invoke('wm:dl-remover', key),
+    lista: (): Promise<unknown[]> => ipcRenderer.invoke('wm:dl-lista'),
+    retomar: (): Promise<boolean> => ipcRenderer.invoke('wm:dl-retomar'),
+    espaco: (): Promise<unknown> => ipcRenderer.invoke('wm:dl-espaco'),
+    arquivo: (key: string): string => `wm-video://arquivo/?t=${chaveVideo()}&k=${encodeURIComponent(key)}`,
+    aoEvento: (cb: (evento: string, dados: unknown) => void): (() => void) => {
+      const ouvir = (_e: IpcRendererEvent, evento: string, dados: unknown) => cb(evento, dados);
+      ipcRenderer.on('wm:downloads', ouvir);
+      return () => { ipcRenderer.off('wm:downloads', ouvir); };
+    },
+  },
 });

@@ -42,6 +42,13 @@ if ($LASTEXITCODE -ne 0) {
   if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke do player falhou ($LASTEXITCODE): fonte de terceiro fora do ar; a release segue" }
   else { throw "smoke do player falhou ($LASTEXITCODE)" }
 }
+# Downloads (downloads.ts, W4): mp4 e HLS de teste (W3C e Mux), fechar o app no meio e continuar, juntar com o ffmpeg
+# do app, tocar do disco e sem internet, excluir. Os vídeos são de terceiros: na release só avisa. Na PR barra.
+node smoke.mjs --exe $app --saida smoke-prints --cenario downloads
+if ($LASTEXITCODE -ne 0) {
+  if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke dos downloads falhou ($LASTEXITCODE): vídeo de teste de terceiro fora do ar; a release segue" }
+  else { throw "smoke dos downloads falhou ($LASTEXITCODE)" }
+}
 # O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
 reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
 if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }

@@ -12,7 +12,8 @@ import {
   Check, ChevronLeft, ChevronRight, ListVideo, Loader2, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Server,
   Settings, SkipForward, Volume2, VolumeX, X,
 } from 'lucide-react';
-import { desktop } from '@/lib/desktop';
+import { chaveDoDownload, desktop } from '@/lib/desktop';
+import { enqueueDownload, useDownloadItem } from '@/lib/downloads';
 import type { SerieDoPlayer } from '@/lib/episodiosPlayer';
 import {
   cabecalhosDaReproducao, ehHls, loaderPeloApp, type OpcoesPlayer, type PropsPlayerDesktop, type ResultadoPlayer,
@@ -101,12 +102,42 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   const [legenda, setLegenda] = useState(-1);
   const [velocidade, setVelocidade] = useState(1);
   const [ajuste, setAjuste] = useState(0);
+  const chaveDl = desktop?.downloads ? chaveDoDownload(ep.key) : null;
+  const itemDl = useDownloadItem(chaveDl);
+  const tocandoDoDisco = linkAtual.startsWith('wm-video://arquivo/');
+  const rotuloDownload = itemDl?.state === 'completed' || tocandoDoDisco ? 'Baixado'
+    : itemDl?.state === 'downloading' ? (itemDl.percent >= 0 ? `Baixando ${itemDl.percent}%` : 'Baixando…')
+    : itemDl?.state === 'queued' || itemDl?.state === 'restarting' ? 'Na fila'
+    : itemDl?.state === 'failed' ? 'Falhou · tentar de novo' : 'Baixar';
 
   // ── motor ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   function agendar(fn: () => void, ms: number) {
     const id = window.setTimeout(() => { timersRef.current.delete(id); if (!fechadoRef.current) fn(); }, ms);
     timersRef.current.add(id);
+  }
+
+  /** Aviso que some sozinho (o de erro de link fica até tocar). */
+  function avisoRapido(texto: string, ms = 4_000) {
+    setAviso(texto);
+    agendar(() => setAviso((a) => (a === texto ? null : a)), ms);
+  }
+
+  // Download do link que está tocando (= bloco "Download" do ⚙ do APK, W4): o .mp4 vai pra Vídeos\WatchMov e aparece na
+  // aba Download (a mesma fila do ⤓ da lista de links). Só no app que já tem os downloads.
+  function baixar() {
+    const k = chaveDl;
+    if (!k) return;
+    if (itemDl?.state === 'completed' || tocandoDoDisco) { avisoRapido('Já baixado: está na aba Download e na pasta Vídeos\\WatchMov'); return; }
+    if (itemDl && itemDl.state !== 'failed' && itemDl.state !== 'removed') { avisoRapido(`${rotuloDownload}: acompanhe na aba Download`); return; }
+    const [id, tipo, t, e] = (epRef.current.key ?? '').split(':');
+    const { url, mime } = linkRef.current;
+    enqueueDownload(k, {
+      url, referer: epRef.current.referer, mime: ehHls(url, mime) ? 'application/vnd.apple.mpegurl' : mime, title: epRef.current.title,
+      tmdbId: Number(id), type: tipo === 'movie' ? 'movie' : 'tv',
+      season: tipo === 'tv' ? Number(t) : undefined, ep: tipo === 'tv' ? Number(e) : undefined,
+    });
+    avisoRapido('Baixando… acompanhe na aba Download');
   }
 
   function mudarPainel(p: Painel) {
@@ -855,6 +886,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
             <Linha rotulo="Legenda" valor={legenda >= 0 ? legendas.find((l) => l.indice === legenda)?.rotulo : 'Desligada'} seta acao="legenda" onClick={() => mudarPainel('legenda')} />
           )}
           {urls.length > 1 && <Linha rotulo="Links" valor={`${urls.length} links`} seta acao="links" onClick={() => mudarPainel('links')} />}
+          {chaveDl && !aoVivo && <Linha rotulo="Download" valor={rotuloDownload} acao="baixar" onClick={baixar} />}
         </Caixa>
       )}
       {painel === 'qualidade' && (
