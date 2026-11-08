@@ -65,6 +65,21 @@ export function aplicarCabecalhos(pedido: Record<string, string>, guardados: Rec
   trocarCabecalho(pedido, 'X-Requested-With', null);
 }
 
+/** Referer que o Chromium aceita num pedido do processo principal (o vídeo do player, rede.ts): a política padrão do
+ *  navegador, strict-origin-when-cross-origin. O pedido não aplica a política sozinho: com o endereço inteiro de um
+ *  site num pedido pra outro, o Chromium CANCELA o pedido (net::ERR_BLOCKED_BY_CLIENT, "invalid referrer"; Fonte 3,
+ *  08/11/2026: playlist em 112234152.xyz e pedaços em venom.00000410.xyz). O iframe do servidor manda o mesmo: só a
+ *  origem pra outro site, o endereço todo pro mesmo site, nada de https pra http. `null` = sem Referer. */
+export function refererDoPedido(referer: string, alvo: string): string | null {
+  let r: URL;
+  let a: URL;
+  try { r = new URL(referer); a = new URL(alvo); } catch { return null; }
+  if ((r.protocol !== 'https:' && r.protocol !== 'http:') || (r.protocol === 'https:' && a.protocol === 'http:')) return null;
+  if (r.origin !== a.origin) return `${r.origin}/`;
+  r.hash = ''; r.username = ''; r.password = '';
+  return r.toString();
+}
+
 /** A CSP do site só deixa a página buscar e mostrar iframes de poucos endereços (frame-src/connect-src com a lista
  *  de domínios das fontes). O APK não tem CSP (a interface vem do próprio app), e as fontes trocam de domínio
  *  (07/11/2026: o SuperFlix redireciona de .fun pra .boats e a CSP barrava o iframe). No app do Windows o iframe da
@@ -94,4 +109,34 @@ export function destinoDaJanela(url: string, origemDoPedido: string | null, orig
 export function destinoDaNavegacao(url: string, origemApp: string, origemDoIniciador: string | null): Destino {
   if (origemDe(url) === origemApp) return 'app';
   return origemDoIniciador === origemApp && /^https?:\/\//i.test(url) ? 'fora' : 'bloquear';
+}
+
+// Vídeo do player do app (W2): o hls.js busca a playlist e os pedaços pelo processo principal, num esquema próprio,
+// igual ao player nativo do APK (ExoPlayer + ProxyServer.java). Motivo (07/11/2026, Fonte 1): os pedaços vêm de outros
+// servidores, disfarçados de .js/.css/.woff, e o CORS deles só libera o site do próprio servidor; pela página do app o
+// navegador barrava. O endereço de verdade vai no parâmetro `u`.
+export const ESQUEMA_VIDEO = 'wm-video';
+
+/** Endereço da rede local ou do próprio PC: o esquema do vídeo nunca busca esses (um iframe de servidor não usa o app
+ *  pra chegar no roteador ou num serviço do PC). */
+export function enderecoLocal(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h === '0.0.0.0' || h === '::' || h === '::1') return true;
+  if (/^(?:fc|fd)[0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true;
+  const ip = h.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (!ip) return false;
+  const [a, b] = [Number(ip[1]), Number(ip[2])];
+  return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+/** `wm-video://v/?t=<chave>&u=<endereço>` → o endereço de verdade (http/https, fora da rede local) ou null. A chave
+ *  é sorteada a cada abertura do app e só a página do app recebe (preload); o pedido ao esquema não traz Origin. */
+export function alvoDoVideo(pedido: string, chave: string): string | null {
+  try {
+    const u = new URL(pedido);
+    if (u.protocol !== `${ESQUEMA_VIDEO}:` || !chave || u.searchParams.get('t') !== chave) return null;
+    const alvo = new URL(u.searchParams.get('u') ?? '');
+    if ((alvo.protocol !== 'https:' && alvo.protocol !== 'http:') || enderecoLocal(alvo.hostname)) return null;
+    return alvo.toString();
+  } catch { return null; }
 }

@@ -6,7 +6,8 @@
 // propaganda). Funções novas da ponte são opcionais no site (o .exe que ainda não atualizou não as tem).
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import { ligarRede, protegerJanela } from './rede';
+import { aoBloquear, ligarRede, protegerJanela, registrarEsquemaVideo } from './rede';
+import { derrubarNaBusca, ligarCaptura } from './captura';
 
 const SITE = 'https://watchmovbr.vercel.app/';
 // Retorno do login do Google (src/lib/capacitorAuth.ts, REDIRECT_SCHEME): o mesmo do APK, que o Supabase já aceita.
@@ -64,6 +65,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   linkPendente = linkDoLogin(process.argv); // app aberto PELO link, com ele fechado
+  registrarEsquemaVideo();   // o vídeo do player do app (wm-video://); o Electron exige antes do `ready`
   app.setAppUserModelId(ESQUEMA);
   if (app.isPackaged) app.setAsDefaultProtocolClient(ESQUEMA);
   app.on('second-instance', (_e, argv) => receberLink(linkDoLogin(argv)));
@@ -81,6 +83,9 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     ligarRede(ORIGEM);
+    // Abrir sozinho (W2): captura do link + resolvedor na janela escondida; os eventos vão só pra janela do app.
+    aoBloquear(derrubarNaBusca);
+    ligarCaptura(() => janela);
     abrirJanela();
     // Atualização: baixa a versão nova da release do GitHub e instala ao fechar (avisa pelo Windows).
     if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch((e: unknown) => console.warn('[wm] atualização:', e));

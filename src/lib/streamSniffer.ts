@@ -1,4 +1,5 @@
-import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { temCaptura } from './desktop';
 
 // synthetic: COMPLETO montado pelo app a partir de um par vídeo/áudio (synth://…, ver capturedList.ts).
 // ephemeral: link /abyss/ servido pela página oculta (motor) — vale só enquanto o app estiver aberto; nunca vai pro cache.
@@ -15,9 +16,13 @@ interface StreamSnifferPlugin {
   addListener(event: 'streamQuality', cb: (q: SniffQuality) => void): Promise<PluginListenerHandle>;
 }
 
-const StreamSniffer = registerPlugin<StreamSnifferPlugin>('StreamSniffer');
+// No app do Windows (Capacitor = "web") a captura é a da ponte (desktopPlugins.ts, desktop/captura.ts), com os mesmos eventos.
+const StreamSniffer = registerPlugin<StreamSnifferPlugin>('StreamSniffer', {
+  web: () => import('./desktopPlugins').then((m) => new m.SnifferDesktop()),
+});
 
-export const isNative = () => Capacitor.isNativePlatform();
+// Captura, resolvedor e player do app: o APK ou o app do Windows v5.23+ (temCaptura). Os guardas do VideoPlayer usam este.
+export const isNative = () => temCaptura();
 
 // Arma a captura passiva (o iframe do servidor toca no WebView do app e o nativo
 // observa o tráfego). Retorna o handle do listener + função de parar.

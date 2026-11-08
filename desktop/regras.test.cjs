@@ -80,3 +80,45 @@ test('origemDe e hostDe', () => {
   assert.equal(r.hostDe('https://EDGE1.cdn.x:8443/a'), 'edge1.cdn.x:8443');
   assert.equal(r.hostDe('nada'), null);
 });
+
+test('vídeo pelo app: só http/https de fora da rede local, endereço no parâmetro u', () => {
+  const K = 'chave-da-abertura';
+  const via = (u, k = K) => `wm-video://v/?t=${k}&u=${encodeURIComponent(u)}`;
+  assert.equal(r.ESQUEMA_VIDEO, 'wm-video');
+  const seg = 'https://embedvip.xyz/p/VYxDI8YrHm-6o80ZV.js';
+  assert.equal(r.alvoDoVideo(via(seg), K), seg);
+  assert.equal(r.alvoDoVideo(via('https://embedplayer2.xyz/cdn/hls/abc/master.txt?t=1&x=a%20b'), K), 'https://embedplayer2.xyz/cdn/hls/abc/master.txt?t=1&x=a%20b');
+  assert.equal(r.alvoDoVideo(via('http://cdn.exemplo.com/v.mp4'), K), 'http://cdn.exemplo.com/v.mp4');
+  // sem a chave da página do app (um iframe de servidor tentando usar o esquema): nada
+  assert.equal(r.alvoDoVideo(via(seg, 'outra'), K), null);
+  assert.equal(r.alvoDoVideo(`wm-video://v/?u=${encodeURIComponent(seg)}`, K), null);
+  assert.equal(r.alvoDoVideo(via(seg, ''), ''), null);
+  for (const local of ['http://127.0.0.1:8094/', 'http://localhost/x', 'http://192.168.31.1/', 'http://10.0.0.2/', 'http://172.20.1.1/',
+    'http://169.254.169.254/latest', 'http://[::1]:80/', 'http://roteador.local/', 'http://0.0.0.0/']) {
+    assert.equal(r.alvoDoVideo(via(local), K), null, local);
+  }
+  assert.equal(r.alvoDoVideo(via('file:///etc/passwd'), K), null);
+  assert.equal(r.alvoDoVideo(via('javascript:alert(1)'), K), null);
+  assert.equal(r.alvoDoVideo(`wm-video://v/?t=${K}`, K), null);
+  assert.equal(r.alvoDoVideo(`https://x.com/?t=${K}&u=${encodeURIComponent(seg)}`, K), null);
+  assert.equal(r.enderecoLocal('172.32.0.1'), false);
+  assert.equal(r.enderecoLocal('embedvip.xyz'), false);
+});
+
+test('referer do pedido do vídeo: a política do navegador (só a origem pra outro site), senão o Chromium cancela', () => {
+  const player = 'https://112234152.xyz/player/index.php?data=0ed59365c9661717a5809aba12f64c5c';
+  // pedaço em outro servidor (Fonte 3): só a origem, como o iframe manda
+  assert.equal(r.refererDoPedido(player, 'https://venom.00000410.xyz/cdn/down/abc/index.json/seg-1-v1-a1.jpg'), 'https://112234152.xyz/');
+  // playlist no mesmo site: o endereço todo
+  assert.equal(r.refererDoPedido(player, 'https://112234152.xyz/hls/abc/master.txt'), player);
+  // já era só a origem (Fontes 1, 2, 4, 7): não muda
+  assert.equal(r.refererDoPedido('https://embedplayer2.xyz/', 'https://embedvip2.xyz/a/0001.js'), 'https://embedplayer2.xyz/');
+  // sem âncora e sem usuário/senha no mesmo site
+  assert.equal(r.refererDoPedido('https://u:s@cdn.x/p/a?b=1#c', 'https://cdn.x/v.m3u8'), 'https://cdn.x/p/a?b=1');
+  // de https pra http e referer que não é http(s): sem Referer
+  assert.equal(r.refererDoPedido('https://cdn.x/p', 'http://cdn.y/v.ts'), null);
+  assert.equal(r.refererDoPedido('about:blank', 'https://cdn.y/v.ts'), null);
+  assert.equal(r.refererDoPedido('lixo', 'https://cdn.y/v.ts'), null);
+  // http pra http de outro site: só a origem
+  assert.equal(r.refererDoPedido('http://a.x/p?q=1', 'http://b.x/v.ts'), 'http://a.x/');
+});

@@ -6,14 +6,45 @@
 //   3. Propaganda (= MainActivity.java): servidor de vídeo não abre janela nem troca a página do app.
 // As decisões ficam em regras.ts (testadas sem Electron). O Electron aceita UM ouvinte por evento do webRequest:
 // quem mais precisar ver os pedidos (a captura do link, W2) entra por aqui.
-import { app, ipcMain, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { randomBytes } from 'node:crypto';
+import { app, ipcMain, net, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import {
-  DOH, aplicarCabecalhos, cabecalhosGuardaveis, destinoDaJanela, destinoDaNavegacao, hostDe, cspDoApp,
-  origemDe, precisaCors, trocarCabecalho,
+  DOH, ESQUEMA_VIDEO, alvoDoVideo, aplicarCabecalhos, cabecalhosGuardaveis, destinoDaJanela, destinoDaNavegacao, ehMidia,
+  hostDe, cspDoApp, origemDe, precisaCors, refererDoPedido, trocarCabecalho,
 } from './regras';
+
+/** Esquema do vídeo do player do app (regras.ts, ESQUEMA_VIDEO). O Electron só aceita isso uma vez, ANTES do `ready`:
+ *  com CORS e fetch (o hls.js lê por XHR), seguro como https e fora da CSP do site (a CSP é da página, não do app). */
+export function registrarEsquemaVideo(): void {
+  protocol.registerSchemesAsPrivileged([{
+    scheme: ESQUEMA_VIDEO,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true },
+  }]);
+}
+
+const CORS_DO_VIDEO: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Range',
+  'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges',
+};
+const REPASSAR = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control', 'last-modified', 'etag'];
+// Chave do esquema do vídeo: sorteada a cada abertura; só a página do app recebe (pelo preload da janela do app).
+const CHAVE_VIDEO = randomBytes(18).toString('base64url');
+const janelasDoApp = new Set<number>();
 
 const porHost = new Map<string, Record<string, string>>();
 const estado = { janelasBloqueadas: 0, navegacoesBloqueadas: 0, ultimaBloqueada: '' };
+// Cabeçalhos do link que o player do app está tocando (W2): valem pra TODO pedido de mídia da página, em qualquer
+// host (os pedaços do HLS costumam vir de outro servidor). Igual ao ProxyServer do APK, que repete os do link.
+let daReproducao: Record<string, string> | null = null;
+
+/** Quem mais precisa ver cada pedido (a captura do link, W2) e quem pode cancelar um (recurso que a janela escondida
+ *  não carrega). O Electron aceita um ouvinte por evento do webRequest, por isso passa tudo por aqui. */
+export interface PedidoVisto { url: string; webContentsId?: number; requestHeaders: Record<string, string>; resourceType: string }
+const observadores: Array<(d: PedidoVisto) => void> = [];
+const barreiras: Array<(webContentsId: number | undefined, url: string) => boolean> = [];
+export function aoPedido(cb: (d: PedidoVisto) => void): void { observadores.push(cb); }
+export function aoBloquear(fn: (webContentsId: number | undefined, url: string) => boolean): void { barreiras.push(fn); }
 
 /** Guarda os cabeçalhos que valem pros pedidos da página do app a esse host (e libera o CORS dele). */
 export function guardarCabecalhos(url: string, cabecalhos: unknown): boolean {
@@ -49,8 +80,16 @@ export function ligarRede(origemApp: string): void {
     (origemDoFrame(d.frame) ?? origemDe(d.referrer)) === origemApp;
   const filtro = { urls: ['https://*/*', 'http://*/*'] };
 
+  session.defaultSession.webRequest.onBeforeRequest(filtro, (d, cb) => {
+    cb(barreiras.some((f) => f(d.webContentsId, d.url)) ? { cancel: true } : {});
+  });
+
   session.defaultSession.webRequest.onBeforeSendHeaders(filtro, (d, cb) => {
-    const guardados = porHost.get(hostDe(d.url) ?? '');
+    for (const o of observadores) {
+      try { o({ url: d.url, webContentsId: d.webContentsId, requestHeaders: d.requestHeaders, resourceType: d.resourceType }); }
+      catch (e) { console.warn('[wm] captura:', e); }
+    }
+    const guardados = porHost.get(hostDe(d.url) ?? '') ?? (daReproducao && ehMidia(d.url) ? daReproducao : undefined);
     if (!guardados || !daPagina(d)) return cb({});
     const pedido = { ...d.requestHeaders };
     aplicarCabecalhos(pedido, guardados);
@@ -81,10 +120,63 @@ export function ligarRede(origemApp: string): void {
   ipcMain.handle('wm:rede-cabecalhos', (e, url: unknown, cabecalhos: unknown) =>
     origemDoFrame(e.senderFrame) === origemApp && typeof url === 'string' && guardarCabecalhos(url, cabecalhos));
   ipcMain.handle('wm:rede-estado', () => ({ ...estado, dns: 'DoH (Cloudflare, Google); DNS do sistema de reserva', hosts: porHost.size }));
+  // Vídeo do player do app (W2): a playlist e os pedaços vêm por aqui, com os cabeçalhos do link (Referer, Origin,
+  // cookie…) e sem CORS, igual ao player nativo do APK. Só a página do app usa (um iframe de servidor não).
+  // O pedido ao esquema não traz Origin: quem prova que é a página do app é a chave (só o preload dela recebe).
+  ipcMain.on('wm:video-chave', (e) => { e.returnValue = janelasDoApp.has(e.sender.id) ? CHAVE_VIDEO : ''; });
+  protocol.handle(ESQUEMA_VIDEO, async (req) => {
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_DO_VIDEO });
+    const alvo = alvoDoVideo(req.url, CHAVE_VIDEO);
+    if (!alvo) {
+      console.warn('[wm] vídeo: pedido sem a chave da página do app ou pra endereço local, recusado');
+      return new Response(null, { status: 403, headers: CORS_DO_VIDEO });
+    }
+    const pedido: Record<string, string> = {};
+    if (daReproducao) aplicarCabecalhos(pedido, daReproducao);
+    const faixa = req.headers.get('range');
+    if (faixa) pedido.Range = faixa;
+    // Referer no formato que o Chromium aceita pra este endereço (regras.ts, refererDoPedido): com o endereço inteiro
+    // do player num pedaço de outro servidor, o pedido era cancelado (Fonte 3).
+    const nomeReferer = Object.keys(pedido).find((k) => k.toLowerCase() === 'referer');
+    if (nomeReferer) {
+      const ref = refererDoPedido(pedido[nomeReferer], alvo);
+      if (ref) pedido[nomeReferer] = ref;
+      else delete pedido[nomeReferer];
+    }
+    // Sem Origin: no net.fetch ele vira pedido CORS do Chromium (iniciador = o servidor) e o init.mp4 da WatchPlay
+    // (Fonte 1) falhava com net::ERR_FAILED vindo do cache (07/11/2026). As fontes tocam sem ele (provado nas Fontes
+    // 1, 2, 3, 4 e 7); com o Origin tirado do Referer, a CDN da Fonte 7 (playercdnn.workers.dev) respondeu 403
+    // (08/11/2026).
+    trocarCabecalho(pedido, 'Origin', null);
+    try {
+      const r = await net.fetch(alvo, {
+        headers: pedido, bypassCustomProtocolHandlers: true, cache: 'no-store', signal: AbortSignal.timeout(60000),
+      });
+      const h = new Headers(CORS_DO_VIDEO);
+      for (const nome of REPASSAR) {
+        const v = r.headers.get(nome);
+        if (v) h.set(nome, v);
+      }
+      if (!r.ok) console.warn(`[wm] vídeo: ${r.status} em ${alvo.slice(0, 90)}`);
+      return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
+    } catch (e) {
+      console.warn(`[wm] vídeo: falhou ${alvo.slice(0, 90)}: ${String(e).slice(0, 160)}`);
+      return new Response(null, { status: 502, headers: CORS_DO_VIDEO });
+    }
+  });
+
+  ipcMain.handle('wm:rede-reproducao', (e, cabecalhos: unknown) => {
+    if (origemDoFrame(e.senderFrame) !== origemApp) return false;
+    const limpos = cabecalhos ? cabecalhosGuardaveis(cabecalhos) : {};
+    daReproducao = Object.keys(limpos).length ? limpos : null;
+    return true;
+  });
 }
 
 /** Janela do app: propaganda dos servidores não abre janela nem troca a página. Link de fora → navegador do PC. */
 export function protegerJanela(wc: WebContents, origemApp: string): void {
+  janelasDoApp.add(wc.id);
+  wc.once('destroyed', () => janelasDoApp.delete(wc.id));
   wc.setWindowOpenHandler(({ url, referrer }) => {
     if (destinoDaJanela(url, origemDe(referrer.url), origemApp) === 'fora') void shell.openExternal(url);
     else contarBloqueio('janela', url);

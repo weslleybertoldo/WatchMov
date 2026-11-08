@@ -1145,7 +1145,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
                           </div>
                           {chosen && <Check className="w-4 h-4 text-primary shrink-0" />}
                         </button>
-                        {!track && !s.ephemeral && dlKey && isNative() && (() => {
+                        {!track && !s.ephemeral && dlKey && Capacitor.isNativePlatform() && (() => {
                           const mine = isDlLink(s.url);          // este link é o do download?
                           const busy = !!dlItem && dlItem.state !== 'removed';
                           if (busy && !mine) return null;         // outro link já está baixando

@@ -28,6 +28,13 @@ if ($LASTEXITCODE -ne 0) {
   if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke da rede falhou ($LASTEXITCODE): fonte ou lista de terceiro fora do ar; a release segue" }
   else { throw "smoke da rede falhou ($LASTEXITCODE)" }
 }
+# Abrir sozinho (captura.ts, W2): o título abre, a janela escondida acha o vídeo e ele toca no player do app.
+# Também depende de fonte de terceiro: na release só avisa (mesma variável do cenário rede). Na PR barra.
+node smoke.mjs --exe $app --saida smoke-prints --cenario captura
+if ($LASTEXITCODE -ne 0) {
+  if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke da captura falhou ($LASTEXITCODE): fonte de terceiro fora do ar; a release segue" }
+  else { throw "smoke da captura falhou ($LASTEXITCODE)" }
+}
 # O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
 reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
 if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }

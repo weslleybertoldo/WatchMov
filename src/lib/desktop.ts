@@ -15,7 +15,22 @@ export interface WmDesktop {
   rede?: {
     cabecalhos(url: string, cabecalhos: Record<string, string>): Promise<boolean>;
     estado(): Promise<EstadoRedeDesktop>;
+    /** v5.23+: cabeçalhos do link que o player do app toca (todo pedido de mídia da página leva); null = parou. */
+    reproducao?(cabecalhos: Record<string, string> | null): Promise<boolean>;
+    /** v5.23+: endereço pelo qual o player do app busca a playlist e os pedaços do HLS (processo principal, sem CORS). */
+    videoPeloApp?(url: string): string;
   };
+  /** Abrir sozinho (desktop/captura.ts, v5.23+; o .exe mais velho não tem): captura do link e resolvedor na janela
+   *  escondida, com os mesmos eventos do APK (streamFound, streamQuality, resolverEvent). */
+  captura?: CapturaDesktop;
+}
+
+export interface CapturaDesktop {
+  sniffer(ligar: boolean): Promise<boolean>;
+  resolverIniciar(o: Record<string, unknown>): Promise<boolean>;
+  resolverParar(): Promise<boolean>;
+  resolverOpcao(k: number): Promise<boolean>;
+  aoEvento(cb: (evento: string, dados: unknown) => void): () => void;
 }
 
 export interface EstadoRedeDesktop {
@@ -33,3 +48,7 @@ export const isDesktop = (): boolean => desktop !== undefined;
 
 /** Tem lado nativo: o APK (Capacitor) ou o app do Windows. */
 export const temNativo = (): boolean => Capacitor.isNativePlatform() || isDesktop();
+
+/** Captura do link, resolvedor e player do app: o APK, ou o app do Windows que já tem a captura (v5.23+). O .exe mais
+ *  velho segue tocando no servidor (iframe), como antes. */
+export const temCaptura = (): boolean => Capacitor.isNativePlatform() || !!desktop?.captura;
