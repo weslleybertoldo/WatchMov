@@ -328,13 +328,19 @@ if(!pend&&!sent)send()})})},700);
 export function buildBloggerScript(): string {
   return '(function(){try{if(/cloudflare\\.com$/i.test(location.hostname)||window.__wmBlog)return;window.__wmBlog=1;'
     + "var log=function(m){try{console.log('WMBLOG|'+m)}catch(_){}};var done=false;var sent={};"
-    + "var B=String.fromCharCode(92);var STOP=String.fromCharCode(34,92,32,44,93,125,10,13,9);"
+    // fim do link = aspa, barra, espaço, ', <, >, ], } ou quebra de linha. A VÍRGULA não: o link real do Google tem vírgula
+    // dentro (`met=…,`, `rms=au,au`, `sparams=expire,ei,…`) e cortar nela tirava o `sig`/`lsig` → 403 (08/11/2026).
+    + "var B=String.fromCharCode(92);var STOP=String.fromCharCode(34,92,32,39,60,62,93,125,10,13,9);"
     + "var QMAP={18:'360p',22:'720p',37:'1080p',59:'480p',43:'360p'};"
-    + "var emit=function(u,q){if(!u||u.indexOf('http')!==0)return false;var k=u.slice(0,150);if(sent[k])return false;sent[k]=1;log('q='+(q||'360p')+'|url='+u);return true;};"
+    // a chave leva a qualidade: no link real o `itag` fica depois do 150º caractere e o 360p virava "repetido" do 720p
+    + "var emit=function(u,q){if(!u||u.indexOf('http')!==0)return false;var k=(q||'')+'|'+u.slice(0,150);if(sent[k])return false;sent[k]=1;log('q='+(q||'360p')+'|url='+u);return true;};"
     // lista {u,q} -> emite da MAIOR qualidade pra menor (o auto-abrir do app pega o 1o link)
     + "var flush=function(list){if(!list.length)return false;list.sort(function(a,b){return parseInt(b.q,10)-parseInt(a.q,10)});var any=false;"
     + "for(var i=0;i<list.length;i++){if(emit(list[i].u,list[i].q))any=true;}if(any)done=true;return any;};"
-    + "var unesc=function(t){return t.split(B+'u0026').join('&').split(B+'u003d').join('=').split(B+'/').join('/');};"
+    // 07/11/2026: o batchexecute passou a mandar o miolo escapado DUAS vezes (`\\u0026`): junta as barras repetidas
+    // antes de desfazer o escape, senão o link é cortado no `\` antes do `itag` e só sobra o 360p do player escondido.
+    + "var unesc=function(t){var p;do{p=t;t=t.split(B+B).join(B);}while(t!==p);"
+    + "return t.split(B+'u0026').join('&').split(B+'u003d').join('=').split(B+'/').join('/');};"
     + "var itagOf=function(u){var i=u.indexOf('itag=');if(i<0)return 0;var n=parseInt(u.slice(i+5),10);return isNaN(n)?0:n;};"
     // (1) hook de XHR/fetch: a pagina nova do Blogger busca as URLs num POST /BloggerVideoPlayerUi/data/batchexecute
     + "var scan=function(txt){try{if(!txt||typeof txt!=='string'||txt.indexOf('googlevideo')<0)return;var t=unesc(txt);var list=[],i=0;"
@@ -349,7 +355,11 @@ export function buildBloggerScript(): string {
     + "try{var OF=window.fetch;if(OF)window.fetch=function(){var r=OF.apply(this,arguments);try{r.then(function(res){try{res.clone().text().then(scan).catch(function(){})}catch(_){}}).catch(function(){})}catch(_){}return r};}catch(_){}"
     // (2) o player do Blogger so monta o iframe do YouTube DEPOIS de um clique no <main jsaction=...>
     + "var fire=function(e){try{['pointerdown','mousedown','pointerup','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});}catch(_){}try{e.click();}catch(_){}};"
-    + "var clicks=0;var wake=function(){try{if(location.hostname.indexOf('blogger.com')<0)return;"
+    // (0) 07/11/2026: a página do Blogger passou a trazer os links DENTRO dela (atributo data-p do <c-wiz>), sem XHR de
+    // batchexecute → lê ANTES de clicar; achou, não clica (o clique monta o player, que toca e devolve só o 360p).
+    + "var inline=function(){if(done)return;try{var els=document.querySelectorAll('[data-p]');for(var i=0;i<els.length;i++){scan(els[i].getAttribute('data-p')||'');}"
+    + "if(!done&&location.hostname.indexOf('blogger.com')>=0&&document.documentElement){scan((document.documentElement.innerHTML||'').split('&quot;').join(String.fromCharCode(34)).split('&amp;').join('&'));}}catch(_){}};"
+    + "var clicks=0;var wake=function(){try{if(done||location.hostname.indexOf('blogger.com')<0)return;"
     + "if(document.querySelector('iframe[src*=\"youtube\"]'))return;if(clicks>=6)return;clicks++;"
     + "var m=document.querySelector('main[jsaction],[jsname=kpuEBe],.iLXc1d')||document.body;if(m)fire(m);}catch(_){}};"
     // (3) leitor da config do player (frame do YouTube / Blogger antigo): TODAS as qualidades com URL direta
@@ -361,7 +371,7 @@ export function buildBloggerScript(): string {
     + "if(!list.length){var v=document.querySelector('video');var sc=v&&(v.currentSrc||v.src);if(sc&&sc.indexOf('googlevideo')>=0)list.push({u:sc,q:QMAP[itagOf(sc)]||'360p'});}"
     + 'flush(list);'
     + '}catch(_){}};'
-    + 'var n=0,iv=setInterval(function(){n++;wake();pick();if(n>60)clearInterval(iv);},700);wake();pick();'
+    + 'var n=0,iv=setInterval(function(){n++;inline();wake();pick();if(n>60)clearInterval(iv);},700);inline();wake();pick();'
     + '}catch(_){}})();';
 }
 

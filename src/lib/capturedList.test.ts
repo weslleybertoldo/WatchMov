@@ -175,3 +175,23 @@ describe('pickAutoOpen (auto-abrir no reprodutor)', () => {
     expect(pickAutoOpen(list, new Set([streamKey(v.url), streamKey(a.url)]))?.synthetic).toBe(true);
   });
 });
+
+describe('googlevideo: 720p e 360p do mesmo vídeo são links DIFERENTES (Re: Zero em 360p, 07/11/2026)', () => {
+  // O caminho do Google é sempre /videoplayback: a qualidade vem na query (`itag`). A chave antiga cortava tudo depois do
+  // `?` → o 360p (2º a chegar) caía em cima do 720p na lista ("Link 1/1") e o app abria o 360p.
+  const gv = (itag: number, sig: string) =>
+    'https://rr1---sn-oxunxg8pjvn-hj1z.googlevideo.com/videoplayback?expire=1794136288&ei=YOjv&ip=203.0.113.250' +
+    `&id=e6eff3f7fbf0a7fa&itag=${itag}&source=blogger&requiressl=yes&met=1794107488,&rms=au,au&sig=${sig}&lsig=L${sig}`;
+  it('streamKey separa as qualidades e continua igual quando só o token muda', () => {
+    expect(streamKey(gv(22, 'A'))).not.toBe(streamKey(gv(18, 'A')));
+    expect(streamKey(gv(22, 'A'))).toBe(streamKey(gv(22, 'B')));
+    expect(streamKey('https://cdn.exemplo.com/hls/master.m3u8?token=1')).toBe('https://cdn.exemplo.com/hls/master.m3u8');
+  });
+  it('a lista guarda os dois links e o auto-abrir pega o 720p (o 1º que o leitor manda)', () => {
+    const l720: SniffResult = { url: gv(22, 'A'), mime: 'video/mp4', quality: '720p' };
+    const l360: SniffResult = { url: gv(18, 'A'), mime: 'video/mp4', quality: '360p' };
+    const list = mergeCaptured(mergeCaptured([], l720), l360);
+    expect(list.map(s => s.quality)).toEqual(['720p', '360p']);
+    expect(pickAutoOpen(list, new Set([streamKey(l720.url), streamKey(l360.url)]))?.quality).toBe('720p');
+  });
+});

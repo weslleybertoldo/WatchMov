@@ -563,6 +563,134 @@ describe('resolver oculto (regras puras)', () => {
     expect(blog[0]).not.toContain('\\u0026');
     expect(blog[0]).toContain('&source=blogger');
   });
+
+  it('07/11/2026: resposta nova do batchexecute (escape DUPLO) continua virando 720p antes do 360p', () => {
+    // Formato REAL de 07/11/2026 (Re: Zero T1E6 DUB: Fonte 1 → playerflix → Blogger), montado do jeito que o Google
+    // serializa: o miolo da RPC escapa & e = (\u0026, \u003d) e vai como texto dentro do JSON de fora, que escapa a
+    // barra de novo → o link chega com `\\u0026`. O leitor antigo cortava o link no `\` antes do `itag` (0 de 5 links
+    // aproveitados) e sobrava o 360p que o player escondido toca. IP, id e assinatura são de mentira, mas com o
+    // MESMO tamanho dos reais: o `itag` fica depois do 150º caractere, e a deduplicação antiga (150 primeiros
+    // caracteres) achava que o 360p era o mesmo link do 720p e jogava fora a 2ª qualidade.
+    const url = (itag: number) =>
+      'https://rr1---sn-oxunxg8pjvn-hj1z.googlevideo.com/videoplayback?expire=1794109117&ei=AbCdEfGhIjKlMnOpQrStUvW' +
+      `&ip=203.0.113.250&id=0123456789abcdef&itag=${itag}&source=blogger&requiressl=yes&mime=video/mp4&sig=AE0s2JY==`;
+    expect(url(22).indexOf('itag=')).toBeGreaterThan(145);
+    const googleJson = (v: unknown) => JSON.stringify(v).replace(/&/g, '\\u0026').replace(/=/g, '\\u003d');
+    const streamingData = JSON.stringify({ streamingData: { formats: [{ itag: 18, url: url(18) }, { itag: 22, url: url(22) }] } });
+    const miolo = googleJson([1, null, [[url(18), [18]], [url(22), [22]]], 'https://i9.ytimg.com/vi_blogger/x/1.jpg?sqp=AB&rs=CD',
+      'BLOGGER-video-0123456789abcdef-1891', '0123456789abcdef', false, streamingData]);
+    const fora = JSON.stringify([['wrb.fr', 'WcwnYd', miolo, null, null, null, 'generic']]);
+    const body = ")]}'\n\n" + fora.length + '\n' + fora;
+    expect(body).toContain('expire\\\\u003d1794109117\\\\u0026ei');   // o escape duplo que chega de verdade
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    type FakeXhr = { open: (m: string, u: string) => void; send: () => void; addEventListener: (e: string, cb: () => void) => void; responseText: string; readyState: number };
+    const listeners: Array<() => void> = [];
+    const fake = function (this: FakeXhr) { /* ctor */ } as unknown as { prototype: Record<string, unknown> };
+    fake.prototype = {
+      open() { /* noop */ },
+      send() { /* noop */ },
+      addEventListener(_e: string, cb: () => void) { listeners.push(cb); },
+      responseText: body,
+      readyState: 4,
+    };
+    const w = window as unknown as Record<string, unknown>;
+    const prevXhr = w.XMLHttpRequest;
+    const prevBlog = w.__wmBlog;
+    w.XMLHttpRequest = fake;
+    w.__wmBlog = undefined;
+    try {
+      new Function(buildBloggerScript())();
+      const xhr = new (w.XMLHttpRequest as new () => FakeXhr)();
+      xhr.open('POST', 'https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute?rpcids=WcwnYd');
+      xhr.send();
+      listeners.forEach(cb => cb());
+    } finally {
+      console.log = origLog;
+      w.XMLHttpRequest = prevXhr;
+      w.__wmBlog = prevBlog;
+    }
+    const blog = logs.filter(l => l.startsWith('WMBLOG|'));
+    // cada link aparece 2× na resposta (lista + streamingData): o script deduplica → 1 por qualidade
+    expect(blog).toEqual([`WMBLOG|q=720p|url=${url(22)}`, `WMBLOG|q=360p|url=${url(18)}`]);
+  });
+
+  it('07/11/2026: links que vêm DENTRO da página do Blogger (data-p do c-wiz) saem 720p antes do 360p, sem clique', () => {
+    // Página REAL de 07/11/2026 (video.g do Re: Zero T1E6 DUB): não há mais XHR de batchexecute — os links já vêm no
+    // atributo data-p do <c-wiz>, com & e = escapados (\u0026, \u003d). Sem ler isso, o leitor clicava o player e
+    // pegava o vídeo que ele tocava: 360p. IP, id e assinatura são de mentira.
+    const url = (itag: number) =>
+      'https://rr1---sn-oxunxg8pjvn-hj1z.googlevideo.com/videoplayback?expire=1794129174&ei=AbCdEfGhIjKlMnOpQrStUvW' +
+      `&ip=203.0.113.250&id=0123456789abcdef&itag=${itag}&source=blogger&requiressl=yes&mime=video/mp4&sig=AE0s2JY==`;
+    const esc = (u: string) => u.replace(/&/g, '\\u0026').replace(/=/g, '\\u003d');
+    const dataP = '%.@.null,null,null,null,"https://www.blogger.com/video.g?token\\u003dAD6v5dw",' +
+      '[null,null,null,"https://youtube.googleapis.com/iframe_api"],null,[1,null,[["' + esc(url(18)) + '",[18]],["' +
+      esc(url(22)) + '",[22]]],"https://i9.ytimg.com/vi_blogger/x/1.jpg?sqp\\u003dAB","BLOGGER-video-0123456789abcdef-1891"]]';
+    const cwiz = document.createElement('c-wiz');
+    cwiz.setAttribute('jsrenderer', 'W8PsLe');
+    cwiz.setAttribute('data-p', dataP);
+    document.body.innerHTML = '';
+    document.body.appendChild(cwiz);
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevBlog = w.__wmBlog;
+    w.__wmBlog = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildBloggerScript())();   // a 1ª leitura é na hora (sem esperar o intervalo)
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmBlog = prevBlog;
+      document.body.innerHTML = '';
+    }
+    expect(logs.filter(l => l.startsWith('WMBLOG|'))).toEqual([`WMBLOG|q=720p|url=${url(22)}`, `WMBLOG|q=360p|url=${url(18)}`]);
+  });
+  it('08/11/2026: link REAL tem vírgula dentro (met=…, rms=au,au, sparams=…) → sai INTEIRO, com a assinatura', () => {
+    // No emulador o link do data-p chegou cortado na 1ª vírgula (`…&met=1794107488`): sem `sig`/`lsig` o Google responde
+    // 403 e nada toca. O link inteiro (até a aspa) dá 206 nas duas qualidades. Ordem e formato dos parâmetros iguais aos
+    // da página real de 08/11/2026; IP, id e assinaturas são de mentira.
+    const url = (itag: number) =>
+      'https://rr1---sn-oxunxg8pjvn-hj1z.googlevideo.com/videoplayback?expire=1794136288&ei=YOjvavT8A4fCxtYPuu7BwQw' +
+      `&ip=203.0.113.250&id=0123456789abcdef&itag=${itag}&source=blogger&requiressl=yes&xpc=Egho7Zf3LnoBAQ==` +
+      '&met=1794107488,&mh=kS&mm=31&mn=sn-oxunxg8pjvn-hj1z&ms=au&mv=m&mvi=1&pl=24&rms=au,au&susc=bl&svpuc=1' +
+      '&mime=video/mp4&dur=1475.744&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,susc,svpuc,mime,dur' +
+      '&sig=AE0s2JYwRgIhAL2Nfl==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms&lsig=APaTxxMwRQIgFakeLsig==';
+    const esc = (u: string) => u.replace(/&/g, '\\u0026').replace(/=/g, '\\u003d');
+    const dataP = '%.@.null,null,null,null,"https://www.blogger.com/video.g?token\\u003dAD6v5dw",' +
+      '[null,null,null,"https://youtube.googleapis.com/iframe_api"],null,[1,null,[["' + esc(url(18)) + '",[18]],["' +
+      esc(url(22)) + '",[22]]],"https://i9.ytimg.com/vi_blogger/x/1.jpg?sqp\\u003dAB","BLOGGER-video-0123456789abcdef-1891"]]';
+    const cwiz = document.createElement('c-wiz');
+    cwiz.setAttribute('data-p', dataP);
+    document.body.innerHTML = '';
+    document.body.appendChild(cwiz);
+
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevBlog = w.__wmBlog;
+    w.__wmBlog = undefined;
+    vi.useFakeTimers();
+    try {
+      new Function(buildBloggerScript())();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmBlog = prevBlog;
+      document.body.innerHTML = '';
+    }
+    const blog = logs.filter(l => l.startsWith('WMBLOG|'));
+    expect(blog).toEqual([`WMBLOG|q=720p|url=${url(22)}`, `WMBLOG|q=360p|url=${url(18)}`]);
+    expect(blog[0]).toContain('&lsig=APaTxxMwRQIgFakeLsig==');
+  });
   // ── 25/09/2026: Fonte 1 — BYSE (mais tempo), UPNS (play + vídeo apagado), ABYS (qualidade atrasada) ──
   // Roda o script do ciclo num DOM de frame de player; jsdom não mede layout → getBoundingClientRect falso (visível).
   const runCycle = (html: string, k: number, steps: () => void, before?: () => void) => {

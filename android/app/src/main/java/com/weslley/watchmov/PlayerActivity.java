@@ -124,6 +124,9 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // Último áudio escolhido no ⚙ Áudio (estudo do Nuvio, item 13, 20/10/2026): o idioma vale pros próximos vídeos
     // deste aparelho quando eles tiverem essa faixa (ex.: Fonte 4 = Português + English).
     private static final String AUDIO_PREFS = "wm_audio_preferido";
+    // Chute inicial da internet pro HLS adaptativo (07/11/2026): 12 Mb/s × 0,7 de margem do player = cabe uma faixa 1080p
+    // comum (5–6 Mb/s) → abre na maior qualidade; a medição real assume depois (desce se não sustentar).
+    static final long BITRATE_INICIAL_BPS = 12_000_000L;
     private boolean everReady = false;    // o link atual já tocou (READY) → erro/buffering depois disso é "no meio"
     // Engasgos (buffering depois de já ter tocado) → aba Bugs como PLAYER_ENGASGOU, no máx. 1×/min (24/09/2026:
     // "fica engasgando no 1080p" não deixava rastro nenhum).
@@ -642,10 +645,18 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 ? new DefaultMediaSourceFactory(DownloadUtil.getPlaybackCacheFactory(this))
                 : new DefaultMediaSourceFactory(http))
             .setLoadErrorHandlingPolicy(retries);
+        // HLS com várias qualidades começa na MAIOR (07/11/2026, pedido dele: "Re: Zero tem 720p mas abre 360p"): sem isso o
+        // player chutava a internet pela tabela do país e começava no 360p, só subindo depois. Com o chute alto ele abre na
+        // maior faixa e, se a internet não sustentar, desce sozinho (o "Auto" continua adaptativo).
+        androidx.media3.exoplayer.upstream.DefaultBandwidthMeter banda =
+            new androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this)
+                .setInitialBitrateEstimate(BITRATE_INICIAL_BPS)
+                .build();
         player = new ExoPlayer.Builder(this)
             .setMediaSourceFactory(msFactory)
             .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
+            .setBandwidthMeter(banda)
             .setSeekBackIncrementMs(10000)
             .setSeekForwardIncrementMs(10000)
             .build();
