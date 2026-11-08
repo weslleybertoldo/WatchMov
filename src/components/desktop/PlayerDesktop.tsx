@@ -859,6 +859,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
         if (epRef.current.hasNext) { desmarcouRef.current = false; marcarAssistido(true); pedirProximo(); }
         else void pararTv(true);
       } else if (evento === 'erro') { avisoRapido(d.motivo || 'A TV parou de tocar.', 8_000); void pararTv(true); }
+      else if (evento === 'aviso') { if (d.motivo) avisoRapido(d.motivo, 7_000); }   // a TV segue tocando
       else if (evento === 'parou') void pararTv(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -908,10 +909,11 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
           <Cast className="h-14 w-14 text-violet-400" />
           <p className="text-lg">Transmitindo para <span className="font-semibold">{tv.nome}</span></p>
           <p className="text-sm text-white/60">{tv.estado === 'pausado' ? 'Pausado' : tv.estado === 'carregando' ? 'A TV está carregando o vídeo…' : tv.estado === 'parado' ? 'A TV parou' : 'A barra, o teclado e as teclas de mídia controlam a TV'}</p>
+          {aviso && <p data-aviso="" className="max-w-xl text-sm text-amber-300">{aviso}</p>}
           <button type="button" data-acao="parar-tv" onClick={() => void pararTv()} className="mt-2 rounded-full bg-white/10 px-5 py-2 text-sm font-semibold hover:bg-white/20">Parar de transmitir</button>
         </div>
       )}
-      {aviso && (
+      {aviso && !tv && (
         <div className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-center px-6">
           <span data-aviso="" className="max-w-xl rounded-xl bg-black/75 px-4 py-2.5 text-center text-sm leading-relaxed">{aviso}</span>
         </div>

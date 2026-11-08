@@ -20,9 +20,10 @@ import { cabecalhosPara, origemDoFrame } from './rede';
 import { refererDoPedido, trocarCabecalho } from './regras';
 import { ehPlaylist, faixaDoPedido, pareceHls } from './regrasDownload';
 import {
-  ALVOS_SSDP, AVT, RCS, SSDP_ENDERECO, SSDP_PORTA, acaoSoap, erroSoap, formatoDosPedacos, ipDaCasa, lerDescricao, lerEstado,
-  lerPosicao, lerVolume, locationDaResposta, mSearch, nomeDoChromecast, pedidoAcao, pedidoBuscar, pedidoLerVolume, pedidoPosicao,
-  pedidoSetUri, pedidoTransporte, pedidoVolume, reescreverParaTv, urlDoProxy, type Interface, type Tv,
+  ALVOS_SSDP, AVT, CONTINUAR_A_PARTIR_MS, RCS, SSDP_ENDERECO, SSDP_PORTA, acaoSoap, chegouNoAlvo, erroSoap, formatoDosPedacos, hms,
+  ipDaCasa, lerDescricao, lerEstado, lerPosicao, lerVolume, locationDaResposta, mSearch, nomeDoChromecast, pedidoAcao, pedidoBuscar,
+  pedidoLerVolume, pedidoPosicao, pedidoSetUri, pedidoTransporte, pedidoVolume, reescreverParaTv, tvAbriuOVideo, urlDoProxy,
+  type Interface, type Tv,
 } from './regrasCast';
 import {
   APP_PADRAO, EMISSOR, Leitor, NS_BATIDA, NS_CONEXAO, NS_MIDIA, NS_RECEPTOR, RECEPTOR, codificar, lerStatusMidia, lerStatusReceptor,
@@ -223,6 +224,7 @@ async function procurarChromecast(ms: number): Promise<void> {
   // multicast-dns (MIT, JS puro). Falhou ao carregar ou ao abrir a porta 5353 (outro programa) → sem Chromecast, sem erro.
   let m: Mdns;
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- carregado só aqui: falhou → segue sem Chromecast
     const criar = require('multicast-dns') as (o: Record<string, unknown>) => Mdns;
     const ip = ipDaCasa(interfaces());
     m = criar({ interface: ip ?? undefined, reuseAddr: true });
@@ -369,9 +371,8 @@ class SessaoChromecast {
 
 // ── transmitindo ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-type Atual =
-  | { tipo: 'dlna'; nome: string; tv: Tv; duracaoLocalMs: number; tocou: boolean }
-  | { tipo: 'chromecast'; nome: string; cc: SessaoChromecast; tocou: boolean };
+type AtualDlna = { tipo: 'dlna'; nome: string; tv: Tv; duracaoLocalMs: number; tocou: boolean; buscou: boolean };
+type Atual = AtualDlna | { tipo: 'chromecast'; nome: string; cc: SessaoChromecast; tocou: boolean };
 let atual: Atual | null = null;
 let acompanhar: NodeJS.Timeout | null = null;
 
@@ -423,6 +424,30 @@ function comecarAcompanhar(): void {
   }, 1000);
 }
 
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Continua na TV de onde o PC estava (= PlayerActivity.seekWithRetry do APK): espera a TV abrir o vídeo (até ~15 s;
+ *  antes disso o Seek é recusado ou ignorado e ela começava do zero) e insiste até a posição que a TV informa bater
+ *  com o alvo. Para se a transmissão mudou (outro vídeo, parou) ou se ele já mexeu na barra. */
+async function continuarDeOndeParou(a: AtualDlna, alvoMs: number): Promise<void> {
+  const vale = () => atual === a && !a.buscou;
+  for (let i = 0; i < 15 && vale(); i++) {
+    const estado = await soap(a.tv.controle, AVT, 'GetTransportInfo', pedidoTransporte(), 4000).then(lerEstado).catch(() => '');
+    if (tvAbriuOVideo(estado)) break;
+    await esperar(1000);
+  }
+  for (let i = 0; i < 6; i++) {
+    await esperar(i === 0 ? 500 : 1800);
+    if (!vale()) return;
+    if (!(await soap(a.tv.controle, AVT, 'Seek', pedidoBuscar(alvoMs), 6000).then(() => true).catch(() => false))) continue;
+    const pos = await soap(a.tv.controle, AVT, 'GetPositionInfo', pedidoPosicao(), 4000).then(lerPosicao).catch(() => null);
+    if (pos && chegouNoAlvo(pos.posicaoMs, alvoMs)) { console.log(`[wm] cast: continuou em ${hms(alvoMs)} (tentativa ${i + 1})`); return; }
+  }
+  if (!vale()) return;
+  console.warn(`[wm] cast: a TV não aceitou continuar em ${hms(alvoMs)}`);
+  avisar('aviso', { motivo: 'A TV não aceitou continuar de onde parou: use a barra pra ajustar.' });
+}
+
 async function enviar(o: PedidoEnviar): Promise<{ ok: boolean; erro?: string }> {
   try {
     await ligarProxy();
@@ -441,17 +466,10 @@ async function enviar(o: PedidoEnviar): Promise<{ ok: boolean; erro?: string }> 
       await soap(tv.controle, AVT, 'Stop', pedidoAcao('Stop'), 5000).catch(() => undefined);
       await soap(tv.controle, AVT, 'SetAVTransportURI', pedidoSetUri(url, titulo), 20000);
       await soap(tv.controle, AVT, 'Play', pedidoAcao('Play'), 10000);
-      atual = { tipo: 'dlna', nome: tv.nome, tv, duracaoLocalMs: o.duracaoMs ?? 0, tocou: false };
-      // Continua de onde o PC estava (a TV leva alguns segundos pra aceitar o Seek: tenta 3×).
+      const a: AtualDlna = { tipo: 'dlna', nome: tv.nome, tv, duracaoLocalMs: o.duracaoMs ?? 0, tocou: false, buscou: false };
+      atual = a;
       const pos = o.posicaoMs ?? 0;
-      if (pos > 5000) {
-        void (async () => {
-          for (let i = 0; i < 3 && atual?.tipo === 'dlna' && atual.tv === tv; i++) {
-            await new Promise((r) => setTimeout(r, 2500));
-            if (await soap(tv.controle, AVT, 'Seek', pedidoBuscar(pos), 6000).then(() => true).catch(() => false)) break;
-          }
-        })();
-      }
+      if (pos > CONTINUAR_A_PARTIR_MS) void continuarDeOndeParou(a, pos);
     } else if (o.id.startsWith('cc:')) {
       const c = ccAchados.get(o.id.slice(3));
       if (!c) return { ok: false, erro: 'O Chromecast sumiu da rede: procure de novo.' };
@@ -494,7 +512,7 @@ async function controle(acao: string, valor?: number): Promise<boolean> {
     if (a.tipo === 'dlna') {
       if (acao === 'pausar') await soap(a.tv.controle, AVT, 'Pause', pedidoAcao('Pause'));
       else if (acao === 'continuar') await soap(a.tv.controle, AVT, 'Play', pedidoAcao('Play'));
-      else if (acao === 'buscar' && typeof valor === 'number') await soap(a.tv.controle, AVT, 'Seek', pedidoBuscar(valor));
+      else if (acao === 'buscar' && typeof valor === 'number') { a.buscou = true; await soap(a.tv.controle, AVT, 'Seek', pedidoBuscar(valor)); }
       else if (acao === 'volume' && typeof valor === 'number' && a.tv.render) await soap(a.tv.render, RCS, 'SetVolume', pedidoVolume(valor));
       else return false;
     } else {

@@ -159,3 +159,14 @@ test('nome do Chromecast pelo TXT do mDNS e tipo do LOAD', () => {
   assert.equal(r.tipoParaTv(true), 'application/x-mpegURL');
   assert.equal(r.tipoParaTv(false), 'video/mp4');
 });
+
+test('continuar na TV de onde o PC estava: só depois que a TV abriu o vídeo e conferindo a posição', () => {
+  assert.equal(r.CONTINUAR_A_PARTIR_MS, 5000);
+  assert.equal(r.tvAbriuOVideo('PLAYING'), true);
+  assert.equal(r.tvAbriuOVideo('PAUSED_PLAYBACK'), true);
+  for (const e of ['TRANSITIONING', 'STOPPED', 'NO_MEDIA_PRESENT', '']) assert.equal(r.tvAbriuOVideo(e), false, e);
+  assert.equal(r.chegouNoAlvo(2_879_000, 2_879_000), true);
+  assert.equal(r.chegouNoAlvo(2_890_000, 2_879_000), true);    // a TV já andou uns segundos
+  assert.equal(r.chegouNoAlvo(2_000, 2_879_000), false);       // começou do zero: o Seek não pegou
+  assert.equal(r.chegouNoAlvo(2_900_000, 2_879_000), false);   // 21 s longe
+});

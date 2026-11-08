@@ -985,7 +985,7 @@ function ipDaRede() {
 async function ligarTvFalsa() {
   const ip = ipDaRede();
   const REF = 'http://fonte.teste/';
-  const tv = { ip, estado: 'NO_MEDIA_PRESENT', uri: '', posMs: 0, inicio: 0, acoes: [], leituras: [], referers: [], volume: 30 };
+  const tv = { ip, estado: 'NO_MEDIA_PRESENT', uri: '', posMs: 0, inicio: 0, acoes: [], leituras: [], referers: [], volume: 30, seeksAplicados: [] };
   const agora = () => (tv.estado === 'PLAYING' ? tv.posMs + (Date.now() - tv.inicio) : tv.posMs);
   const hms = (ms) => { const x = Math.floor(ms / 1000); return `${Math.floor(x / 3600)}:${String(Math.floor(x / 60) % 60).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
   const des = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
@@ -1031,12 +1031,21 @@ async function ligarTvFalsa() {
         const r = await fetch(tv.uri, { headers: { Range: 'bytes=0-1023', 'User-Agent': 'TV de Teste DLNA' } });
         tv.leituras.push({ status: r.status, tipo: r.headers.get('content-type'), texto: /mpegurl/i.test(r.headers.get('content-type') ?? '') ? await r.text() : `${(await r.arrayBuffer()).byteLength} bytes` });
       } catch (e) { tv.leituras.push({ status: 0, erro: String(e) }); }
-    } else if (acao === 'Play') { tv.estado = 'PLAYING'; tv.inicio = Date.now(); }
-    else if (acao === 'Pause') { tv.posMs = agora(); tv.estado = 'PAUSED_PLAYBACK'; }
-    else if (acao === 'Stop') { tv.estado = 'STOPPED'; tv.posMs = 0; }
+    } else if (acao === 'Play') {
+      // Como a LG: vídeo novo fica uns segundos "abrindo" (TRANSITIONING) antes de tocar; continuar do pause é na hora.
+      clearTimeout(tv.abrindo);
+      if (tv.estado === 'PAUSED_PLAYBACK') { tv.estado = 'PLAYING'; tv.inicio = Date.now(); }
+      else {
+        tv.estado = 'TRANSITIONING';
+        tv.abrindo = setTimeout(() => { if (tv.estado === 'TRANSITIONING') { tv.estado = 'PLAYING'; tv.inicio = Date.now(); } }, 3000);
+      }
+    } else if (acao === 'Pause') { tv.posMs = agora(); tv.estado = 'PAUSED_PLAYBACK'; }
+    else if (acao === 'Stop') { clearTimeout(tv.abrindo); tv.estado = 'STOPPED'; tv.posMs = 0; }
     else if (acao === 'Seek') {
+      // Abrindo o vídeo, a TV responde OK e IGNORA o Seek (o caso que fazia a TV começar do zero no APK).
       const [h, mi, se] = (/<Target>([\d:]+)<\/Target>/.exec(corpo)?.[1] ?? '0:0:0').split(':').map(Number);
-      tv.posMs = ((h * 60 + mi) * 60 + se) * 1000; tv.inicio = Date.now();
+      if (tv.estado === 'TRANSITIONING') tv.seeksIgnorados = (tv.seeksIgnorados ?? 0) + 1;
+      else { tv.posMs = ((h * 60 + mi) * 60 + se) * 1000; tv.inicio = Date.now(); tv.seeksAplicados.push(tv.posMs); }
     } else if (acao === 'GetPositionInfo') dentro = `<Track>1</Track><TrackDuration>0:00:52</TrackDuration><TrackURI>${tv.uri.replace(/&/g, '&amp;')}</TrackURI><RelTime>${hms(agora())}</RelTime>`;
     else if (acao === 'GetTransportInfo') dentro = `<CurrentTransportState>${tv.estado}</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus>`;
     else if (acao === 'GetVolume') dentro = `<CurrentVolume>${tv.volume}</CurrentVolume>`;
@@ -1054,7 +1063,8 @@ async function ligarTvFalsa() {
   await new Promise((ok) => udp.bind(0, '0.0.0.0', ok));
   tv.portaUdp = udp.address().port;
   tv.base = `http://${ip}:${portaHttp}`;
-  tv.fechar = () => { try { udp.close(); } catch { /* fechado */ } servidor.close(); };
+  tv.agora = agora;
+  tv.fechar = () => { clearTimeout(tv.abrindo); try { udp.close(); } catch { /* fechado */ } servidor.close(); };
   console.log(`TV de teste em ${tv.base} (SSDP na porta ${tv.portaUdp})`);
   return tv;
 }
@@ -1113,28 +1123,42 @@ async function cenarioCast(w, print) {
     await abrirAbaDownload(w);
     await w.waitForTimeout(1500);
     await tocarDaAba(w, DL.title);
+    // O PC já passou do começo (20 s): a TV tem que continuar daí, não do zero.
+    await w.evaluate(() => { document.querySelector('[data-wm-player-desktop] video').currentTime = 20; });
+    await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && v.currentTime >= 20 && !v.seeking; }, null, { timeout: 15000 });
     const botao = (acao) => w.locator(`[data-wm-player-desktop] [data-acao="${acao}"]`).first();
     await botao('transmitir').click();
     await w.locator('[data-painel="Transmitir pra TV"] [data-acao^="tv-"]').filter({ hasText: 'TV de Teste' }).first().waitFor({ timeout: 20000 });
     await print('01-menu.png');
     const antes = tv.acoes.length;
+    const posPc = await w.evaluate(() => Math.round(document.querySelector('[data-wm-player-desktop] video').currentTime * 1000));
     await w.locator('[data-painel="Transmitir pra TV"] [data-acao^="tv-"]').filter({ hasText: 'TV de Teste' }).first().click();
     await w.locator('[data-transmitindo="TV de Teste"]').waitFor({ timeout: 30000 });
     await esperarTv(() => tv.acoes.slice(antes).includes('Play'), 'a TV não recebeu o Play do baixado');
     const leitura = tv.leituras.at(-1);
     if (!tv.uri.includes('/arquivo/') || leitura?.status !== 206 || !/video\/mp4/.test(leitura.tipo ?? '')) throw new Error(`a TV leu o baixado: ${tv.uri} ${JSON.stringify(leitura)}`);
     await w.locator('[data-transmitindo][data-estado="tocando"]').waitFor({ timeout: 20000 });   // a TV disse que está tocando
+    // A TV abre o vídeo do zero e ignora o Seek enquanto abre (como a LG): o app espera e continua de onde o PC estava.
+    await esperarTv(() => tv.seeksAplicados.some((ms) => Math.abs(ms - posPc) < 3000), `a TV não pulou pra onde o PC estava (${Math.round(posPc / 1000)} s; posição da TV ${Math.round(tv.agora() / 1000)} s)`, 25000);
+    resultados.push(`ℹ️ PC em ${Math.round(posPc / 1000)} s → a TV pulou pra ${Math.round(tv.seeksAplicados.at(-1) / 1000)} s (Seek ignorado enquanto abria: ${tv.seeksIgnorados ?? 0})`);
+    await w.waitForTimeout(1500);   // a barra lê a posição da TV a cada 1 s
     await print('02-transmitindo.png');
     await botao('play').click();
     await esperarTv(() => tv.estado === 'PAUSED_PLAYBACK', 'pausar na barra não pausou a TV');
+    const pausouEm = tv.agora();
+    const seeksAntes = tv.acoes.filter((x) => x === 'Seek').length;
     await w.keyboard.press('ArrowRight');
-    await esperarTv(() => tv.acoes.slice(antes).includes('Seek'), 'a seta → não avançou a TV');
+    await esperarTv(() => tv.acoes.filter((x) => x === 'Seek').length > seeksAntes && tv.agora() >= pausouEm + 8000, 'a seta → não avançou a TV 10 s');
     await w.locator('[data-transmitindo][data-estado="pausado"]').waitFor({ timeout: 10000 });
     await print('03-pausado.png');
+    const tvParouEm = tv.agora();
     await botao('parar-tv').click();
     await esperarTv(() => tv.estado === 'STOPPED', 'parar não parou a TV');
     await w.locator('[data-transmitindo]').waitFor({ state: 'detached', timeout: 10000 });
-    await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && !v.paused && v.currentTime > 2; }, null, { timeout: 30000 });
+    // Volta pro PC no ponto da TV, tocando de verdade (não o carregando do pulo).
+    await w.waitForFunction((t) => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && !v.paused && !v.seeking && v.readyState >= 3 && v.currentTime >= t - 2; }, tvParouEm / 1000, { timeout: 30000 });
+    resultados.push(`ℹ️ a TV parou em ${Math.round(tvParouEm / 1000)} s → o PC voltou em ${Math.round(await w.evaluate(() => document.querySelector('[data-wm-player-desktop] video').currentTime))} s`);
+    await w.waitForTimeout(800);
     await print('04-voltou-pro-pc.png');
     await fecharPlayer(w);
     await w.evaluate((k) => window.wmDesktop.downloads.remover(k), DL.key);

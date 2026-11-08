@@ -116,6 +116,15 @@ export function lerPosicao(xml: string): { posicaoMs: number; duracaoMs: number;
 /** Resposta do GetTransportInfo → PLAYING / PAUSED_PLAYBACK / STOPPED / TRANSITIONING / NO_MEDIA_PRESENT. */
 export const lerEstado = (xml: string): string => (tag(xml, 'CurrentTransportState') ?? '').toUpperCase();
 
+// Continuar na TV de onde o PC estava (= PlayerActivity.seekWithRetry do APK). Um Seek logo depois do Play é recusado
+// ou ignorado em várias TVs (ainda estão abrindo o vídeo) e a TV começava do zero com o celular em 47:59.
+/** Só vale continuar passado o começo (igual ao APK: abaixo disso a TV começa do zero mesmo). */
+export const CONTINUAR_A_PARTIR_MS = 5000;
+/** A TV já abriu o vídeo: antes disso o Seek é recusado ou ignorado. */
+export const tvAbriuOVideo = (estado: string): boolean => estado === 'PLAYING' || estado === 'PAUSED_PLAYBACK';
+/** O Seek "pegou": a posição que a TV informa ficou a menos de 20 s do alvo (a TV arredonda e ainda carrega). */
+export const chegouNoAlvo = (posicaoMs: number, alvoMs: number): boolean => Math.abs(posicaoMs - alvoMs) < 20000;
+
 export const lerVolume = (xml: string): number | null => {
   const v = tag(xml, 'CurrentVolume');
   return v !== null && /^\d+$/.test(v) ? +v : null;
