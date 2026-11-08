@@ -1,7 +1,8 @@
 // src/lib/resolver.ts
 import { useEffect, useState } from 'react';
-import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { isTv } from './device';
+import { isDesktop, temCaptura } from './desktop';
 
 // Resolvedor OCULTO (pedido dele 14/09/2026: "quando clicar em assistir abra direto no
 // reprodutor"). O nativo (ResolverPlugin.java) carrega a página da fonte num WebView invisível
@@ -18,7 +19,10 @@ interface ResolverPlugin {
   pickOption(o: { k: number }): Promise<void>;
   addListener(event: 'resolverEvent', cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle>;
 }
-const Resolver = registerPlugin<ResolverPlugin>('Resolver');
+// No app do Windows (Capacitor = "web") o resolvedor é a janela escondida da ponte (desktopPlugins.ts, desktop/captura.ts).
+const Resolver = registerPlugin<ResolverPlugin>('Resolver', {
+  web: () => import('./desktopPlugins').then((m) => new m.ResolverDesktop()),
+});
 
 // Orçamento por fonte (15/09/2026): Fonte 1 = ABYS (~10–30 s até o proxy dizer "ready") + fallback Byse
 // aos 30 s sem sinal do frame abysscdn (ou aos 60 s se o pump já leu as `sources` — /abyss/progress) →
@@ -519,14 +523,16 @@ export function resolverSkipReason(o: { enabled: boolean; cacheOpen: boolean; ar
 // ── plugin ─────────────────────────────────────────────────────────────────────
 // key = título/ep (`tmdbId:type:season:ep`): com a TV já tocando ele pelo motor, o nativo devolve o link dela sem buscar.
 export async function startResolver(o: { url: string; referer?: string; providerId?: string; startOpt?: number; budgetMs?: number; key?: string }): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
-  const abys = usesAbys(o.providerId);
+  if (!temCaptura()) return;
+  // No PC não há o ProxyServer do APK: sem o motor do ABYS (a opção ABYS vira uma opção comum do ciclo; a BYSE vem antes).
+  const abys = usesAbys(o.providerId) && !isDesktop();
   const sid = abys ? Math.random().toString(36).slice(2, 10) + Date.now().toString(36) : '';
   await Resolver.start({
     url: o.url, referer: o.referer, hopHosts: HOP_HOSTS, clickScript: buildClickScript(),
     // v4.64: Fonte 1 também roda o ciclo de opções (lista REAL da embedplay.one) + o pump do ABYS; o antigo par
     // "script principal Opção 1 / alternativo Opção 2" (fallbackMs) saiu — quem avança agora é o cronômetro por opção.
-    injectScript: (abys ? buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : CLICK_STEPS) + buildAbyssScript(sid) : buildOptionCycleScript(clickStepsFor(o.providerId)) + (bloggerNaBusca(o.providerId) ? buildBloggerScript() : ''))
+    injectScript: buildOptionCycleScript(o.providerId === ABYS_PROVIDER ? CLICK_STEPS_F1 : clickStepsFor(o.providerId))
+      + (abys ? buildAbyssScript(sid) : (bloggerNaBusca(o.providerId) ? buildBloggerScript() : ''))
       + buildSemTituloScript(),
     injectScriptAlt: '',
     abyssSid: sid, key: o.key ?? '', fallbackMs: 0,
@@ -538,15 +544,15 @@ export async function startResolver(o: { url: string; referer?: string; provider
 }
 // keep = o vídeo está tocando pelo /abyss/ (página oculta = motor) → só para o relógio; o WebView fica.
 export function stopResolver(keep = false): void {
-  if (!Capacitor.isNativePlatform()) return;
+  if (!temCaptura()) return;
   Resolver.stop({ keep }).catch(() => {});
 }
 export function onResolverEvent(cb: (e: ResolverEvent) => void): Promise<PluginListenerHandle> | null {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   return Resolver.addListener('resolverEvent', cb);
 }
 // v4.61: força uma opção (tap na lista da tela "Procurando") — o nativo reinjeta/recarrega naquele k.
 export function pickResolverOption(k: number): void {
-  if (!Capacitor.isNativePlatform()) return;
+  if (!temCaptura()) return;
   Resolver.pickOption({ k }).catch(() => {});
 }

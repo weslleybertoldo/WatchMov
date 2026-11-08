@@ -1,5 +1,6 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { applyTvPosition } from '@/lib/streamCache';
+import { temCaptura } from '@/lib/desktop';
 
 interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string>; fonte?: string; servidores?: string[]; servidorAtual?: string; imdbId?: string; episodios?: string }
 // `watchedKey` = de QUAL episódio o `watched` fala (tmdbId:type:season:ep). O player
@@ -36,7 +37,10 @@ export interface PlayerErrorEvent {
 // do ApplicationExitInfo (4 erro, 6 travou, 3 falta de memória…), `cause` = texto pronto.
 export interface AppExit { ts: number; reason: number; cause: string }
 
-const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer');
+// No app do Windows (Capacitor = "web") o player é o básico da ponte (desktopPlugins.ts → playerDesktop.ts).
+const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer', {
+  web: () => import('./desktopPlugins').then((m) => new m.PlayerNativoDesktop()),
+});
 
 // Fechamentos do app (erro, travamento, sistema) que a aba Bugs ainda não recebeu: o
 // processo que morre não consegue gravar a própria linha. APK antigo → lista vazia.
@@ -58,26 +62,26 @@ export function ackAppExits(ts: number): void {
 // Progresso periódico do player nativo (a cada ~5s) — salva a posição de forma
 // robusta (não depende de o ExoPlayer devolver o result ao fechar).
 export function onPlayerProgress(cb: (d: { url: string; positionMs: number; durationMs?: number }) => void): Promise<PluginListenerHandle> | null {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   return NativePlayer.addListener('playerProgress', cb);
 }
 
 // Resolução real que o ExoPlayer decodificou pra um link (rotula a lista).
 export function onPlayerQuality(cb: (d: { url: string; quality: string }) => void): Promise<PluginListenerHandle> | null {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   return NativePlayer.addListener('playerQuality', cb);
 }
 
 // "Assistido" vindo do player nativo (botão, ou faltando 1 min pro fim). `key` diz
 // de qual episódio — sem ela a marcação caía no ep que abriu o player.
 export function onPlayerWatched(cb: (d: { watched: boolean; key?: string }) => void): Promise<PluginListenerHandle> | null {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   return NativePlayer.addListener('playerWatched', cb);
 }
 
 // Erro de reprodução do player nativo (código/causa reais) → registrar no banco.
 export function onPlayerError(cb: (d: PlayerErrorEvent) => void): Promise<PluginListenerHandle> | null {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   return NativePlayer.addListener('playerError', cb);
 }
 
@@ -87,14 +91,14 @@ export function onPlayerError(cb: (d: PlayerErrorEvent) => void): Promise<Plugin
 // `auto` = veio do minuto final (auto-avanço): o JS só deve avançar se o próximo ep já
 // tem link capturado/baixado; senão responde loadNextNative({}) e o player fica no ep.
 export function onPlayerNext(cb: (e?: { auto?: boolean }) => void): Promise<PluginListenerHandle> | null {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   return NativePlayer.addListener('playerNext', cb);
 }
 
 // Entrega o próximo episódio pro player que JÁ ESTÁ ABERTO (mantém o espelhamento
 // na TV vivo). Sem url = "não achei link" → o player usa o fluxo antigo.
 export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> {
-  if (!Capacitor.isNativePlatform()) return false;
+  if (!temCaptura()) return false;
   try {
     const r = await NativePlayer.loadNext(opts);
     return !!r?.ok;
@@ -106,7 +110,7 @@ export async function loadNextNative(opts: Partial<PlayOpts>): Promise<boolean> 
 // Apaga a posição salva NATIVA de um episódio (o player guarda em SharedPreferences
 // além do streamCache). Usado ao avançar: o ep seguinte começa do zero.
 export async function clearResumeNative(key: string): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
+  if (!temCaptura()) return;
   try { await NativePlayer.clearResume({ key }); } catch { /* ignore */ }
 }
 
@@ -194,7 +198,7 @@ function marcarPlayer(delta: number) {
 // Abre o player nativo (ExoPlayer) com Referer/UA. Retorna a posição (ms) + o link
 // que ficou tocando. Só no APK; na web retorna null (o chamador usa o <video>/iframe).
 export async function playNative(opts: PlayOpts): Promise<PlayResult | null> {
-  if (!Capacitor.isNativePlatform()) return null;
+  if (!temCaptura()) return null;
   marcarPlayer(+1);
   try {
     return await NativePlayer.play(opts);

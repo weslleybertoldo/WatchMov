@@ -11,7 +11,7 @@
 //   8. cada fonte abre no iframe do player (print de cada uma);
 //   9. propaganda de um servidor (janela nova e troca da página depois de um clique) é bloqueada, e um link de fora
 //      pedido pela própria página vai pro navegador do PC.
-// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede]
+// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura]
 // WM_SITE troca o site que o app abre (staging, ou o Vite local em desenvolvimento).
 // Env: WM_SUPABASE_URL (ou VITE_SUPABASE_URL), WM_SUPABASE_ANON (ou VITE_SUPABASE_ANON_KEY), WM_SMOKE_EMAIL,
 //      WM_SMOKE_SENHA — SÓ a conta de teste. Nada é gravado no banco (só login e leitura).
@@ -27,7 +27,7 @@ const opcao = (nome, padrao) => { const i = args.indexOf(nome); return i >= 0 ? 
 const exe = opcao('--exe');
 const saida = path.resolve(opcao('--saida', 'smoke-prints'));
 const cenario = opcao('--cenario', 'base');
-if (!['base', 'rede'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
+if (!['base', 'rede', 'captura'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
 fs.mkdirSync(saida, { recursive: true });
 
 const SB = process.env.WM_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
@@ -63,6 +63,8 @@ const mandarLink = (link) => new Promise((ok) => {
 });
 
 const app = await electron.launch({ executablePath: binario, args: argsApp, timeout: 90000 });
+// Registros do processo principal ([wm] …) entram na saída do teste: é o diagnóstico da captura e da rede.
+for (const fluxo of [app.process().stdout, app.process().stderr]) fluxo?.on('data', (d) => { for (const l of String(d).split('\n')) if (l.includes('[wm]')) console.log(l.trim()); });
 let falhou = false;
 try {
   const w = await app.firstWindow({ timeout: 60000 });
@@ -127,17 +129,20 @@ try {
     await print('04-inicio.png');
   });
 
-  if (cenario === 'base') await passo('um título abre o player com o servidor', async () => {
+  if (cenario === 'base') await passo('um título abre o player (do servidor; com a W2, o do app também vale)', async () => {
+    await abrirSozinho(w, false);   // a base testa o player do servidor; o abrir sozinho é o cenário captura
     await w.locator('[data-tv-hold]').first().click();   // a 1ª capa de uma fileira (MediaCard)
     const assistir = w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first();
     await assistir.waitFor({ timeout: 30000 });
     await print('05-detalhe.png');
     await assistir.click();
-    await w.locator('iframe').first().waitFor({ state: 'attached', timeout: 45000 });
+    // Sem o abrir sozinho o servidor abre no iframe; se a captura pegar o link do iframe, o player do app abre por cima.
+    await w.locator('iframe, [data-wm-player-desktop] video').first().waitFor({ state: 'attached', timeout: 45000 });
     await w.waitForTimeout(5000);
     await print('06-player.png');
   });
   if (cenario === 'rede') await cenarioRede(app, w, print);
+  if (cenario === 'captura') await cenarioCaptura(app, w, print);
 } catch (e) {
   falhou = true;
   console.error(String(e?.stack ?? e));
@@ -150,6 +155,36 @@ console.log(`prints em ${saida}`);
 process.exit(falhou ? 1 : 0);
 
 // ---------------------------------------------------------------- cenário "rede" (W1)
+// Liga/desliga o abrir sozinho (a mesma chave do botão da aba Servidores, resolver.ts: 'watchmov_resolver').
+async function abrirSozinho(w, ligar) {
+  await w.evaluate((v) => localStorage.setItem('watchmov_resolver', v), ligar ? '1' : '0');
+}
+
+// "Assistiu pelo servidor" no 1º título (streamCache.ts: setServerMode, lastMode 'server'): o site abre o servidor e
+// não joga pro player do app quando a captura pega o link do iframe (auto-abrir desarmado), como quando ele escolhe
+// o servidor. Sem isso o laço das fontes perdia o iframe (08/11/2026: a Fonte 1 abriu sozinha no player do app).
+async function servidorNoPrimeiroCartaz(w) {
+  const chave = await w.locator('[data-tv-hold]').first().getAttribute('data-tv-key');   // "movie-1233413"
+  const m = /^(movie|tv)-(\d+)$/.exec(chave ?? '');
+  if (!m) return;
+  await w.evaluate(([tipo, id]) => {
+    const d = JSON.parse(localStorage.getItem('watchmov_streamcache') || '{}');
+    for (const [t, e] of [[0, 0], [1, 1]]) {
+      const k = `${id}:${tipo}:${t}:${e}`;
+      d[k] = { ...(d[k] || { streams: [] }), lastMode: 'server', ts: Date.now() };
+    }
+    localStorage.setItem('watchmov_streamcache', JSON.stringify(d));
+  }, [m[1], m[2]]);
+}
+
+// Com a W2 a captura também olha o iframe do servidor e, se pegar o link, o player do app abre por cima: fecha.
+async function fecharPlayerDoApp(w) {
+  if (await w.locator('[data-wm-player-desktop]').count()) {
+    await w.keyboard.press('Escape');
+    await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined);
+  }
+}
+
 async function cenarioRede(app, w, print) {
   const estadoRede = () => w.evaluate(() => window.wmDesktop.rede.estado());
   // O navegador do PC não abre no teste: o processo principal guarda o que abriria.
@@ -188,8 +223,10 @@ async function cenarioRede(app, w, print) {
   let fonteOk = null;   // a última fonte que carregou: o teste da propaganda usa o servidor dela
   let fonteAtual = null;
   await passo('cada fonte abre no iframe do player', async () => {
+    await abrirSozinho(w, false);   // o laço testa o iframe de cada fonte (W1); o abrir sozinho é o cenário captura
     await w.locator('nav button', { hasText: /^Início$/ }).first().click();
     await w.locator('[data-tv-hold]').first().waitFor({ timeout: 30000 });
+    await servidorNoPrimeiroCartaz(w);
     await w.locator('[data-tv-hold]').first().click();
     const assistir = w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first();
     await assistir.waitFor({ timeout: 30000 });
@@ -203,6 +240,7 @@ async function cenarioRede(app, w, print) {
     const falhas = [];
     for (const nome of nomes) {
       const n = nome.match(/^Fonte (\d+)/)[1];
+      await fecharPlayerDoApp(w);
       await trocar.click();
       await w.getByRole('button', { name: nome.trim() }).click();
       await w.waitForTimeout(1000);
@@ -237,6 +275,7 @@ async function cenarioRede(app, w, print) {
   });
 
   await passo('propaganda do servidor não abre janela nem troca a página; link de fora da página vai pro PC', async () => {
+    await fecharPlayerDoApp(w);
     // Volta pra última fonte que carregou (o player remonta o iframe a cada troca de fonte).
     if (fonteAtual !== fonteOk) {
       await w.locator('button[title="Trocar fonte"]').first().click();
@@ -277,5 +316,77 @@ async function cenarioRede(app, w, print) {
     if (!(await externos()).includes('https://github.com/weslleybertoldo/WatchMov')) throw new Error('o link de fora da página não foi pro navegador do PC');
     resultados.push(`ℹ️ ${fonteOk}: bloqueadas ${janelas} janelas e ${navs} troca(s) da página (total do app: ${depois.janelasBloqueadas} janelas, ${depois.navegacoesBloqueadas} navegações; última: ${depois.ultimaBloqueada})`);
     await print('03-propaganda-bloqueada.png');
+  });
+}
+
+// W2 (abrir sozinho): o título abre, a janela escondida acha o vídeo e ele toca sozinho no player do app.
+async function cenarioCaptura(app, w, print) {
+  // WM_FONTE = id da fonte (src/lib/players.ts) que o título abre (vira a favorita); sem = a padrão do site.
+  // WM_ABA = aba do 1º título (ex. "Séries": abre um episódio); sem = o 1º título do Início.
+  // WM_BUSCA = nome do título (abre o 1º resultado da busca): a ordem das abas muda todo dia e nem toda fonte tem o
+  // 1º título (08/11/2026: a Fonte 3 não tinha a série do topo e respondia 404, igual no Android).
+  const fonte = process.env.WM_FONTE;
+  const aba = process.env.WM_ABA;
+  const busca = process.env.WM_BUSCA;
+  const rotulo = [fonte, aba, busca].filter(Boolean).join(' · ');
+  const sufixo = rotulo ? `-${rotulo.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}` : '';
+  await passo(`o título abre sozinho no player do app (captura + resolvedor)${rotulo ? ` [${rotulo}]` : ''}`, async () => {
+    await abrirSozinho(w, true);   // o perfil do app guarda o localStorage: a base e a rede deixam desligado
+    // Sem o "assistiu pelo servidor" da rede e sem link guardado: o título passa pelo resolvedor de verdade.
+    await w.evaluate(() => localStorage.removeItem('watchmov_streamcache'));
+    if (fonte) await w.evaluate((f) => localStorage.setItem('watchmov_fav_server', f), fonte);
+    if (aba) {
+      await w.locator('nav button', { hasText: new RegExp(`^${aba}$`) }).first().click();
+      try { await w.locator('[data-tv-hold]:visible').first().waitFor({ timeout: 30000 }); }
+      catch (e) { await print(`01-aba${sufixo}.png`); throw e; }
+      await w.waitForTimeout(1500);
+    }
+    if (busca) {
+      await w.locator('button[title="Buscar"]').first().click();
+      const campo = w.getByPlaceholder('Buscar filmes, séries e animes...');
+      await campo.waitFor({ timeout: 15000 });
+      await campo.fill(busca);
+      await campo.press('Enter');   // a busca do site só roda no Enter (SearchView.tsx)
+      try { await w.locator('[data-tv-hold]:visible').first().waitFor({ timeout: 30000 }); }
+      catch (e) { await print(`01-busca${sufixo}.png`); throw e; }
+      await w.waitForTimeout(2500);   // a busca termina de chegar (o 1º cartaz pode ser de uma resposta parcial)
+    }
+    await w.locator('[data-tv-hold]:visible').first().click();
+    const assistir = w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first();
+    try { await assistir.waitFor({ timeout: 30000 }); }
+    catch (e) { await print(`01-sem-assistir${sufixo}.png`); throw e; }
+    await assistir.click();
+    const video = w.locator('[data-wm-player-desktop] video');
+    try { await video.waitFor({ state: 'attached', timeout: 150000 }); }
+    catch (e) { await print(`01-sem-player${sufixo}.png`); throw e; }
+    const erros = [];
+    w.on('console', (m) => { const t = m.text(); if (/hls|media|video|erro|error|403|404/i.test(t)) erros.push(t.slice(0, 160)); });
+    try {
+      await w.waitForFunction(() => {
+        const v = document.querySelector('[data-wm-player-desktop] video');
+        return !!v && v.currentTime > 1 && v.readyState >= 2;
+      }, null, { timeout: 90000 });
+    } catch (e) {
+      const estado = await w.evaluate(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return v ? `rs=${v.readyState} ns=${v.networkState} t=${v.currentTime} err=${v.error?.code ?? '-'} src=${(v.currentSrc || '').slice(0, 50)}` : 'sem video'; });
+      resultados.push(`ℹ️ player: ${estado}`);
+      for (const t of erros.slice(0, 8)) resultados.push(`ℹ️ console: ${t}`);
+      await print(`01-player-parado${sufixo}.png`);
+      throw e;
+    }
+    // Alguns segundos a mais antes do print: o começo do episódio costuma ser tela preta (Fonte 3, 08/11/2026).
+    await w.waitForFunction(() => (document.querySelector('[data-wm-player-desktop] video')?.currentTime ?? 0) > 6,
+      null, { timeout: 15000 }).catch(() => undefined);
+    const info = await w.evaluate(() => {
+      const v = document.querySelector('[data-wm-player-desktop] video');
+      return { t: v.currentTime.toFixed(1), h: v.videoHeight, src: (v.currentSrc || '').slice(0, 60) };
+    });
+    resultados.push(`ℹ️ tocando no player do app: ${info.t} s, ${info.h}p, ${info.src}`);
+    await print(`01-player-do-app${sufixo}.png`);
+  });
+  await passo('fechar o player volta pro app e guarda onde parou', async () => {
+    await w.keyboard.press('Escape');
+    await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 });
+    await w.waitForTimeout(1500);
+    await print(`02-fechou${sufixo}.png`);
   });
 }

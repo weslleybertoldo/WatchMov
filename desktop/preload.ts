@@ -2,6 +2,12 @@
 // Só a página do app recebe a ponte; os iframes dos servidores de vídeo não.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
+let chave = '';
+const chaveVideo = (): string => {
+  if (!chave) { try { chave = String(ipcRenderer.sendSync('wm:video-chave') ?? ''); } catch { /* sem chave: o vídeo não abre pelo app */ } }
+  return chave;
+};
+
 contextBridge.exposeInMainWorld('wmDesktop', {
   abrirFora: (url: string): Promise<boolean> => ipcRenderer.invoke('wm:abrir-fora', url),
   linkPendente: (): Promise<string | null> => ipcRenderer.invoke('wm:link-pendente'),
@@ -15,5 +21,23 @@ contextBridge.exposeInMainWorld('wmDesktop', {
     cabecalhos: (url: string, cabecalhos: Record<string, string>): Promise<boolean> =>
       ipcRenderer.invoke('wm:rede-cabecalhos', url, cabecalhos),
     estado: (): Promise<unknown> => ipcRenderer.invoke('wm:rede-estado'),
+    // Cabeçalhos do link que o player do app está tocando (todo pedido de mídia da página leva); null = parou.
+    reproducao: (cabecalhos: Record<string, string> | null): Promise<boolean> =>
+      ipcRenderer.invoke('wm:rede-reproducao', cabecalhos),
+    // Endereço do vídeo pelo app (desktop/regras.ts, alvoDoVideo; o preload em sandbox não importa arquivo): o hls.js
+    // do player busca a playlist e os pedaços por aqui. A chave só chega na página do app (iframe não tem preload).
+    videoPeloApp: (url: string): string => `wm-video://v/?t=${chaveVideo()}&u=${encodeURIComponent(url)}`,
+  },
+  // Abrir sozinho (captura.ts, v5.23+): captura do link e resolvedor na janela escondida, com os eventos do Android.
+  captura: {
+    sniffer: (ligar: boolean): Promise<boolean> => ipcRenderer.invoke('wm:sniffer', ligar),
+    resolverIniciar: (o: unknown): Promise<boolean> => ipcRenderer.invoke('wm:resolver-iniciar', o),
+    resolverParar: (): Promise<boolean> => ipcRenderer.invoke('wm:resolver-parar'),
+    resolverOpcao: (k: number): Promise<boolean> => ipcRenderer.invoke('wm:resolver-opcao', k),
+    aoEvento: (cb: (evento: string, dados: unknown) => void): (() => void) => {
+      const ouvir = (_e: IpcRendererEvent, evento: string, dados: unknown) => cb(evento, dados);
+      ipcRenderer.on('wm:captura', ouvir);
+      return () => { ipcRenderer.off('wm:captura', ouvir); };
+    },
   },
 });

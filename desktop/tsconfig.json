@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["main.ts", "preload.ts", "rede.ts", "regras.ts"]
+  "include": ["main.ts", "preload.ts", "rede.ts", "regras.ts", "captura.ts", "captura-preload.ts", "regrasCaptura.ts"]
 }
