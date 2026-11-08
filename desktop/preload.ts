@@ -55,4 +55,19 @@ contextBridge.exposeInMainWorld('wmDesktop', {
       return () => { ipcRenderer.off('wm:downloads', ouvir); };
     },
   },
+  // Mandar pra TV (cast.ts, v5.28+): DLNA e Chromecast da rede da casa (o PC serve o vídeo pra TV) e o Transmitir do
+  // Windows. Eventos: estado (1 por segundo), fim, erro, parou.
+  cast: {
+    procurar: (): Promise<unknown[]> => ipcRenderer.invoke('wm:cast-procurar'),
+    enviar: (o: unknown): Promise<unknown> => ipcRenderer.invoke('wm:cast-enviar', o),
+    controle: (acao: string, valor?: number): Promise<boolean> => ipcRenderer.invoke('wm:cast-controle', acao, valor),
+    estado: (): Promise<unknown> => ipcRenderer.invoke('wm:cast-estado'),
+    parar: (): Promise<unknown> => ipcRenderer.invoke('wm:cast-parar'),
+    espelhar: (): Promise<boolean> => ipcRenderer.invoke('wm:cast-espelhar'),
+    aoEvento: (cb: (evento: string, dados: unknown) => void): (() => void) => {
+      const ouvir = (_e: IpcRendererEvent, evento: string, dados: unknown) => cb(evento, dados);
+      ipcRenderer.on('wm:cast', ouvir);
+      return () => { ipcRenderer.off('wm:cast', ouvir); };
+    },
+  },
 });

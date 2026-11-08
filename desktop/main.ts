@@ -8,7 +8,8 @@ import { app, BrowserWindow, ipcMain, net, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { aoBloquear, ligarRede, protegerJanela, registrarEsquemaVideo } from './rede';
 import { derrubarNaBusca, ligarCaptura } from './captura';
-import { ligarDownloads, pararDownloads } from './downloads';
+import { arquivoDoBaixado, ligarDownloads, pararDownloads } from './downloads';
+import { ligarCast, pararCast } from './cast';
 
 const SITE = 'https://watchmovbr.vercel.app/';
 // Retorno do login do Google (src/lib/capacitorAuth.ts, REDIRECT_SCHEME): o mesmo do APK, que o Supabase já aceita.
@@ -130,10 +131,12 @@ if (!app.requestSingleInstanceLock()) {
     ligarCaptura(() => janela);
     // Downloads (W4): .mp4 em Vídeos\WatchMov, os eventos vão só pra janela do app; o que ficou pela metade continua.
     ligarDownloads(ORIGEM, () => janela);
+    // Mandar pra TV (W5): DLNA e Chromecast pela rede da casa (o PC serve o vídeo pra TV) e o Transmitir do Windows.
+    ligarCast(ORIGEM, () => janela, arquivoDoBaixado);
     abrirJanela();
     // Atualização: baixa a versão nova da release do GitHub e instala ao fechar (avisa pelo Windows).
     if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch((e: unknown) => console.warn('[wm] atualização:', e));
   });
-  app.on('before-quit', () => pararDownloads());
+  app.on('before-quit', () => { pararDownloads(); void pararCast(); });
   app.on('window-all-closed', () => app.quit());
 }

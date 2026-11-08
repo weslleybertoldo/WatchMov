@@ -49,6 +49,14 @@ if ($LASTEXITCODE -ne 0) {
   if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke dos downloads falhou ($LASTEXITCODE): vídeo de teste de terceiro fora do ar; a release segue" }
   else { throw "smoke dos downloads falhou ($LASTEXITCODE)" }
 }
+# Mandar pra TV (cast.ts, W5): uma TV DLNA de mentira na rede do runner (SSDP + SOAP): o app acha, manda o HLS pelo proxy
+# do PC (uma qualidade, áudio pt, Referer do link) e o baixado do disco, e a barra pausa/avança/para a TV. O baixado vem
+# de terceiro (W3C): na release só avisa. Na PR barra.
+node smoke.mjs --exe $app --saida smoke-prints --cenario cast
+if ($LASTEXITCODE -ne 0) {
+  if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke do cast falhou ($LASTEXITCODE): vídeo de teste de terceiro fora do ar; a release segue" }
+  else { throw "smoke do cast falhou ($LASTEXITCODE)" }
+}
 # O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
 reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
 if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }

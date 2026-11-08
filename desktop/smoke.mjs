@@ -18,7 +18,7 @@
 // Cenário "downloads" (W4, desktop/downloads.ts), com vídeos públicos de teste: um mp4 baixa inteiro; um HLS baixa
 // pedaço por pedaço, o app fecha no meio e, aberto de novo, continua de onde parou; os dois viram .mp4 com a duração
 // certa; a aba Download toca o baixado do disco; sem internet o app abre a cópia guardada e toca; excluir apaga.
-// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links|downloads]
+// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links|downloads|cast]
 // WM_SITE troca o site que o app abre (staging, ou o Vite local em desenvolvimento).
 // Env: WM_SUPABASE_URL (ou VITE_SUPABASE_URL), WM_SUPABASE_ANON (ou VITE_SUPABASE_ANON_KEY), WM_SMOKE_EMAIL,
 //      WM_SMOKE_SENHA — SÓ a conta de teste. Nada é gravado no banco (só login e leitura).
@@ -26,6 +26,7 @@ import { _electron as electron } from '@playwright/test';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,13 +35,23 @@ const opcao = (nome, padrao) => { const i = args.indexOf(nome); return i >= 0 ? 
 const exe = opcao('--exe');
 const saida = path.resolve(opcao('--saida', 'smoke-prints'));
 const cenario = opcao('--cenario', 'base');
-if (!['base', 'rede', 'captura', 'player', 'player-links', 'downloads'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
+if (!['base', 'rede', 'captura', 'player', 'player-links', 'downloads', 'cast'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
 fs.mkdirSync(saida, { recursive: true });
 // Downloads: pasta própria do teste e velocidade limitada (dá tempo de fechar o app no meio do HLS).
 if (cenario === 'downloads') {
   process.env.WM_DL_PASTA ??= path.join(saida, 'baixados');
   process.env.WM_DL_KBPS ??= '1200';
   fs.rmSync(process.env.WM_DL_PASTA, { recursive: true, force: true });
+}
+
+// Mandar pra TV (W5): uma TV DLNA de mentira na rede (SSDP + SOAP, lê o vídeo como uma TV) e uma "fonte" que só
+// entrega com o Referer certo. O app acha a TV também pelo WM_SSDP_EXTRA (o runner pode não ter o SSDP do Windows livre).
+let tvFalsa = null;
+if (cenario === 'cast') {
+  process.env.WM_DL_PASTA ??= path.join(saida, 'baixados-cast');
+  fs.rmSync(process.env.WM_DL_PASTA, { recursive: true, force: true });
+  tvFalsa = await ligarTvFalsa();
+  process.env.WM_SSDP_EXTRA = `${tvFalsa.ip}:${tvFalsa.portaUdp}`;
 }
 
 const SB = process.env.WM_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
@@ -164,6 +175,7 @@ try {
   if (cenario === 'player') await cenarioPlayer(w, print);
   if (cenario === 'player-links') await cenarioPlayerLinks(w, print);
   if (cenario === 'downloads') await cenarioDownloads(app, w, print);
+  if (cenario === 'cast') await cenarioCast(w, print);
 } catch (e) {
   falhou = true;
   console.error(String(e?.stack ?? e));
@@ -959,4 +971,197 @@ async function cenarioDownloadReal(w, print) {
     await w.waitForTimeout(1500);
     await print('real-02-aba.png');
   });
+}
+
+// ── Mandar pra TV (W5) ──────────────────────────────────────────────────────────────────────────────────────────────
+
+function ipDaRede() {
+  for (const lista of Object.values(os.networkInterfaces())) {
+    for (const i of lista ?? []) if (i.family === 'IPv4' && !i.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(i.address)) return i.address;
+  }
+  return '127.0.0.1';
+}
+
+async function ligarTvFalsa() {
+  const ip = ipDaRede();
+  const REF = 'http://fonte.teste/';
+  const tv = { ip, estado: 'NO_MEDIA_PRESENT', uri: '', posMs: 0, inicio: 0, acoes: [], leituras: [], referers: [], volume: 30, seeksAplicados: [] };
+  const agora = () => (tv.estado === 'PLAYING' ? tv.posMs + (Date.now() - tv.inicio) : tv.posMs);
+  const hms = (ms) => { const x = Math.floor(ms / 1000); return `${Math.floor(x / 3600)}:${String(Math.floor(x / 60) % 60).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
+  const des = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  const FONTE = {
+    '/fonte/hls/master.m3u8': '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="en.m3u8"\n'
+      + '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Português",LANGUAGE="pt-BR",DEFAULT=NO,URI="pt.m3u8"\n'
+      + '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,AUDIO="a"\n360.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,AUDIO="a"\n720.m3u8\n',
+    '/fonte/hls/720.m3u8': '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\ns1.ts\n#EXTINF:4,\ns2.ts\n#EXT-X-ENDLIST\n',
+  };
+  const http = await import('node:http');
+  const dgram = await import('node:dgram');
+  const servidor = http.createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://tv');
+    if (u.pathname.startsWith('/fonte/')) {   // a "fonte": só com o Referer do link (como os CDNs das fontes)
+      tv.referers.push(req.headers.referer ?? '');
+      if (req.headers.referer !== REF) { res.writeHead(403); res.end('sem referer'); return; }
+      if (FONTE[u.pathname]) { res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' }); res.end(FONTE[u.pathname]); return; }
+      const corpo = Buffer.alloc(4096, 0x47);
+      const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? '');
+      if (m) { const a = +m[1], b = m[2] ? +m[2] : corpo.length - 1; res.writeHead(206, { 'Content-Type': 'video/mp2t', 'Content-Range': `bytes ${a}-${b}/${corpo.length}`, 'Content-Length': b - a + 1 }); res.end(corpo.subarray(a, b + 1)); return; }
+      res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': corpo.length }); res.end(corpo); return;
+    }
+    if (u.pathname === '/desc.xml') {
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end('<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>'
+        + '<friendlyName>TV de Teste</friendlyName><serviceList>'
+        + '<service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>/avt</controlURL></service>'
+        + '<service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><controlURL>/rc</controlURL></service>'
+        + '</serviceList></device></root>');
+      return;
+    }
+    let corpo = '';
+    for await (const c of req) corpo += c;
+    const acao = String(req.headers.soapaction ?? '').replace(/"/g, '').split('#')[1] ?? '?';
+    const servico = u.pathname === '/rc' ? 'RenderingControl' : 'AVTransport';
+    let dentro = '';
+    tv.acoes.push(acao);
+    if (acao === 'SetAVTransportURI') {
+      tv.uri = des(/<CurrentURI>([\s\S]*?)<\/CurrentURI>/.exec(corpo)?.[1] ?? '');
+      tv.estado = 'STOPPED'; tv.posMs = 0;
+      // A TV lê o vídeo como uma TV de verdade: o começo, com faixa de bytes (lista HLS vem inteira).
+      try {
+        const r = await fetch(tv.uri, { headers: { Range: 'bytes=0-1023', 'User-Agent': 'TV de Teste DLNA' } });
+        tv.leituras.push({ status: r.status, tipo: r.headers.get('content-type'), texto: /mpegurl/i.test(r.headers.get('content-type') ?? '') ? await r.text() : `${(await r.arrayBuffer()).byteLength} bytes` });
+      } catch (e) { tv.leituras.push({ status: 0, erro: String(e) }); }
+    } else if (acao === 'Play') {
+      // Como a LG: vídeo novo fica uns segundos "abrindo" (TRANSITIONING) antes de tocar; continuar do pause é na hora.
+      clearTimeout(tv.abrindo);
+      if (tv.estado === 'PAUSED_PLAYBACK') { tv.estado = 'PLAYING'; tv.inicio = Date.now(); }
+      else {
+        tv.estado = 'TRANSITIONING';
+        tv.abrindo = setTimeout(() => { if (tv.estado === 'TRANSITIONING') { tv.estado = 'PLAYING'; tv.inicio = Date.now(); } }, 3000);
+      }
+    } else if (acao === 'Pause') { tv.posMs = agora(); tv.estado = 'PAUSED_PLAYBACK'; }
+    else if (acao === 'Stop') { clearTimeout(tv.abrindo); tv.estado = 'STOPPED'; tv.posMs = 0; }
+    else if (acao === 'Seek') {
+      // Abrindo o vídeo, a TV responde OK e IGNORA o Seek (o caso que fazia a TV começar do zero no APK).
+      const [h, mi, se] = (/<Target>([\d:]+)<\/Target>/.exec(corpo)?.[1] ?? '0:0:0').split(':').map(Number);
+      if (tv.estado === 'TRANSITIONING') tv.seeksIgnorados = (tv.seeksIgnorados ?? 0) + 1;
+      else { tv.posMs = ((h * 60 + mi) * 60 + se) * 1000; tv.inicio = Date.now(); tv.seeksAplicados.push(tv.posMs); }
+    } else if (acao === 'GetPositionInfo') dentro = `<Track>1</Track><TrackDuration>0:00:52</TrackDuration><TrackURI>${tv.uri.replace(/&/g, '&amp;')}</TrackURI><RelTime>${hms(agora())}</RelTime>`;
+    else if (acao === 'GetTransportInfo') dentro = `<CurrentTransportState>${tv.estado}</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus>`;
+    else if (acao === 'GetVolume') dentro = `<CurrentVolume>${tv.volume}</CurrentVolume>`;
+    else if (acao === 'SetVolume') tv.volume = +(/<DesiredVolume>(\d+)/.exec(corpo)?.[1] ?? tv.volume);
+    res.writeHead(200, { 'Content-Type': 'text/xml; charset="utf-8"' });
+    res.end(`<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:${acao}Response xmlns:u="urn:schemas-upnp-org:service:${servico}:1">${dentro}</u:${acao}Response></s:Body></s:Envelope>`);
+  });
+  await new Promise((ok) => servidor.listen(0, '0.0.0.0', ok));
+  const portaHttp = servidor.address().port;
+  const udp = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  udp.on('message', (msg, quem) => {
+    if (!/^M-SEARCH/i.test(msg.toString())) return;
+    udp.send(`HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: http://${ip}:${portaHttp}/desc.xml\r\nST: urn:schemas-upnp-org:device:MediaRenderer:1\r\nUSN: uuid:tv-de-teste::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n`, quem.port, quem.address);
+  });
+  await new Promise((ok) => udp.bind(0, '0.0.0.0', ok));
+  tv.portaUdp = udp.address().port;
+  tv.base = `http://${ip}:${portaHttp}`;
+  tv.agora = agora;
+  tv.fechar = () => { clearTimeout(tv.abrindo); try { udp.close(); } catch { /* fechado */ } servidor.close(); };
+  console.log(`TV de teste em ${tv.base} (SSDP na porta ${tv.portaUdp})`);
+  return tv;
+}
+
+async function cenarioCast(w, print) {
+  const tv = tvFalsa;
+  const cast = (metodo, ...args) => w.evaluate(([m, a]) => window.wmDesktop.cast[m](...a), [metodo, args]);
+  const esperarTv = async (cond, rotulo, ms = 20000) => {
+    const fim = Date.now() + ms;
+    while (Date.now() < fim) { if (cond()) return; await w.waitForTimeout(250); }
+    throw new Error(`${rotulo} (ações da TV: ${tv.acoes.join(', ') || 'nenhuma'})`);
+  };
+  let id = null;
+
+  await passo('a TV de teste aparece na busca (DLNA) e o menu Transmitir existe', async () => {
+    if (!(await w.evaluate(() => typeof window.wmDesktop?.cast?.procurar === 'function'))) throw new Error('sem a ponte do cast (app velho?)');
+    const lista = await cast('procurar');
+    id = lista.find((t) => t.nome === 'TV de Teste')?.id;
+    if (!id) throw new Error(`TVs achadas: ${JSON.stringify(lista)}`);
+    resultados.push(`ℹ️ TVs: ${lista.map((t) => `${t.nome} (${t.tipo})`).join(', ')}`);
+  });
+
+  await passo('HLS pela rede da casa: uma qualidade, só o áudio em português, pedaços com o Referer do link', async () => {
+    const r = await cast('enviar', { id, url: `${tv.base}/fonte/hls/master.m3u8`, referer: 'http://fonte.teste/', mime: 'application/vnd.apple.mpegurl', titulo: 'Teste HLS', posicaoMs: 0 });
+    if (!r?.ok) throw new Error(`enviar: ${r?.erro}`);
+    await esperarTv(() => tv.acoes.includes('Play'), 'a TV não recebeu o Play');
+    const master = tv.leituras.at(-1);
+    if (master?.status !== 200 || !/#EXTM3U/.test(master.texto ?? '')) throw new Error(`a TV leu o master: ${JSON.stringify(master).slice(0, 300)}`);
+    if ((master.texto.match(/#EXT-X-STREAM-INF/g) ?? []).length !== 1 || !master.texto.includes('1280x720')) throw new Error(`variantes: ${master.texto}`);
+    if (master.texto.includes('English') || !/LANGUAGE="pt-BR",DEFAULT=YES/.test(master.texto)) throw new Error(`áudio: ${master.texto}`);
+    if (!new URL(tv.uri).pathname.includes('/s') || new URL(tv.uri).hostname !== tv.ip) throw new Error(`a TV não recebeu o link do proxy do PC: ${tv.uri}`);
+    const variante = master.texto.split('\n').find((l) => l && !l.startsWith('#'));
+    const lista = await (await fetch(new URL(variante, tv.uri))).text();
+    const pedaco = lista.split('\n').find((l) => l && !l.startsWith('#'));
+    const seg = await fetch(new URL(pedaco, tv.uri), { headers: { Range: 'bytes=0-99' } });
+    if (seg.status !== 206 || (await seg.arrayBuffer()).byteLength !== 100) throw new Error(`pedaço pelo proxy: HTTP ${seg.status}`);
+    if (!tv.referers.length || tv.referers.some((x) => x !== 'http://fonte.teste/')) throw new Error(`Referer na fonte: ${tv.referers.join(', ')}`);
+    const semSegredo = await fetch(`http://${tv.ip}:${new URL(tv.uri).port}/s?u=${encodeURIComponent(`${tv.base}/fonte/hls/720.m3u8`)}`);
+    if (semSegredo.status !== 404) throw new Error(`o proxy respondeu sem o segredo: HTTP ${semSegredo.status}`);
+    await cast('parar');
+    await esperarTv(() => tv.acoes.at(-1) === 'Stop', 'a TV não parou');
+  });
+
+  const DL = { key: 'm:45745', url: 'https://media.w3.org/2010/05/sintel/trailer.mp4', title: 'Sintel (trailer de teste)' };
+  await passo('baixado no player do app: 📺 → TV de Teste → a TV lê o arquivo do disco e a barra controla a TV', async () => {
+    await w.evaluate((d) => window.wmDesktop.downloads.enfileirar({ key: d.key, url: d.url, mime: 'video/mp4', title: d.title }), DL);
+    const fim = Date.now() + 180000;
+    for (;;) {
+      const it = (await w.evaluate(() => window.wmDesktop.downloads.lista())).find((x) => x.key === DL.key);
+      if (it?.state === 'completed') break;
+      if (it?.state === 'failed') throw new Error(`download falhou: ${it.reason}`);
+      if (Date.now() > fim) throw new Error('download demorou demais');
+      await w.waitForTimeout(1000);
+    }
+    await w.reload();
+    await abrirAbaDownload(w);
+    await w.waitForTimeout(1500);
+    await tocarDaAba(w, DL.title);
+    // O PC já passou do começo (20 s): a TV tem que continuar daí, não do zero.
+    await w.evaluate(() => { document.querySelector('[data-wm-player-desktop] video').currentTime = 20; });
+    await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && v.currentTime >= 20 && !v.seeking; }, null, { timeout: 15000 });
+    const botao = (acao) => w.locator(`[data-wm-player-desktop] [data-acao="${acao}"]`).first();
+    await botao('transmitir').click();
+    await w.locator('[data-painel="Transmitir pra TV"] [data-acao^="tv-"]').filter({ hasText: 'TV de Teste' }).first().waitFor({ timeout: 20000 });
+    await print('01-menu.png');
+    const antes = tv.acoes.length;
+    const posPc = await w.evaluate(() => Math.round(document.querySelector('[data-wm-player-desktop] video').currentTime * 1000));
+    await w.locator('[data-painel="Transmitir pra TV"] [data-acao^="tv-"]').filter({ hasText: 'TV de Teste' }).first().click();
+    await w.locator('[data-transmitindo="TV de Teste"]').waitFor({ timeout: 30000 });
+    await esperarTv(() => tv.acoes.slice(antes).includes('Play'), 'a TV não recebeu o Play do baixado');
+    const leitura = tv.leituras.at(-1);
+    if (!tv.uri.includes('/arquivo/') || leitura?.status !== 206 || !/video\/mp4/.test(leitura.tipo ?? '')) throw new Error(`a TV leu o baixado: ${tv.uri} ${JSON.stringify(leitura)}`);
+    await w.locator('[data-transmitindo][data-estado="tocando"]').waitFor({ timeout: 20000 });   // a TV disse que está tocando
+    // A TV abre o vídeo do zero e ignora o Seek enquanto abre (como a LG): o app espera e continua de onde o PC estava.
+    await esperarTv(() => tv.seeksAplicados.some((ms) => Math.abs(ms - posPc) < 3000), `a TV não pulou pra onde o PC estava (${Math.round(posPc / 1000)} s; posição da TV ${Math.round(tv.agora() / 1000)} s)`, 25000);
+    resultados.push(`ℹ️ PC em ${Math.round(posPc / 1000)} s → a TV pulou pra ${Math.round(tv.seeksAplicados.at(-1) / 1000)} s (Seek ignorado enquanto abria: ${tv.seeksIgnorados ?? 0})`);
+    await w.waitForTimeout(1500);   // a barra lê a posição da TV a cada 1 s
+    await print('02-transmitindo.png');
+    await botao('play').click();
+    await esperarTv(() => tv.estado === 'PAUSED_PLAYBACK', 'pausar na barra não pausou a TV');
+    const pausouEm = tv.agora();
+    const seeksAntes = tv.acoes.filter((x) => x === 'Seek').length;
+    await w.keyboard.press('ArrowRight');
+    await esperarTv(() => tv.acoes.filter((x) => x === 'Seek').length > seeksAntes && tv.agora() >= pausouEm + 8000, 'a seta → não avançou a TV 10 s');
+    await w.locator('[data-transmitindo][data-estado="pausado"]').waitFor({ timeout: 10000 });
+    await print('03-pausado.png');
+    const tvParouEm = tv.agora();
+    await botao('parar-tv').click();
+    await esperarTv(() => tv.estado === 'STOPPED', 'parar não parou a TV');
+    await w.locator('[data-transmitindo]').waitFor({ state: 'detached', timeout: 10000 });
+    // Volta pro PC no ponto da TV, tocando de verdade (não o carregando do pulo).
+    await w.waitForFunction((t) => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && !v.paused && !v.seeking && v.readyState >= 3 && v.currentTime >= t - 2; }, tvParouEm / 1000, { timeout: 30000 });
+    resultados.push(`ℹ️ a TV parou em ${Math.round(tvParouEm / 1000)} s → o PC voltou em ${Math.round(await w.evaluate(() => document.querySelector('[data-wm-player-desktop] video').currentTime))} s`);
+    await w.waitForTimeout(800);
+    await print('04-voltou-pro-pc.png');
+    await fecharPlayer(w);
+    await w.evaluate((k) => window.wmDesktop.downloads.remover(k), DL.key);
+  });
+  tv.fechar();
 }

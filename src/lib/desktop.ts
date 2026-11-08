@@ -26,6 +26,28 @@ export interface WmDesktop {
   /** Downloads (desktop/downloads.ts, v5.27+; o .exe mais velho não tem): os mesmos métodos e eventos do Downloader do
    *  APK, com o arquivo .mp4 em Vídeos\WatchMov. */
   downloads?: DownloadsDesktop;
+  /** Mandar pra TV (desktop/cast.ts, v5.28+; o .exe mais velho não tem): DLNA e Chromecast da rede da casa, com o PC
+   *  servindo o vídeo pra TV, e o Transmitir do Windows. */
+  cast?: CastDesktop;
+}
+
+/** TV achada na rede (id = "dlna:<controle>" ou "cc:<instância>"). */
+export interface TvDesktop { id: string; tipo: 'dlna' | 'chromecast'; nome: string; ip: string }
+/** O que a TV diz (evento "estado", 1 por segundo enquanto transmite). */
+export interface EstadoTvDesktop { tv: string | null; tipo?: 'dlna' | 'chromecast'; estado: 'tocando' | 'pausado' | 'carregando' | 'parado'; posicaoMs: number; duracaoMs: number; volume?: number }
+
+export interface CastDesktop {
+  procurar(): Promise<TvDesktop[]>;
+  /** `chave` = download terminado (a TV recebe o arquivo do disco); senão o link `url` pelo proxy do PC. */
+  enviar(o: { id: string; url: string; referer?: string; mime?: string; titulo?: string; posicaoMs?: number; duracaoMs?: number; q?: number; chave?: string }): Promise<{ ok: boolean; erro?: string }>;
+  controle(acao: 'pausar' | 'continuar' | 'buscar' | 'volume', valor?: number): Promise<boolean>;
+  estado(): Promise<EstadoTvDesktop | null>;
+  /** Para a TV e devolve onde ela estava (o PC continua dali). */
+  parar(): Promise<{ posicaoMs: number }>;
+  /** Abre o Transmitir do Windows (Win + K). */
+  espelhar(): Promise<boolean>;
+  /** estado · fim · erro ({motivo}) · parou. Devolve a função que para de ouvir. */
+  aoEvento(cb: (evento: string, dados: unknown) => void): () => void;
 }
 
 export interface DownloadsDesktop {
@@ -67,6 +89,9 @@ export const temNativo = (): boolean => Capacitor.isNativePlatform() || isDeskto
 /** Captura do link, resolvedor e player do app: o APK, ou o app do Windows que já tem a captura (v5.23+). O .exe mais
  *  velho segue tocando no servidor (iframe), como antes. */
 export const temCaptura = (): boolean => Capacitor.isNativePlatform() || !!desktop?.captura;
+
+/** Mandar pra TV pelo app do Windows (v5.28+). No APK é o botão espelhar do player nativo. */
+export const temCast = (): boolean => !!desktop?.cast;
 
 /** Baixar e assistir sem internet: o APK, ou o app do Windows que já tem os downloads (v5.27+). */
 export const temDownloads = (): boolean => Capacitor.isNativePlatform() || !!desktop?.downloads;
