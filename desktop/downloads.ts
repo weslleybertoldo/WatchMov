@@ -570,6 +570,12 @@ async function servirArquivo(pedido: Request): Promise<Response> {
   return new Response(corpo, { status: faixa ? 206 : 200, headers: h });
 }
 
+/** Caminho do .mp4 de um download TERMINADO (o "mandar pra TV" da W5 serve ele pra TV). null = não baixado. */
+export function arquivoDoBaixado(chave: string): string | null {
+  const r = registros.get(chave);
+  return r && r.state === 'completed' && fs.existsSync(r.arquivo) ? r.arquivo : null;
+}
+
 /** Liga os downloads. Chamar depois do `ready` e do ligarRede (o esquema do vídeo é dele). */
 export function ligarDownloads(origemApp: string, janela: () => BrowserWindow | null): void {
   janelaDoApp = janela;

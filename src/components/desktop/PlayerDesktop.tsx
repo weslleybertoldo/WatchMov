@@ -9,10 +9,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type HlsT from 'hls.js';
 import {
-  Check, ChevronLeft, ChevronRight, ListVideo, Loader2, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Server,
+  Cast, Check, ChevronLeft, ChevronRight, ListVideo, Loader2, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Server,
   Settings, SkipForward, Volume2, VolumeX, X,
 } from 'lucide-react';
-import { chaveDoDownload, desktop } from '@/lib/desktop';
+import { chaveDoDownload, desktop, type EstadoTvDesktop, type TvDesktop } from '@/lib/desktop';
 import { enqueueDownload, useDownloadItem } from '@/lib/downloads';
 import type { SerieDoPlayer } from '@/lib/episodiosPlayer';
 import {
@@ -27,7 +27,7 @@ import {
   type AcaoDaTecla, type EpisodioDaLista, type Marcas,
 } from '@/lib/playerDesktopRegras';
 
-type Painel = null | 'ajustes' | 'qualidade' | 'audio' | 'legenda' | 'links' | 'servidor' | 'episodios';
+type Painel = null | 'ajustes' | 'qualidade' | 'audio' | 'legenda' | 'links' | 'servidor' | 'episodios' | 'transmitir';
 interface Faixa { indice: number; rotulo: string }
 interface Falha { code: number; name: string; cause: string; httpCode?: number }
 
@@ -102,6 +102,12 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   const [legenda, setLegenda] = useState(-1);
   const [velocidade, setVelocidade] = useState(1);
   const [ajuste, setAjuste] = useState(0);
+  // Mandar pra TV (W5): a TV que recebe o vídeo (refs = motor), o que ela diz e as TVs achadas (null = procurando).
+  const tvRef = useRef<TvDesktop | null>(null);
+  const tvEstadoRef = useRef<EstadoTvDesktop | null>(null);
+  const tvProgressoRef = useRef(0);
+  const [tv, setTv] = useState<{ nome: string; estado: EstadoTvDesktop['estado'] } | null>(null);
+  const [tvs, setTvs] = useState<TvDesktop[] | null>(null);
   const chaveDl = desktop?.downloads ? chaveDoDownload(ep.key) : null;
   const itemDl = useDownloadItem(chaveDl);
   const tocandoDoDisco = linkAtual.startsWith('wm-video://arquivo/');
@@ -138,6 +144,88 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
       season: tipo === 'tv' ? Number(t) : undefined, ep: tipo === 'tv' ? Number(e) : undefined,
     });
     avisoRapido('Baixando… acompanhe na aba Download');
+  }
+
+  // ── mandar pra TV (W5 = castToTv do APK): a TV busca o vídeo no PC; a barra, o teclado e as teclas de mídia passam a
+  // controlar a TV; parar volta o vídeo pro PC no ponto onde a TV estava ──────────────────────────────────────────────
+
+  function abrirTransmitir() {
+    if (painelRef.current === 'transmitir') { mudarPainel(null); return; }
+    mudarPainel('transmitir');
+    if (!tvRef.current) procurarTvs();
+  }
+
+  function procurarTvs() {
+    setTvs(null);
+    void desktop?.cast?.procurar().then((l) => { if (!fechadoRef.current) setTvs(l); }).catch(() => setTvs([]));
+  }
+
+  // Vídeo do PC parado enquanto a TV toca (o hls.js não fica baixando à toa e o PC não toca junto).
+  function pararLocal() {
+    try { hlsRef.current?.destroy(); } catch { /* já destruído */ }
+    hlsRef.current = null;
+    const v = videoRef.current;
+    if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  }
+
+  async function transmitirPara(alvo: TvDesktop, inicioMs: number) {
+    const c = desktop?.cast;
+    if (!c) return;
+    const { url, mime } = linkRef.current;
+    const e = epRef.current;
+    const v = videoRef.current;
+    const duracaoMs = v && !tvRef.current ? Math.round(duracaoDe(v)) : tvEstadoRef.current?.duracaoMs ?? 0;
+    // Tocando o baixado (W4): a TV recebe o arquivo do disco, pela chave do episódio que toca.
+    const chave = url.startsWith('wm-video://arquivo/') ? chaveDoDownload(e.key) ?? undefined : undefined;
+    pararLocal();
+    mudarPainel(null);
+    setAviso(`Enviando para ${alvo.nome}… (a TV está lendo o vídeo)`);
+    const r = await c.enviar({ id: alvo.id, url, referer: e.referer, mime, titulo: e.title, posicaoMs: inicioMs, duracaoMs, chave });
+    if (fechadoRef.current) { if (r.ok) void c.parar(); return; }
+    setAviso(null);
+    if (!r.ok) {
+      tvRef.current = null; setTv(null);
+      avisoRapido(r.erro || 'A TV não aceitou o vídeo.', 8_000);
+      tocarLink(url, mime, inicioMs);
+      return;
+    }
+    tvRef.current = alvo;
+    tvEstadoRef.current = { tv: alvo.nome, estado: 'carregando', posicaoMs: inicioMs, duracaoMs };
+    setTv({ nome: alvo.nome, estado: 'carregando' });
+    setPosMs(inicioMs); setDurMs(duracaoMs); setCarregando(false);
+    avisoRapido(`Transmitindo para ${alvo.nome}: a barra controla a TV`);
+  }
+
+  /** Para a TV (ou ela parou sozinha: `daTv`) e o PC continua de onde ela estava. */
+  async function pararTv(daTv = false) {
+    if (!tvRef.current) return;
+    const ultimo = tvEstadoRef.current?.posicaoMs ?? 0;
+    tvRef.current = null;
+    setTv(null);
+    const r = daTv ? { posicaoMs: ultimo } : await (desktop?.cast?.parar() ?? Promise.resolve({ posicaoMs: ultimo })).catch(() => ({ posicaoMs: ultimo }));
+    if (fechadoRef.current) return;
+    tocarLink(linkRef.current.url, linkRef.current.mime, r.posicaoMs || ultimo);
+  }
+
+  function espelhar() {
+    mudarPainel(null);
+    void desktop?.cast?.espelhar();
+    avisoRapido('Escolha a TV no Transmitir do Windows (ou aperte Win + K)', 6_000);
+  }
+
+  // O que a TV diz (1×/s): desenha a barra, guarda a posição (continuar de onde parou) e marca assistido no fim.
+  function estadoDaTv(e: EstadoTvDesktop) {
+    tvEstadoRef.current = e;
+    setTv((t) => (t ? { ...t, estado: e.estado } : t));
+    setPosMs(e.posicaoMs);
+    if (e.duracaoMs > 0) setDurMs(e.duracaoMs);
+    setTocando(e.estado === 'tocando');
+    if (typeof e.volume === 'number') setVolume(e.volume / 100);
+    if (e.posicaoMs > 0 && Date.now() - tvProgressoRef.current > 5_000) {
+      tvProgressoRef.current = Date.now();
+      emitir('playerProgress', { url: linkRef.current.url, positionMs: e.posicaoMs, durationMs: e.duracaoMs || undefined });
+    }
+    if (e.duracaoMs > 120_000 && e.duracaoMs - e.posicaoMs <= 60_000 && !assistidoRef.current && !desmarcouRef.current) marcarAssistido(true);
   }
 
   function mudarPainel(p: Painel) {
@@ -372,8 +460,13 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
 
   function fechar(extra: Partial<ResultadoPlayer> = {}) {
     if (fechadoRef.current) return;
-    const positionMs = posicaoAtual();
-    if (jaTocouRef.current && positionMs > 0) emitirProgresso();
+    const naTv = !!tvRef.current;
+    const positionMs = naTv ? tvEstadoRef.current?.posicaoMs ?? 0 : posicaoAtual();
+    if (naTv) {   // fechou o player transmitindo: a TV para (o PC é quem serve o vídeo pra ela)
+      tvRef.current = null;
+      if (positionMs > 0) emitir('playerProgress', { url: linkRef.current.url, positionMs, durationMs: tvEstadoRef.current?.duracaoMs || undefined });
+      void desktop?.cast?.parar();
+    } else if (jaTocouRef.current && positionMs > 0) emitirProgresso();
     fechadoRef.current = true;
     desligar();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
@@ -499,7 +592,11 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
     console.info(`[wm-player] próximo episódio no mesmo player: ${novo.key ?? '?'}`);
     carregarMarcas(novo.key, novo.imdbId);
     atualizarSessaoDeMidia();
-    tocarLink(novo.url, novo.mime, 0);   // avançar = começar do zero (nunca herda o tempo do anterior)
+    if (tvRef.current) {   // transmitindo: o próximo vai direto pra mesma TV (= troca de episódio no cast do APK)
+      linkRef.current = { url: novo.url, mime: novo.mime };
+      setLinkAtual(novo.url);
+      void transmitirPara(tvRef.current, 0);
+    } else tocarLink(novo.url, novo.mime, 0);   // avançar = começar do zero (nunca herda o tempo do anterior)
     return true;
   }
 
@@ -528,6 +625,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   }
 
   function pular(deltaMs: number) {
+    if (tvRef.current) { buscarEm(Math.max(0, (tvEstadoRef.current?.posicaoMs ?? 0) + deltaMs)); return; }
     const v = videoRef.current;
     if (!v) return;
     const fim = Number.isFinite(v.duration) ? v.duration : Number.POSITIVE_INFINITY;
@@ -535,6 +633,13 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   }
 
   function alternarPlay() {
+    if (tvRef.current) {   // na TV: pausada → continua; tocando ou ainda carregando → pausa (o estado chega 1×/s)
+      const e = tvEstadoRef.current;
+      const continuar = e?.estado === 'pausado';
+      if (e) tvEstadoRef.current = { ...e, estado: continuar ? 'tocando' : 'pausado' };
+      void desktop?.cast?.controle(continuar ? 'continuar' : 'pausar');
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     if (v.paused || v.ended) void v.play().catch(() => undefined);
@@ -542,10 +647,29 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   }
 
   function mudarVolume(delta: number) {
+    if (tvRef.current) { volumeDaTv(Math.min(1, Math.max(0, (tvEstadoRef.current?.volume ?? 50) / 100 + delta))); return; }
     const v = videoRef.current;
     if (!v) return;
     v.muted = false;
     v.volume = Math.min(1, Math.max(0, Math.round((v.volume + delta) * 100) / 100));
+  }
+
+  // Linha do tempo e volume: na TV quando está transmitindo.
+  function buscarEm(ms: number) {
+    if (tvRef.current) {
+      if (tvEstadoRef.current) tvEstadoRef.current = { ...tvEstadoRef.current, posicaoMs: ms };
+      setPosMs(ms);
+      void desktop?.cast?.controle('buscar', ms);
+      return;
+    }
+    const v = videoRef.current;
+    if (v) v.currentTime = ms / 1000;
+  }
+
+  function volumeDaTv(nivel: number) {
+    if (tvEstadoRef.current) tvEstadoRef.current = { ...tvEstadoRef.current, volume: Math.round(nivel * 100) };
+    setVolume(nivel);
+    void desktop?.cast?.controle('volume', Math.round(nivel * 100));
   }
 
   function alternarTelaCheia() {
@@ -722,6 +846,24 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Eventos da TV (cast.ts): estado 1×/s, fim do vídeo (com próximo, ele vai pra mesma TV), erro e parou sozinha.
+  // Ligado uma vez; as funções do motor só leem refs.
+  useEffect(() => {
+    const c = desktop?.cast;
+    if (!c) return undefined;
+    return c.aoEvento((evento, dados) => {
+      if (!tvRef.current || fechadoRef.current) return;
+      const d = (dados ?? {}) as EstadoTvDesktop & { motivo?: string };
+      if (evento === 'estado') estadoDaTv(d);
+      else if (evento === 'fim') {
+        if (epRef.current.hasNext) { desmarcouRef.current = false; marcarAssistido(true); pedirProximo(); }
+        else void pararTv(true);
+      } else if (evento === 'erro') { avisoRapido(d.motivo || 'A TV parou de tocar.', 8_000); void pararTv(true); }
+      else if (evento === 'parou') void pararTv(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── tela ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   const serie = useMemo(() => serieDoPlayer(ep.episodios), [ep.episodios]);
@@ -759,6 +901,14 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
       {carregando && !aviso && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <Loader2 className="h-12 w-12 animate-spin text-white/80" />
+        </div>
+      )}
+      {tv && (
+        <div data-transmitindo={tv.nome} data-estado={tv.estado} className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center" onClick={(e) => e.stopPropagation()}>
+          <Cast className="h-14 w-14 text-violet-400" />
+          <p className="text-lg">Transmitindo para <span className="font-semibold">{tv.nome}</span></p>
+          <p className="text-sm text-white/60">{tv.estado === 'pausado' ? 'Pausado' : tv.estado === 'carregando' ? 'A TV está carregando o vídeo…' : tv.estado === 'parado' ? 'A TV parou' : 'A barra, o teclado e as teclas de mídia controlam a TV'}</p>
+          <button type="button" data-acao="parar-tv" onClick={() => void pararTv()} className="mt-2 rounded-full bg-white/10 px-5 py-2 text-sm font-semibold hover:bg-white/20">Parar de transmitir</button>
         </div>
       )}
       {aviso && (
@@ -818,7 +968,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
             max={Math.max(1, Math.round(durMs))}
             step={1000}
             value={Math.min(posMs, Math.round(durMs))}
-            onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = Number(e.target.value) / 1000; }}
+            onChange={(e) => buscarEm(Number(e.target.value))}
             className={`h-1 w-full cursor-pointer appearance-none rounded-full ${trilha}`}
             style={{ background: `linear-gradient(to right, #8b5cf6 ${pct}%, rgba(255,255,255,.45) ${pct}%, rgba(255,255,255,.45) ${Math.max(pct, pctBuffer)}%, rgba(255,255,255,.18) ${Math.max(pct, pctBuffer)}%)` }}
           />
@@ -839,7 +989,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
             max={1}
             step={0.05}
             value={mudo ? 0 : volume}
-            onChange={(e) => { const v = videoRef.current; if (v) { v.muted = false; v.volume = Number(e.target.value); } }}
+            onChange={(e) => { if (tvRef.current) { volumeDaTv(Number(e.target.value)); return; } const v = videoRef.current; if (v) { v.muted = false; v.volume = Number(e.target.value); } }}
             className={`mr-2 h-1 w-24 cursor-pointer appearance-none rounded-full ${trilha}`}
             style={{ background: `linear-gradient(to right, #fff ${(mudo ? 0 : volume) * 100}%, rgba(255,255,255,.25) ${(mudo ? 0 : volume) * 100}%)` }}
           />
@@ -867,7 +1017,12 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
           {ep.hasNext && (
             <BotaoIcone rotulo="Próximo episódio (N)" acao="proximo" onClick={botaoProximo}><SkipForward className="h-5 w-5" /></BotaoIcone>
           )}
-          <BotaoIcone rotulo="Ajustes" acao="ajustes" ativo={painel !== null && painel !== 'episodios' && painel !== 'servidor'} onClick={() => mudarPainel(painel ? null : 'ajustes')}>
+          {desktop?.cast && (
+            <BotaoIcone rotulo={tv ? `Transmitindo para ${tv.nome}` : 'Transmitir pra TV'} acao="transmitir" ativo={painel === 'transmitir' || !!tv} onClick={abrirTransmitir}>
+              <Cast className={`h-5 w-5 ${tv ? 'text-violet-400' : ''}`} />
+            </BotaoIcone>
+          )}
+          <BotaoIcone rotulo="Ajustes" acao="ajustes" ativo={painel !== null && painel !== 'episodios' && painel !== 'servidor' && painel !== 'transmitir'} onClick={() => mudarPainel(painel ? null : 'ajustes')}>
             <Settings className="h-5 w-5" />
           </BotaoIcone>
           <BotaoIcone rotulo={telaCheia ? 'Sair da tela cheia (F)' : 'Tela cheia (F)'} acao="tela-cheia" onClick={alternarTelaCheia}>
@@ -918,6 +1073,23 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
           {servidores.map((s) => (
             <Linha key={s.id} rotulo={s.rotulo} marcado={s.id === ep.servidorAtual} acao={`servidor-${s.id}`} onClick={() => fechar({ serverId: s.id })} />
           ))}
+        </Caixa>
+      )}
+      {painel === 'transmitir' && (
+        <Caixa titulo="Transmitir pra TV" aoFechar={() => mudarPainel(null)}>
+          {tvs === null && (
+            <div data-procurando="" className="flex items-center gap-3 px-3 py-2.5 text-sm text-white/70"><Loader2 className="h-4 w-4 animate-spin" /> Procurando TVs na rede…</div>
+          )}
+          {tvs?.map((t, i) => (
+            <Linha key={t.id} rotulo={t.nome} valor={t.tipo === 'chromecast' ? 'Chromecast' : 'TV (DLNA)'} marcado={tv?.nome === t.nome} acao={`tv-${i + 1}`}
+              onClick={() => (tv?.nome === t.nome ? mudarPainel(null) : void transmitirPara(t, tvRef.current ? tvEstadoRef.current?.posicaoMs ?? 0 : posicaoAtual()))} />
+          ))}
+          {tvs?.length === 0 && (
+            <p data-nenhuma-tv="" className="px-3 py-2 text-xs leading-relaxed text-white/60">Nenhuma TV achada. A TV e o PC precisam estar na mesma rede, com o DLNA (compartilhamento) ou o Chromecast ligado. Na 1ª vez, o Windows pode pedir pra liberar o app no firewall: aceite em "Redes privadas".</p>
+          )}
+          {tvs !== null && <Linha rotulo="Procurar de novo" acao="procurar-tvs" onClick={procurarTvs} />}
+          <Linha rotulo="Espelhar a tela do Windows" valor="Win + K" acao="espelhar" onClick={espelhar} />
+          {tv && <Linha rotulo="Parar de transmitir" acao="parar-tv-menu" onClick={() => { mudarPainel(null); void pararTv(); }} />}
         </Caixa>
       )}
       {painel === 'episodios' && serie && (
