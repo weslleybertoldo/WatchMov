@@ -16,7 +16,7 @@ vi.mock('@capacitor/core', () => ({
 
 import {
   urlMegaEmbed, opcoesDaPagina, paginaRestrita, resolucaoDoMaster, dimensoesDoMp4, base64ParaBytes, ordenarPorQualidade, rotuloDe,
-  resolverMegaEmbed, MEGA_REFERER, MIME_HLS, MIME_MP4, MEGA_BYTES_MP4,
+  resolverMegaEmbed, MEGA_REFERER, MIME_HLS, MIME_MP4, MEGA_BYTES_MP4, servidoresDaPagina, noServidor,
 } from './megaembed';
 import { PROVIDERS, PROVIDER_HOSTS, rotuloDaFonte } from './players';
 
@@ -181,7 +181,8 @@ describe('Fonte 7 — cadeia por HTTP (CapacitorHttp falso)', () => {
     rotas = () => ({ status: 200, data: RESTRITA });
     expect(await resolverMegaEmbed({ tmdbId: 3, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-restrito' });
     rotas = p => (p.url.startsWith('https://megaembed.com/') ? { status: 200, data: pagina(ULTIMATO) } : { status: 403, data: '' });
-    expect(await resolverMegaEmbed({ tmdbId: 299534, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-nenhuma-abriu n=4' });
+    // a Opção 4 é link de servidor (`/includes/hls.php`): tentou também no servidor principal antes de desistir
+    expect(await resolverMegaEmbed({ tmdbId: 299534, type: 'movie' })).toEqual({ tipo: 'nao-tem', motivo: 'f7-nenhuma-abriu n=4 servidores=2' });
   });
 
   it('fora do previsto → WebView de sempre: erro do site, página sem a lista, fora do app, cancelado', async () => {
@@ -200,5 +201,88 @@ describe('Fonte 7 — cadeia por HTTP (CapacitorHttp falso)', () => {
     rotas = p => { if (p.url === HLS360) throw new Error('timeout'); return rotasUltimato(p); };
     const r = await resolverMegaEmbed({ tmdbId: 299534, type: 'movie' });
     expect(r.tipo === 'achou' && r.links.map(l => l.url)).toEqual([HLS808, IPTV]);
+  });
+});
+
+// ── Servidores da página (08/11/2026) ─────────────────────────────────────────────────────────────────────────────
+// Mesma forma da página real de 08/11/2026 (Re:ZERO T1 E28): a lista de servidores com peso e a opção com UM deles sorteado.
+const PROXIES = [
+  { url: 'https://cdn--xn.exemplo-st.lat', weight: 6 },
+  { url: 'https://jolly-snowflake.exemplo.workers.dev/ps', weight: 2 },
+  { url: 'https://solitary-field.exemplo.workers.dev/prs/', weight: 5 },
+  { url: 'https://crimson-shadow.exemplo.workers.dev/ps', weight: 2 },
+];
+const Q = '?url=v2.ASSINADO&file=master.m3u8&referer=https%3A%2F%2Fembedplayer2.xyz%2F';
+const SORTEADO = 'https://crimson-shadow.exemplo.workers.dev/ps/includes/hls.php' + Q;
+const paginaComServidores = (sources: unknown[], proxies: unknown = PROXIES) => `<html><body><div id="player"></div>
+<script>window.MEGAEMBED_PROXIES =${JSON.stringify(proxies)};</script>
+<script>const sources = ${JSON.stringify(sources)};</script></body></html>`;
+const ASSINATURA_403: Resp = { status: 403, data: '{"error":"Assinatura inválida ou corrompida."}', headers: { 'Content-Type': 'application/json' } };
+
+describe('servidoresDaPagina', () => {
+  it('maior peso primeiro (empate = ordem da página), sem barra no fim, e o principal por último', () => {
+    expect(servidoresDaPagina(paginaComServidores([]))).toEqual([
+      'https://cdn--xn.exemplo-st.lat/includes/hls.php',
+      'https://solitary-field.exemplo.workers.dev/prs/includes/hls.php',
+      'https://jolly-snowflake.exemplo.workers.dev/ps/includes/hls.php',
+      'https://crimson-shadow.exemplo.workers.dev/ps/includes/hls.php',
+      'https://megaembed.com/includes/hls.php',
+    ]);
+  });
+  it('sem a lista, lista quebrada ou endereço estranho → só o principal', () => {
+    expect(servidoresDaPagina('<html>sem lista</html>')).toEqual(['https://megaembed.com/includes/hls.php']);
+    expect(servidoresDaPagina('<script>MEGAEMBED_PROXIES = [{url: quebrado}];</script>')).toEqual(['https://megaembed.com/includes/hls.php']);
+    expect(servidoresDaPagina(paginaComServidores([], [{ url: 'javascript:alert(1)', weight: 9 }, { url: 'http://sem-https.exemplo', weight: 9 }, {}])))
+      .toEqual(['https://megaembed.com/includes/hls.php']);
+  });
+  it('o principal na lista não repete', () => {
+    expect(servidoresDaPagina(paginaComServidores([], [{ url: 'https://megaembed.com', weight: 1 }]))).toEqual(['https://megaembed.com/includes/hls.php']);
+  });
+});
+
+describe('noServidor', () => {
+  it('troca só o servidor de um link de servidor', () => {
+    expect(noServidor(SORTEADO, 'https://cdn--xn.exemplo-st.lat/includes/hls.php')).toBe('https://cdn--xn.exemplo-st.lat/includes/hls.php' + Q);
+  });
+  it('link que não é de servidor (mp4, m3u8 direto) → null', () => {
+    expect(noServidor(IPTV, 'https://cdn--xn.exemplo-st.lat/includes/hls.php')).toBeNull();
+    expect(noServidor(HLS808, 'https://cdn--xn.exemplo-st.lat/includes/hls.php')).toBeNull();
+  });
+});
+
+describe('resolverMegaEmbed com servidor que recusa a assinatura (08/11/2026)', () => {
+  beforeEach(() => { pedidos.length = 0; native.on = true; });
+
+  it('o sorteado dá 403 → abre no 1º da ordem que responde e o link sai com ESSE servidor', async () => {
+    rotas = p => {
+      if (p.url.startsWith('https://megaembed.com/embed/')) return { status: 200, data: paginaComServidores([{ file: SORTEADO, type: 'hls', label: 'Opção 1' }]) };
+      if (p.url.startsWith('https://cdn--xn.exemplo-st.lat/')) return { status: 200, data: MASTER(1280, 720) };
+      if (p.url.startsWith('https://solitary-field.exemplo.workers.dev/')) return { status: 200, data: MASTER(1280, 720) };
+      return ASSINATURA_403;
+    };
+    const r = await resolverMegaEmbed({ tmdbId: 65942, type: 'tv', season: 1, episode: 28 });
+    expect(r.tipo).toBe('achou');
+    if (r.tipo !== 'achou') return;
+    expect(r.links).toHaveLength(1);
+    expect(r.links[0].url).toBe('https://cdn--xn.exemplo-st.lat/includes/hls.php' + Q);
+    expect(r.links[0]).toMatchObject({ mime: MIME_HLS, quality: '720p', option: 'Opção 1', provider: 'megaembed', referer: MEGA_REFERER });
+    expect(pedidos.map(p => p.url)).toContain(SORTEADO);   // conferiu o sorteado antes
+  });
+
+  it('nenhum servidor abre → "não tem", com quantos servidores tentou', async () => {
+    rotas = p => (p.url.startsWith('https://megaembed.com/embed/')
+      ? { status: 200, data: paginaComServidores([{ file: SORTEADO, type: 'hls', label: 'Opção 1' }]) }
+      : ASSINATURA_403);
+    const r = await resolverMegaEmbed({ tmdbId: 65942, type: 'tv', season: 1, episode: 28 });
+    expect(r).toEqual({ tipo: 'nao-tem', motivo: 'f7-nenhuma-abriu n=1 servidores=5' });
+  });
+
+  it('o sorteado abre → não tenta os outros', async () => {
+    rotas = p => (p.url.startsWith('https://megaembed.com/embed/')
+      ? { status: 200, data: paginaComServidores([{ file: SORTEADO, type: 'hls', label: 'Opção 1' }]) }
+      : { status: 200, data: MASTER(1920, 1080) });
+    const r = await resolverMegaEmbed({ tmdbId: 65942, type: 'tv', season: 1, episode: 28 });
+    expect(r.tipo).toBe('achou');
+    expect(pedidos.filter(p => p.url.includes('/includes/hls.php'))).toHaveLength(1);
   });
 });

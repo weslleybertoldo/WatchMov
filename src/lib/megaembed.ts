@@ -57,6 +57,37 @@ export function paginaRestrita(html: string): boolean {
   return /Dom[ií]nio N[ãa]o Autorizado|Acesso Restrito/i.test(html);
 }
 
+// Servidores de vídeo da página (`MEGAEMBED_PROXIES = [{url, weight}]`, visto 08/11/2026): o link de cada opção vem com UM
+// deles sorteado (`<servidor>/includes/hls.php?url=v2.…&file=master.m3u8&referer=…`) e, em 08/11/2026, 6 dos 8 (os
+// `*.workers.dev/ps`) respondiam 403 "Assinatura inválida ou corrompida." pra qualquer pedido, enquanto o mesmo `?url=…`
+// abria nos outros — a Fonte 7 "não achava" na TV e pelo servidor tocava (pedido dele 08/11/2026). O player da página
+// sorteia outro servidor quando um falha; o app faz o mesmo: maior peso primeiro (empate = ordem da página) e o servidor
+// principal do MegaEmbed por último. Sem a lista (ou fora do formato) = só o principal.
+export const MEGA_HLS = '/includes/hls.php';
+
+export function servidoresDaPagina(html: string): string[] {
+  const m = html.match(/MEGAEMBED_PROXIES\s*=\s*(\[[\s\S]*?\])/);
+  let lista: Array<{ base: string; peso: number; i: number }> = [];
+  if (m) {
+    try {
+      const arr: unknown = JSON.parse(m[1]);
+      if (Array.isArray(arr)) {
+        lista = (arr as Array<Record<string, unknown> | null>)
+          .map((s, i) => ({ base: String(s?.url ?? '').trim().replace(/\/+$/, ''), peso: Math.max(1, parseInt(String(s?.weight ?? ''), 10) || 1), i }))
+          .filter(s => /^https:\/\/[^/]/i.test(s.base));
+      }
+    } catch { /* lista fora do formato: fica só o principal */ }
+  }
+  lista.sort((a, b) => b.peso - a.peso || a.i - b.i);
+  return [...new Set([...lista.map(s => s.base + MEGA_HLS), MEGA_BASE + MEGA_HLS])];
+}
+
+// O mesmo link em outro servidor. Só vale pra link de servidor (`…/includes/hls.php?…`); o resto = null.
+export function noServidor(link: string, servidor: string): string | null {
+  const i = link.indexOf(MEGA_HLS + '?');
+  return i < 0 ? null : servidor + link.slice(i + MEGA_HLS.length);
+}
+
 // Maior RESOLUTION do master (pela área, pra 1920×804 ganhar de 1280×720). Lista de pedaços sem variantes = null.
 export function resolucaoDoMaster(texto: string): Dimensoes | null {
   let best: Dimensoes | null = null;
@@ -138,6 +169,23 @@ export async function conferirOpcao(o: OpcaoMega): Promise<{ abre: boolean; dim:
   }
 }
 
+// Confere a opção no servidor que veio na página; não abriu e é link de servidor (`…/includes/hls.php?…`) → o mesmo link
+// nos outros servidores da página, todos juntos, e vale o 1º da ordem (maior peso) que abrir. `tentou` = quantos OUTROS
+// servidores foram tentados (0 = o sorteado abriu ou o link não é de servidor).
+export async function conferirComServidores(o: OpcaoMega, servidores: string[]):
+  Promise<{ abre: boolean; dim: Dimensoes | null; hls: boolean; file: string; tentou: number }> {
+  const c = await conferirOpcao(o);
+  if (c.abre) return { ...c, file: o.file, tentou: 0 };
+  const outros = servidores.map(s => noServidor(o.file, s)).filter((u): u is string => !!u && u !== o.file);
+  if (!outros.length) return { ...c, file: o.file, tentou: 0 };
+  const tent = await Promise.all(outros.map(async file => ({ file, ...(await conferirOpcao({ ...o, file })) })));
+  const boa = tent.find(t => t.abre);
+  console.info('[f7] servidor', new URL(o.file).host, '→', boa ? new URL(boa.file).host : `nenhum dos ${outros.length}`);
+  return boa
+    ? { abre: true, dim: boa.dim, hls: boa.hls, file: boa.file, tentou: outros.length }
+    : { ...c, file: o.file, tentou: outros.length };
+}
+
 // Fonte 7 por HTTP. `sinal.cancelado` (fechou o título / trocou a fonte) para a cadeia no próximo passo.
 export async function resolverMegaEmbed(alvo: AlvoMega, sinal: { cancelado: boolean } = { cancelado: false }): Promise<MegaResultado> {
   if (!Capacitor.isNativePlatform()) return { tipo: 'webview', motivo: 'sem-nativo' };   // no navegador o CORS barra
@@ -151,14 +199,19 @@ export async function resolverMegaEmbed(alvo: AlvoMega, sinal: { cancelado: bool
   if (!opcoes.length) return { tipo: 'nao-tem', motivo: 'f7-sem-opcao' };
   if (sinal.cancelado) return { tipo: 'webview', motivo: 'cancelado' };
 
-  const conferidas = await Promise.all(opcoes.map(async (o, i) => ({ o, i, ...(await conferirOpcao(o)) })));
+  const servidores = servidoresDaPagina(html);
+  const conferidas = await Promise.all(opcoes.map(async (o, i) => ({ o, i, ...(await conferirComServidores(o, servidores)) })));
   if (sinal.cancelado) return { tipo: 'webview', motivo: 'cancelado' };
   const abertas = ordenarPorQualidade(conferidas.filter(c => c.abre));
-  if (!abertas.length) return { tipo: 'nao-tem', motivo: `f7-nenhuma-abriu n=${opcoes.length}` };
+  if (!abertas.length) {
+    // Tentou todos os servidores e nenhum abriu: "não tem" (o WebView tentaria os mesmos e estouraria o prazo).
+    const tentados = Math.max(0, ...conferidas.map(c => (c.tentou ? c.tentou + 1 : 0)));
+    return { tipo: 'nao-tem', motivo: `f7-nenhuma-abriu n=${opcoes.length}${tentados ? ` servidores=${tentados}` : ''}` };
+  }
   return {
     tipo: 'achou',
     links: abertas.map(c => ({
-      url: c.o.file, mime: c.hls ? MIME_HLS : MIME_MP4, referer: MEGA_REFERER, headers: { ...CAB_MEGA },
+      url: c.file, mime: c.hls ? MIME_HLS : MIME_MP4, referer: MEGA_REFERER, headers: { ...CAB_MEGA },
       quality: rotuloDe(c.dim) || undefined, provider: 'megaembed', option: c.o.label,
     })),
   };
