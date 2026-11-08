@@ -19,6 +19,8 @@ test('CORS: mídia, listas do Ao Vivo e hosts com cabeçalhos guardados', () => 
   const vazio = new Map();
   assert.equal(r.precisaCors('https://superflixapi.pro/lista?category=canais&format=json', vazio), true);
   assert.equal(r.precisaCors('https://iptv-org.github.io/iptv/countries/br.m3u', vazio), true);
+  assert.equal(r.precisaCors('https://api.introdb.app/segments?imdb_id=tt0944947&season=1&episode=1', vazio), true);
+  assert.equal(r.precisaCors('https://api.introdb.app/outra', vazio), false);
   assert.equal(r.precisaCors('https://superflixapi.pro/filme/1', vazio), false);
   assert.equal(r.precisaCors('https://nnvwpgpvzysvyntdrtay.supabase.co/rest/v1/x', vazio), false);
   assert.equal(r.precisaCors('https://edge1.cdn.x/seg/abc.jpg', new Map([['edge1.cdn.x', {}]])), true);

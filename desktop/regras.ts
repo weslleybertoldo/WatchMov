@@ -8,7 +8,13 @@ export const DOH = ['https://cloudflare-dns.com/dns-query', 'https://dns.google/
 // Vídeo, áudio, legenda e playlist: o que o ProxyServer.java trata como mídia (m3u8, /m3/ e /md/, master.txt…).
 const MIDIA = /\.(?:m3u8?|ts|mp4|m4s|m4a|m4v|aac|webm|mkv|vtt|srt|key)(?:[?#]|$)|\/(?:m3|md)\/|\/master|playlist|\.txt(?:[?#]|$)/i;
 // Listas do Ao Vivo que o navegador não lê (o servidor não manda CORS). No APK elas vão pelo CapacitorHttp (liveTv.ts).
-const LISTAS = [/^https:\/\/superflixapi\.[a-z]+\/lista(?:[/?#]|$)/i, /^https:\/\/iptv-org\.github\.io\//i];
+// E as marcas de abertura/créditos da IntroDB (player do app, W3): ela só libera o CORS pro próprio site (a TheIntroDB
+// libera o do WatchMov). No APK quem busca é o player nativo, sem CORS.
+const LISTAS = [
+  /^https:\/\/superflixapi\.[a-z]+\/lista(?:[/?#]|$)/i,
+  /^https:\/\/iptv-org\.github\.io\//i,
+  /^https:\/\/api\.introdb\.app\/segments(?:[/?#]|$)/i,
+];
 
 export const ehMidia = (url: string): boolean => MIDIA.test(url);
 
