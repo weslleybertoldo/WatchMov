@@ -33,7 +33,18 @@ export function getEntry(tmdbId?: number, type?: string, season?: number, episod
 
 // Chave estável do stream: URL sem a query (o token muda a cada captura, mas o
 // caminho é o mesmo) → o mesmo vídeo não duplica.
-export function streamKey(url: string): string { return url.split('?')[0]; }
+// googlevideo (Blogger): o caminho é sempre `/videoplayback` e a QUALIDADE vem na query (`itag`). Sem ela na chave, o 720p
+// e o 360p do mesmo vídeo eram "o mesmo link": o 360p (2º a chegar) caía em cima do 720p e o app abria em 360p (Re: Zero,
+// 08/11/2026). `id` + `itag` não mudam quando o token (expire/sig) muda → a recaptura continua atualizando a mesma entrada.
+export function streamKey(url: string): string {
+  const [base, query = ''] = url.split('?');
+  if (/\.googlevideo\.com\/videoplayback$/i.test(base)) {
+    const p = new URLSearchParams(query);
+    const id = p.get('id') ?? '', itag = p.get('itag') ?? '';
+    if (id || itag) return `${base}?id=${id}&itag=${itag}`;
+  }
+  return base;
+}
 
 // Tenta extrair a resolução da URL (ex "720p", "1280x720", "/1080/"). Heurística —
 // a resolução exata do HLS adaptativo vem do player (track selection).
