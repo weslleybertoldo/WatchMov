@@ -12,7 +12,7 @@ import { initPush, loadSubs, onPushOpen } from '@/lib/notifications';
 import { getCastNow, closeNativePlayer, playNative, teclaNoPlayer, estadoDoPlayer, type CastNow } from '@/lib/nativePlayer';
 import { executarTecla, oQueToca, type AcoesDaTv, comPrazo } from '@/lib/controleNaTv';
 import type { TvDevice } from '@/lib/tvPair';
-import { Capacitor } from '@capacitor/core';
+import { temCaptura } from '@/lib/desktop';
 import { mimeDoLink } from '@/lib/iptvOrg';
 import { App as CapApp } from '@capacitor/app';
 import { appNaFrente, isTv } from '@/lib/device';
@@ -333,10 +333,11 @@ export default function Index() {
   // saiu volta pro mesmo lugar (a LINHA de onde saiu; pedido 07/09/2026). Desde a W3 do raio-x quem cuida disso é a
   // memória de rolagem por tela, no efeito das camadas (mais abaixo) — aqui só se abre e fecha.
   const openCategory = useCallback((c: NonNullable<typeof category>) => setCategory(c), []);
-  // Canal ao vivo: os do iptv-org (link direto, 03/11/2026) tocam no player nativo com referer/user-agent da lista;
-  // no navegador e nos do SuperFlix (iframe) abre a camada de sempre.
+  // Canal ao vivo: os do iptv-org (link direto, 03/11/2026) tocam no player nativo com referer/user-agent da lista —
+  // no APK e no app do Windows com o player do app (v5.23+, W3); no navegador e nos do SuperFlix (iframe) abre a
+  // camada de sempre.
   const abrirCanal = useCallback((ch: Channel) => {
-    if (ch.url && Capacitor.isNativePlatform()) {
+    if (ch.url && temCaptura()) {
       void playNative({ url: ch.url, referer: ch.referer, ua: ch.ua, mime: mimeDoLink(ch.url), title: ch.name });
       return;
     }

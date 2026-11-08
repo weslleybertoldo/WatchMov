@@ -4,7 +4,9 @@
 // os guardas temCaptura() barram antes.
 import { WebPlugin } from '@capacitor/core';
 import { desktop } from './desktop';
-import { fecharPlayerDesktop, playerDesktopAberto, tocarNoDesktop, type TocarDesktop } from './playerDesktop';
+import {
+  fecharPlayerDesktop, playerDesktopAberto, proximoNoDesktop, tocarNoDesktop, type OpcoesPlayer, type ResultadoPlayer,
+} from './playerDesktop';
 
 const ouvintes: { sniffer?: SnifferDesktop; resolver?: ResolverDesktop } = {};
 let ponteLigada = false;
@@ -34,14 +36,18 @@ export class ResolverDesktop extends WebPlugin {
   async pickOption(o: { k: number }): Promise<void> { await desktop?.captura?.resolverOpcao(o.k); }
 }
 
-// Player básico (playerDesktop.ts). Sem próximo episódio, TV ou controle remoto ainda (W3/W5): responde como o APK
-// responde quando não tem (o site cai no caminho de sempre).
+// Player do app (playerDesktop.ts → PlayerDesktop.tsx, W3): mesmos métodos, resultado e eventos do NativePlayerPlugin
+// do APK. Sem TV nem controle remoto (W5 / fora do PC): responde como o APK responde quando não tem.
 export class PlayerNativoDesktop extends WebPlugin {
-  async play(o: TocarDesktop): Promise<{ positionMs: number; url: string }> {
-    return tocarNoDesktop(o, (evento, dados) => this.notifyListeners(evento, dados));
+  async play(o: OpcoesPlayer): Promise<ResultadoPlayer> {
+    return tocarNoDesktop(o, (evento, dados) => this.notifyListeners(evento, dados), (evento) => this.hasListeners(evento));
   }
-  async loadNext(): Promise<{ ok: boolean }> { return { ok: false }; }
-  async clearResume(): Promise<void> { /* o player básico não guarda posição própria */ }
+  /** Resposta ao playerNext: troca o episódio no player aberto (= loadNextInPlace). ok=false só sem player. */
+  async loadNext(o: Partial<OpcoesPlayer>): Promise<{ ok: boolean }> { return { ok: proximoNoDesktop(o ?? {}) }; }
+  // O APK guarda a posição também no aparelho (SharedPreferences) e o clearResume apaga a do episódio que vai começar
+  // do zero. O player do PC não guarda posição própria: ela mora só no streamCache do app (eventos de progresso e o
+  // resultado ao fechar), então não há o que apagar — e nada pode reabrir o episódio seguinte no tempo do anterior.
+  async clearResume(): Promise<void> { /* sem posição própria */ }
   async castStatus(): Promise<{ active: boolean }> { return { active: false }; }
   async ackTvProgress(): Promise<void> { /* sem TV */ }
   async pendingExits(): Promise<{ exits: [] }> { return { exits: [] }; }

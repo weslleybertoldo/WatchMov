@@ -11,7 +11,11 @@
 //   8. cada fonte abre no iframe do player (print de cada uma);
 //   9. propaganda de um servidor (janela nova e troca da página depois de um clique) é bloqueada, e um link de fora
 //      pedido pela própria página vai pro navegador do PC.
-// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura]
+// Cenário "player" (W3, src/components/desktop/PlayerDesktop.tsx): uma série abre sozinha no player do app e passa
+// pela barra própria, teclado, Ajustes, Links, Episódios, Pular abertura, Assistido + contagem, Próximo e Esc.
+// Cenário "player-links" (só com o site local do Vite): link recusado → o seguinte sozinho, Qualidade, Links e o
+// pedido de link novo, com um vídeo de teste de 5 qualidades.
+// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links]
 // WM_SITE troca o site que o app abre (staging, ou o Vite local em desenvolvimento).
 // Env: WM_SUPABASE_URL (ou VITE_SUPABASE_URL), WM_SUPABASE_ANON (ou VITE_SUPABASE_ANON_KEY), WM_SMOKE_EMAIL,
 //      WM_SMOKE_SENHA — SÓ a conta de teste. Nada é gravado no banco (só login e leitura).
@@ -27,7 +31,7 @@ const opcao = (nome, padrao) => { const i = args.indexOf(nome); return i >= 0 ? 
 const exe = opcao('--exe');
 const saida = path.resolve(opcao('--saida', 'smoke-prints'));
 const cenario = opcao('--cenario', 'base');
-if (!['base', 'rede', 'captura'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
+if (!['base', 'rede', 'captura', 'player', 'player-links'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
 fs.mkdirSync(saida, { recursive: true });
 
 const SB = process.env.WM_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
@@ -143,6 +147,8 @@ try {
   });
   if (cenario === 'rede') await cenarioRede(app, w, print);
   if (cenario === 'captura') await cenarioCaptura(app, w, print);
+  if (cenario === 'player') await cenarioPlayer(w, print);
+  if (cenario === 'player-links') await cenarioPlayerLinks(w, print);
 } catch (e) {
   falhou = true;
   console.error(String(e?.stack ?? e));
@@ -390,3 +396,348 @@ async function cenarioCaptura(app, w, print) {
     await print(`02-fechou${sufixo}.png`);
   });
 }
+
+// W3 (player do app): uma série com marca de abertura na TheIntroDB (Game of Thrones; WM_BUSCA troca) abre sozinha no
+// player do app; confere a barra própria, o teclado, os Ajustes (velocidade), os Links, o painel de Episódios (nomes da
+// TMDB), o "Pular abertura", o Assistido abrindo a contagem do próximo, o Próximo episódio (no mesmo player ou
+// reabrindo pelo resolvedor) e o Esc guardando onde parou. Grava no banco só o que o app grava ao assistir (a conta de
+// teste); o Assistido é marcado e desmarcado em seguida.
+async function cenarioPlayer(w, print) {
+  const busca = process.env.WM_BUSCA || 'Game of Thrones';
+  const video = w.locator('[data-wm-player-desktop] video');
+  const estado = () => w.evaluate(() => {
+    const v = document.querySelector('[data-wm-player-desktop] video');
+    const r = document.querySelector('[data-player-desktop]');
+    return v ? { t: v.currentTime, dur: v.duration, pausado: v.paused, h: v.videoHeight, taxa: v.playbackRate,
+      chave: r?.getAttribute('data-chave') ?? '', link: r?.getAttribute('data-link') ?? '' } : null;
+  });
+  const tocando = (min = 1, timeout = 90000) => w.waitForFunction((m) => {
+    const v = document.querySelector('[data-wm-player-desktop] video');
+    return !!v && v.currentTime > m && v.readyState >= 2 && !v.paused;
+  }, min, { timeout });
+  const irPara = (s) => w.evaluate((x) => { document.querySelector('[data-wm-player-desktop] video').currentTime = x; }, s);
+  const botao = (acao) => w.locator(`[data-wm-player-desktop] [data-acao="${acao}"]`).first();
+  // A barra some com o mouse parado: mexe o mouse antes de cada clique nela.
+  const mexer = async () => { await w.mouse.move(400, 300); await w.mouse.move(420, 320); await w.waitForTimeout(250); };
+  const logs = [];
+  w.on('console', (m) => { const t = m.text(); if (t.includes('[wm-player]')) logs.push(t.slice(0, 200)); });
+  const ultimosLogs = (n = 8) => { for (const l of logs.slice(-n)) resultados.push(`ℹ️ ${l}`); };
+  let chave = '';
+
+  await passo(`a série abre sozinha no player do app [${busca}]`, async () => {
+    await abrirSozinho(w, true);
+    await w.evaluate(() => localStorage.removeItem('watchmov_streamcache'));
+    await w.locator('button[title="Buscar"]').first().click();
+    const campo = w.getByPlaceholder('Buscar filmes, séries e animes...');
+    await campo.waitFor({ timeout: 15000 });
+    await campo.fill(busca);
+    await campo.press('Enter');
+    const cartaz = w.locator('[data-tv-hold][data-tv-key^="tv-"]:visible').first();
+    await cartaz.waitFor({ timeout: 30000 });
+    await w.waitForTimeout(2500);   // a busca termina de chegar (o 1º cartaz pode ser de uma resposta parcial)
+    await cartaz.click();
+    const assistir = w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first();
+    await assistir.waitFor({ timeout: 30000 });
+    await assistir.click();
+    try {
+      await video.waitFor({ state: 'attached', timeout: 150000 });
+      await tocando(1);
+    } catch (e) { await print('01-sem-player.png'); ultimosLogs(); throw e; }
+    const s = await estado();
+    chave = s.chave;
+    if (!/^\d+:tv:\d+:\d+$/.test(chave)) throw new Error(`chave do episódio estranha: "${chave}"`);
+    resultados.push(`ℹ️ tocando ${chave}: ${s.t.toFixed(1)} s, ${s.h}p, ${s.link.slice(0, 60)}`);
+    await mexer();
+    await print('01-player.png');
+  });
+
+  await passo('barra própria e teclado (espaço, ←/→)', async () => {
+    await mexer();
+    for (const a of ['play', 'voltar', 'avancar', 'linha-do-tempo', 'ajustes', 'tela-cheia', 'episodios', 'servidor', 'proximo', 'assistido', 'fechar']) {
+      if (!(await botao(a).isVisible())) throw new Error(`a barra não tem o botão "${a}"`);
+    }
+    await w.keyboard.press('Space');
+    await w.waitForFunction(() => document.querySelector('[data-wm-player-desktop] video')?.paused === true, null, { timeout: 5000 });
+    await w.keyboard.press('Space');
+    await w.waitForFunction(() => document.querySelector('[data-wm-player-desktop] video')?.paused === false, null, { timeout: 5000 });
+    const antes = (await estado()).t;
+    await w.keyboard.press('ArrowRight');
+    const depois = (await estado()).t;
+    if (depois - antes < 8) throw new Error(`→ não avançou 10 s (${antes.toFixed(1)} → ${depois.toFixed(1)})`);
+    await w.keyboard.press('ArrowLeft');
+    const voltou = (await estado()).t;
+    if (depois - voltou < 8) throw new Error(`← não voltou 10 s (${depois.toFixed(1)} → ${voltou.toFixed(1)})`);
+    await tocando(voltou + 0.5, 30000);
+    await mexer();
+    await print('02-barra.png');
+  });
+
+  await passo('Ajustes: velocidade, tela e os links', async () => {
+    await mexer();
+    await botao('ajustes').click();
+    const painel = w.locator('[data-painel="Ajustes"]');
+    await painel.waitFor({ timeout: 5000 });
+    await botao('velocidade').click();
+    if ((await estado()).taxa !== 1.25) throw new Error(`velocidade ${(await estado()).taxa} depois de 1 toque`);
+    await print('03-ajustes.png');
+    for (let i = 0; i < 4; i++) await botao('velocidade').click();   // 1,5 · 2 · 0,5 · 1
+    if ((await estado()).taxa !== 1) throw new Error('a velocidade não voltou pro normal');
+    if (await botao('links').isVisible()) {
+      await botao('links').click();
+      const linhas = w.locator('[data-painel="Links"] [data-acao^="link-"]');
+      const n = await linhas.count();
+      await print('04-links.png');
+      const atual = await w.locator('[data-painel="Links"] [aria-pressed="true"]').getAttribute('data-acao');
+      const outro = (await linhas.evaluateAll((els) => els.map((e) => e.getAttribute('data-acao')))).find((x) => x !== atual);
+      const s0 = await estado();
+      await w.locator(`[data-painel="Links"] [data-acao="${outro}"]`).click();
+      await w.waitForFunction((l) => document.querySelector('[data-player-desktop]')?.getAttribute('data-link') !== l, s0.link, { timeout: 10000 });
+      try {
+        await tocando(Math.max(0, s0.t - 15), 60000);
+        const s1 = await estado();
+        resultados.push(`ℹ️ ${n} links; trocou do ${atual} pro ${outro}: ${s0.t.toFixed(0)} s → ${s1.t.toFixed(0)} s (mesmo tempo), ${s1.h}p`);
+      } catch {
+        resultados.push(`⚠️ ${n} links; o ${outro} não tocou em 60 s (o player tenta o seguinte sozinho)`);
+        await tocando(1, 60000);
+      }
+    } else {
+      resultados.push('ℹ️ só 1 link neste episódio (sem a lista de Links)');
+      await w.keyboard.press('Escape');
+    }
+    await w.locator('[data-painel]').waitFor({ state: 'detached', timeout: 5000 }).catch(async () => { await w.keyboard.press('Escape'); });
+    if (!(await w.locator('[data-wm-player-desktop]').count())) throw new Error('o Esc com o painel aberto fechou o player');
+  });
+
+  await passo('Servidor: popup com "Abrir servidores" e o ✓ no servidor atual', async () => {
+    await mexer();
+    await botao('servidor').click();
+    const painel = w.locator('[data-painel="Servidor"]');
+    await painel.waitFor({ timeout: 5000 });
+    const linhas = await painel.locator('button[data-acao]').allInnerTexts();
+    if (!/Abrir servidores/.test(linhas[0] ?? '')) throw new Error(`1ª linha: "${linhas[0]}"`);
+    const atual = await painel.locator('[aria-pressed="true"]').allInnerTexts();
+    if (atual.length !== 1) throw new Error(`${atual.length} servidores marcados como o atual`);
+    resultados.push(`ℹ️ popup do servidor: ${linhas.length - 1} servidores; atual: ${atual[0].trim()}`);
+    await print('04-servidor.png');
+    await w.keyboard.press('Escape');
+    await painel.waitFor({ state: 'detached', timeout: 5000 });
+  });
+
+  await passo('Episódios: a temporada com os nomes da TMDB, aberta no episódio que toca', async () => {
+    await mexer();
+    await botao('episodios').click();
+    const painel = w.locator('[data-painel="Episódios"]');
+    await painel.waitFor({ timeout: 5000 });
+    const [, , t, e] = chave.split(':');
+    await painel.locator(`[data-episodio="${t}:${e}"][data-atual]`).waitFor({ timeout: 5000 });
+    // O nome vem da TMDB (sem ela fica "Episódio N").
+    await w.waitForFunction(() => {
+      const b = document.querySelector('[data-painel="Episódios"] [data-episodio]');
+      return !!b && !/^\s*\d+\.\s*Episódio \d+/.test(b.textContent || '');
+    }, null, { timeout: 15000 });
+    const n = await painel.locator('[data-episodio]').count();
+    const primeiro = (await painel.locator('[data-episodio]').first().innerText()).split('\n')[0];
+    resultados.push(`ℹ️ painel de episódios: ${n} episódios na T${t}; o 1º: "${primeiro}"`);
+    await print('05-episodios.png');
+    await w.keyboard.press('Escape');
+    await painel.waitFor({ state: 'detached', timeout: 5000 });
+  });
+
+  await passo('Pular abertura aparece na abertura e leva pro fim dela (TheIntroDB)', async () => {
+    const [tmdb, , t, e] = chave.split(':');
+    const r = await fetch(`https://api.theintrodb.org/v3/media?tmdb_id=${tmdb}&season=${t}&episode=${e}`).then((x) => x.json()).catch(() => null);
+    const intro = (r?.intro ?? []).find((x) => x && x.end_ms);
+    if (!intro) { resultados.push(`ℹ️ ${chave} sem abertura na TheIntroDB: o Pular não tem o que mostrar`); return; }
+    const ini = (intro.start_ms ?? 0) / 1000, fim = intro.end_ms / 1000;
+    await irPara(ini + 3);
+    const pular = botao('pular');
+    try { await pular.waitFor({ state: 'visible', timeout: 15000 }); }
+    catch (err) { await print('06-sem-pular.png'); ultimosLogs(); throw err; }
+    await w.waitForTimeout(800);
+    await print('06-pular.png');
+    const texto = await pular.innerText();
+    await pular.click();
+    await w.waitForFunction((f) => (document.querySelector('[data-wm-player-desktop] video')?.currentTime ?? 0) >= f - 1.5, fim, { timeout: 5000 });
+    resultados.push(`ℹ️ abertura ${ini.toFixed(0)}–${fim.toFixed(0)} s: "${texto}" levou pra ${(await estado()).t.toFixed(0)} s`);
+  });
+
+  await passo('Assistido pula pra contagem do próximo; Cancelar some; desmarcar volta', async () => {
+    await mexer();
+    const assistido = botao('assistido');
+    const marcadoAntes = await assistido.getAttribute('aria-pressed');
+    if (marcadoAntes === 'true') { await assistido.click(); await w.waitForTimeout(500); await mexer(); }   // começa desmarcado
+    await assistido.click();
+    await w.waitForFunction(() => document.querySelector('[data-wm-player-desktop] [data-acao="assistido"]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 5000 });
+    const contagem = w.locator('[data-wm-player-desktop] [data-contagem]');
+    try { await contagem.waitFor({ state: 'visible', timeout: 20000 }); }
+    catch (err) { await print('07-sem-contagem.png'); ultimosLogs(); throw err; }
+    const s = await estado();
+    resultados.push(`ℹ️ Assistido levou pra ${Math.floor(s.t / 60)}:${String(Math.floor(s.t % 60)).padStart(2, '0')} de ${Math.floor(s.dur / 60)} min: "${(await contagem.innerText()).split('\n')[0]}"`);
+    await print('07-contagem.png');
+    await botao('cancelar-proximo').click();
+    await contagem.waitFor({ state: 'detached', timeout: 5000 });
+    await mexer();
+    await assistido.click();
+    await w.waitForFunction(() => document.querySelector('[data-wm-player-desktop] [data-acao="assistido"]')?.getAttribute('aria-pressed') === 'false', null, { timeout: 5000 });
+  });
+
+  await passo('Próximo episódio toca o seguinte', async () => {
+    const [tmdb, , t, e] = chave.split(':');
+    const seguinte = `${tmdb}:tv:${t}:${Number(e) + 1}`;
+    await irPara(120);   // longe do fim: pedir o próximo aqui não marca o atual como assistido
+    await w.waitForTimeout(1000);
+    await mexer();
+    await botao('proximo').click();
+    try {
+      await w.waitForFunction((c) => {
+        const r = document.querySelector('[data-player-desktop]');
+        const v = document.querySelector('[data-wm-player-desktop] video');
+        return r?.getAttribute('data-chave') === c && !!v && v.currentTime > 1 && v.readyState >= 2;
+      }, seguinte, { timeout: 180000 });
+    } catch (err) { await print('08-sem-proximo.png'); ultimosLogs(); throw err; }
+    const s = await estado();
+    const caminho = logs.some((l) => l.includes('próximo episódio no mesmo player')) ? 'no mesmo player' : 'reabriu pelo resolvedor';
+    resultados.push(`ℹ️ próximo: ${seguinte} tocando ${s.t.toFixed(1)} s, ${s.h}p (${caminho})`);
+    chave = seguinte;
+    await mexer();
+    await print('08-proximo.png');
+  });
+
+  await passo('Esc fecha e guarda onde parou', async () => {
+    await tocando(3, 30000);
+    const t0 = (await estado()).t;
+    await w.keyboard.press('Escape');
+    await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 });
+    await w.waitForTimeout(1500);
+    const pos = await w.evaluate((c) => {
+      try { return JSON.parse(localStorage.getItem('watchmov_streamcache') || '{}')[c]?.positionMs ?? 0; } catch { return 0; }
+    }, chave);
+    if (!(pos > 0)) throw new Error(`a posição de ${chave} não ficou guardada`);
+    resultados.push(`ℹ️ fechou em ${t0.toFixed(1)} s; guardado ${(pos / 1000).toFixed(1)} s em ${chave}`);
+    await print('09-fechou.png');
+  });
+
+  // Canal do iptv-org (link direto) toca no player do app, sem linha do tempo. A lista começa pelos do SuperFlix
+  // (iframe) e mostra 60 por página: busca pelo nome (WM_CANAL troca; canal de terceiro cai sem aviso: tenta os 3 e,
+  // nenhum tocando, só avisa).
+  await passo('Ao Vivo: canal com link direto toca no player do app', async () => {
+    await w.reload();
+    const aoVivo = w.locator('nav button', { hasText: /^Ao Vivo$/ }).first();
+    await aoVivo.waitFor({ timeout: 60000 });
+    await aoVivo.click();
+    await w.locator('button[data-canal]:visible').first().waitFor({ timeout: 45000 });
+    const campo = w.getByPlaceholder('Buscar canal...');
+    const nomes = (process.env.WM_CANAL || 'Rede Minas|Cultura|ConecTV').split('|');
+    for (const nome of nomes) {
+      await campo.fill(nome);
+      const canal = w.locator('button[data-canal="iptv"]:visible').first();
+      try { await canal.waitFor({ timeout: 10000 }); } catch { resultados.push(`ℹ️ Ao Vivo: "${nome}" não está na lista do iptv-org`); continue; }
+      const rotulo = (await canal.innerText()).split('\n')[0].trim();
+      await canal.click();
+      try {
+        await w.locator('[data-wm-player-desktop] video').waitFor({ state: 'attached', timeout: 10000 });
+        await tocando(1, 30000);
+        const semLinha = !(await w.locator('[data-wm-player-desktop] [data-acao="linha-do-tempo"]').count());
+        const s = await estado();
+        resultados.push(`ℹ️ Ao Vivo: "${rotulo}" tocando ${s.t.toFixed(1)} s, ${s.h}p${semLinha ? ', sem linha do tempo (ao vivo)' : ''}`);
+        await mexer();
+        await print('10-ao-vivo.png');
+        await w.keyboard.press('Escape');
+        await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 });
+        return;
+      } catch {
+        resultados.push(`ℹ️ Ao Vivo: "${rotulo}" não tocou em 30 s`);
+        if (await w.locator('[data-wm-player-desktop]').count()) {
+          await w.keyboard.press('Escape');
+          await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined);
+        }
+      }
+    }
+    resultados.push(`⚠️ Ao Vivo: nenhum dos canais (${nomes.join(', ')}) tocou (canais de terceiro)`);
+  });
+}
+
+// Só com o site local (Vite: o teste importa o nativePlayer.ts do site): abre o player direto, sem fonte de terceiro,
+// com 2 links — o 1º recusado (endereço local: o app responde 403) e o 2º um HLS de teste com 5 qualidades — e confere
+// a troca sozinha pro link 2, o menu de Qualidade, a lista de Links e o pedido de link novo (recapture) quando nenhum
+// link toca. O registro desses erros na aba Bugs é segurado aqui (não grava nada no banco).
+async function cenarioPlayerLinks(w, print) {
+  const BOM = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
+  const RUIM = 'https://127.0.0.1:9/quebrado/master.m3u8';
+  const RUIM2 = 'https://127.0.0.2:9/quebrado/master.m3u8';
+  const HLS = 'application/vnd.apple.mpegurl';
+  await w.route('**/rest/v1/wm_playback_errors**', (r) => r.fulfill({ status: 201, body: '' }));
+  const abrir = (urls) => w.evaluate(([lista, mime]) => {
+    window.__wmRes = null;
+    import('/src/lib/nativePlayer.ts')
+      .then((m) => m.playNative({ url: lista[0], mime, title: 'Teste de links', key: '1:movie:0:0', urls: lista,
+        mimes: lista.map(() => mime), qualities: lista.map(() => ''), fonte: 'Teste', servidores: [], startMs: 0 }))
+      .then((r) => { window.__wmRes = r ?? { nulo: true }; }, (e) => { window.__wmRes = { erro: String(e) }; });
+  }, [urls, HLS]);
+  const resultado = async (ms) => {
+    await w.waitForFunction(() => window.__wmRes !== null, null, { timeout: ms });
+    return w.evaluate(() => window.__wmRes);
+  };
+  const botao = (acao) => w.locator(`[data-wm-player-desktop] [data-acao="${acao}"]`).first();
+  const mexer = async () => { await w.mouse.move(400, 300); await w.mouse.move(420, 320); await w.waitForTimeout(250); };
+
+  await passo('link 1 recusado: o player passa sozinho pro link 2', async () => {
+    if (!(await w.evaluate(() => location.hostname === '127.0.0.1' || location.hostname === 'localhost'))) {
+      throw new Error('cenário só com o site local (WM_SITE=http://127.0.0.1:8094/)');
+    }
+    await abrir([RUIM, BOM]);
+    const aviso = w.locator('[data-wm-player-desktop] [data-aviso]');
+    await aviso.waitFor({ timeout: 20000 });
+    const texto = await aviso.innerText();
+    if (!/link 1 de 2 falhou.*link 2 de 2/i.test(texto)) throw new Error(`aviso: "${texto}"`);
+    await w.waitForFunction((b) => document.querySelector('[data-player-desktop]')?.getAttribute('data-link') === b, BOM, { timeout: 20000 });
+    await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && v.currentTime > 2 && !v.paused; }, null, { timeout: 45000 });
+    resultados.push(`ℹ️ aviso na troca: "${texto}"`);
+    await mexer();
+    await print('01-link-2.png');
+  });
+
+  await passo('Qualidade: Auto + 5 alturas; escolher 288p troca o vídeo', async () => {
+    await mexer();
+    await botao('ajustes').click();
+    await botao('qualidade').waitFor({ timeout: 5000 });
+    await botao('qualidade').click();
+    const painel = w.locator('[data-painel="Qualidade"]');
+    await painel.waitFor({ timeout: 5000 });
+    const linhas = (await painel.locator('button[aria-pressed]').allInnerTexts()).map((x) => x.trim());
+    if (linhas.length !== 6 || !/^Auto/.test(linhas[0])) throw new Error(`linhas: ${linhas.join(' | ')}`);
+    await print('02-qualidade.png');
+    await painel.getByRole('button', { name: /^288p$/ }).click();
+    await w.waitForFunction(() => document.querySelector('[data-wm-player-desktop] video')?.videoHeight === 288, null, { timeout: 30000 });
+    resultados.push(`ℹ️ qualidade: ${linhas.join(' · ')} → tocando 288p`);
+  });
+
+  await passo('Links: o ✓ no link que toca; voltar pro 1 (recusado) volta pro 2 sozinho', async () => {
+    await mexer();
+    await botao('ajustes').click();
+    await botao('links').click();
+    const painel = w.locator('[data-painel="Links"]');
+    await painel.waitFor({ timeout: 5000 });
+    const marcado = await painel.locator('[aria-pressed="true"]').getAttribute('data-acao');
+    if (marcado !== 'link-2') throw new Error(`✓ em ${marcado}`);
+    await print('03-links.png');
+    await painel.locator('[data-acao="link-1"]').click();
+    await w.waitForFunction((b) => document.querySelector('[data-player-desktop]')?.getAttribute('data-link') === b, BOM, { timeout: 20000 });
+    await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && v.readyState >= 2 && !v.paused; }, null, { timeout: 45000 });
+    const t = await w.evaluate(() => document.querySelector('[data-wm-player-desktop] video').currentTime);
+    resultados.push(`ℹ️ link 1 de novo → recusado → link 2 em ${t.toFixed(1)} s (o mesmo tempo)`);
+    await w.keyboard.press('Escape');
+    const r = await resultado(10000);
+    if (!(r.positionMs > 0) || r.url !== BOM || r.watched !== false) throw new Error(`resultado ao fechar: ${JSON.stringify(r)}`);
+    resultados.push(`ℹ️ Esc: positionMs=${r.positionMs} url=link 2 watched=${r.watched} watchedKey=${r.watchedKey}`);
+  });
+
+  await passo('nenhum link toca: pede link novo ao app (recapture)', async () => {
+    await abrir([RUIM, RUIM2]);
+    const r = await resultado(30000);
+    if (r.recapture !== true) throw new Error(`resultado: ${JSON.stringify(r)}`);
+    resultados.push(`ℹ️ 2 links recusados → fechou com recapture=true (o app pega link novo pelo resolvedor)`);
+  });
+  await w.unroute('**/rest/v1/wm_playback_errors**');
+}
+

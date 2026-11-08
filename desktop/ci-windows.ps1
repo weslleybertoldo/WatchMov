@@ -35,6 +35,13 @@ if ($LASTEXITCODE -ne 0) {
   if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke da captura falhou ($LASTEXITCODE): fonte de terceiro fora do ar; a release segue" }
   else { throw "smoke da captura falhou ($LASTEXITCODE)" }
 }
+# Player do app (PlayerDesktop.tsx, W3): uma série abre sozinha e passa pela barra, teclado, Ajustes, Links, Episódios,
+# Pular abertura, Assistido + contagem, Próximo e Esc. Depende de fonte de terceiro: na release só avisa. Na PR barra.
+node smoke.mjs --exe $app --saida smoke-prints --cenario player
+if ($LASTEXITCODE -ne 0) {
+  if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke do player falhou ($LASTEXITCODE): fonte de terceiro fora do ar; a release segue" }
+  else { throw "smoke do player falhou ($LASTEXITCODE)" }
+}
 # O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
 reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
 if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }
