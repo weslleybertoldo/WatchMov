@@ -124,3 +124,12 @@ test('referer do pedido do vídeo: a política do navegador (só a origem pra ou
   // http pra http de outro site: só a origem
   assert.equal(r.refererDoPedido('http://a.x/p?q=1', 'http://b.x/v.ts'), 'http://a.x/');
 });
+
+test('arquivo baixado pelo esquema do vídeo (W4): só wm-video://arquivo/…', () => {
+  assert.equal(r.ehArquivoBaixado('wm-video://arquivo/?t=x&k=m:1'), true);
+  assert.equal(r.ehArquivoBaixado('wm-video://v/?t=x&u=https%3A%2F%2Fcdn.x%2Fa.m3u8'), false);
+  assert.equal(r.ehArquivoBaixado('https://arquivo/?k=m:1'), false);
+  assert.equal(r.ehArquivoBaixado('lixo'), false);
+  // O caminho da internet nunca serve arquivo do disco.
+  assert.equal(r.alvoDoVideo('wm-video://arquivo/?t=k&k=m:1', 'k'), null);
+});

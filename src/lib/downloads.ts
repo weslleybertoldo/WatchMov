@@ -123,6 +123,8 @@ export function saveDownloadMeta(key: string, meta: DownloadMeta) {
 export function getDownloadMeta(): Record<string, DownloadMeta> {
   const stored = readMeta();
   const out: Record<string, DownloadMeta> = { ...stored };
+  // Pedido sem a capa na mão (o "Baixar" do player do app do Windows): a capa vem da TMDB, como no reconstruído.
+  for (const [k, m] of Object.entries(out)) if (!m.posterUrl) out[k] = withArt(k, m);
   items.forEach((it, k) => {
     if (out[k] || it.state === 'removed') return;
     const s = syntheticMeta(it);

@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { app, ipcMain, net, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import {
-  DOH, ESQUEMA_VIDEO, alvoDoVideo, aplicarCabecalhos, cabecalhosGuardaveis, destinoDaJanela, destinoDaNavegacao, ehMidia,
+  DOH, ESQUEMA_VIDEO, alvoDoVideo, aplicarCabecalhos, cabecalhosGuardaveis, destinoDaJanela, destinoDaNavegacao, ehArquivoBaixado, ehMidia,
   hostDe, cspDoApp, origemDe, precisaCors, refererDoPedido, trocarCabecalho,
 } from './regras';
 
@@ -46,6 +46,16 @@ const barreiras: Array<(webContentsId: number | undefined, url: string) => boole
 export function aoPedido(cb: (d: PedidoVisto) => void): void { observadores.push(cb); }
 export function aoBloquear(fn: (webContentsId: number | undefined, url: string) => boolean): void { barreiras.push(fn); }
 
+/** Cabeçalhos que o app repete nos pedidos a esse endereço: os guardados do host ou, se for mídia, os do link que o
+ *  player está tocando. O download (downloads.ts) começa com eles, como o player. */
+export function cabecalhosPara(url: string): Record<string, string> {
+  return { ...(porHost.get(hostDe(url) ?? '') ?? (daReproducao && ehMidia(url) ? daReproducao : {})) };
+}
+
+// Arquivo baixado (W4, downloads.ts) pelo mesmo esquema do vídeo: wm-video://arquivo/?t=<chave>&k=<download>.
+let arquivoLocal: ((pedido: Request) => Promise<Response>) | null = null;
+export function aoPedirArquivo(fn: (pedido: Request) => Promise<Response>): void { arquivoLocal = fn; }
+
 /** Guarda os cabeçalhos que valem pros pedidos da página do app a esse host (e libera o CORS dele). */
 export function guardarCabecalhos(url: string, cabecalhos: unknown): boolean {
   const host = hostDe(url);
@@ -55,7 +65,7 @@ export function guardarCabecalhos(url: string, cabecalhos: unknown): boolean {
   return true;
 }
 
-function origemDoFrame(frame: WebFrameMain | null | undefined): string | null {
+export function origemDoFrame(frame: WebFrameMain | null | undefined): string | null {
   try {
     if (!frame) return null;
     return frame.origin && frame.origin !== 'null' ? frame.origin : origemDe(frame.url);
@@ -126,6 +136,11 @@ export function ligarRede(origemApp: string): void {
   ipcMain.on('wm:video-chave', (e) => { e.returnValue = janelasDoApp.has(e.sender.id) ? CHAVE_VIDEO : ''; });
   protocol.handle(ESQUEMA_VIDEO, async (req) => {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_DO_VIDEO });
+    if (ehArquivoBaixado(req.url)) {
+      // Mesma chave do vídeo: só a página do app abre os arquivos baixados.
+      if (!arquivoLocal || new URL(req.url).searchParams.get('t') !== CHAVE_VIDEO) return new Response(null, { status: 403, headers: CORS_DO_VIDEO });
+      return arquivoLocal(req);
+    }
     const alvo = alvoDoVideo(req.url, CHAVE_VIDEO);
     if (!alvo) {
       console.warn('[wm] vídeo: pedido sem a chave da página do app ou pra endereço local, recusado');

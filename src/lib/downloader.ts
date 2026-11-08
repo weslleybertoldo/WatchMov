@@ -1,4 +1,5 @@
-import { registerPlugin, Capacitor } from '@capacitor/core';
+import { registerPlugin } from '@capacitor/core';
+import { temDownloads } from './desktop';
 
 export type DownloadState =
   | 'queued' | 'downloading' | 'completed' | 'failed'
@@ -33,9 +34,12 @@ interface DownloaderPlugin {
   addListener(event: 'downloadCancelled', cb: (d: DownloadCancelled) => void): Promise<{ remove: () => void }>;
 }
 
-// Plugin nativo Media3 (offline HLS+MP4). Só existe no Android.
-export const Downloader = registerPlugin<DownloaderPlugin>('Downloader');
-export const downloadsNative = () => Capacitor.isNativePlatform();
+// Plugin nativo Media3 (offline HLS+MP4) no Android. No app do Windows (W4) a versão web do mesmo plugin passa pro
+// processo principal (desktop/downloads.ts: .mp4 em Vídeos\WatchMov), com os mesmos métodos e eventos.
+export const Downloader = registerPlugin<DownloaderPlugin>('Downloader', {
+  web: () => import('./desktopPlugins').then((m) => new m.DownloaderDesktop()),
+});
+export const downloadsNative = () => temDownloads();
 
 // "1,4 GB" / "820 MB" — tamanho legível pra aba Download.
 export function fmtBytes(b?: number): string {

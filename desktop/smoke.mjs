@@ -15,12 +15,15 @@
 // pela barra própria, teclado, Ajustes, Links, Episódios, Pular abertura, Assistido + contagem, Próximo e Esc.
 // Cenário "player-links" (só com o site local do Vite): link recusado → o seguinte sozinho, Qualidade, Links e o
 // pedido de link novo, com um vídeo de teste de 5 qualidades.
-// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links]
+// Cenário "downloads" (W4, desktop/downloads.ts), com vídeos públicos de teste: um mp4 baixa inteiro; um HLS baixa
+// pedaço por pedaço, o app fecha no meio e, aberto de novo, continua de onde parou; os dois viram .mp4 com a duração
+// certa; a aba Download toca o baixado do disco; sem internet o app abre a cópia guardada e toca; excluir apaga.
+// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links|downloads]
 // WM_SITE troca o site que o app abre (staging, ou o Vite local em desenvolvimento).
 // Env: WM_SUPABASE_URL (ou VITE_SUPABASE_URL), WM_SUPABASE_ANON (ou VITE_SUPABASE_ANON_KEY), WM_SMOKE_EMAIL,
 //      WM_SMOKE_SENHA — SÓ a conta de teste. Nada é gravado no banco (só login e leitura).
 import { _electron as electron } from '@playwright/test';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -31,8 +34,14 @@ const opcao = (nome, padrao) => { const i = args.indexOf(nome); return i >= 0 ? 
 const exe = opcao('--exe');
 const saida = path.resolve(opcao('--saida', 'smoke-prints'));
 const cenario = opcao('--cenario', 'base');
-if (!['base', 'rede', 'captura', 'player', 'player-links'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
+if (!['base', 'rede', 'captura', 'player', 'player-links', 'downloads'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
 fs.mkdirSync(saida, { recursive: true });
+// Downloads: pasta própria do teste e velocidade limitada (dá tempo de fechar o app no meio do HLS).
+if (cenario === 'downloads') {
+  process.env.WM_DL_PASTA ??= path.join(saida, 'baixados');
+  process.env.WM_DL_KBPS ??= '1200';
+  fs.rmSync(process.env.WM_DL_PASTA, { recursive: true, force: true });
+}
 
 const SB = process.env.WM_SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const ANON = process.env.WM_SUPABASE_ANON ?? process.env.VITE_SUPABASE_ANON_KEY;
@@ -68,7 +77,12 @@ const mandarLink = (link) => new Promise((ok) => {
 
 const app = await electron.launch({ executablePath: binario, args: argsApp, timeout: 90000 });
 // Registros do processo principal ([wm] …) entram na saída do teste: é o diagnóstico da captura e da rede.
-for (const fluxo of [app.process().stdout, app.process().stderr]) fluxo?.on('data', (d) => { for (const l of String(d).split('\n')) if (l.includes('[wm]')) console.log(l.trim()); });
+const registros = [];
+const ouvirRegistros = (a) => {
+  for (const fluxo of [a.process().stdout, a.process().stderr]) fluxo?.on('data', (d) => { for (const l of String(d).split('\n')) if (l.includes('[wm]')) { console.log(l.trim()); registros.push(l.trim()); } });
+};
+ouvirRegistros(app);
+let appDeNovo = null;   // o cenário downloads fecha o app e abre de novo
 let falhou = false;
 try {
   const w = await app.firstWindow({ timeout: 60000 });
@@ -149,11 +163,13 @@ try {
   if (cenario === 'captura') await cenarioCaptura(app, w, print);
   if (cenario === 'player') await cenarioPlayer(w, print);
   if (cenario === 'player-links') await cenarioPlayerLinks(w, print);
+  if (cenario === 'downloads') await cenarioDownloads(app, w, print);
 } catch (e) {
   falhou = true;
   console.error(String(e?.stack ?? e));
 } finally {
   await app.close().catch(() => undefined);
+  await appDeNovo?.close().catch(() => undefined);
 }
 
 console.log(resultados.join('\n'));
@@ -741,3 +757,206 @@ async function cenarioPlayerLinks(w, print) {
   await w.unroute('**/rest/v1/wm_playback_errors**');
 }
 
+// ---------------------------------------------------------------- cenário "downloads" (W4)
+// Vídeos públicos de teste (não são das fontes): o trailer do Sintel (mp4, 4 MB, W3C) e o Big Buck Bunny em HLS (240p,
+// 64 pedaços, ~18 MB, Mux). As chaves são os ids deles na TMDB: a aba Download mostra a capa de verdade.
+
+// Duração do arquivo pelo ffmpeg do próprio app (desktop/node_modules/ffmpeg-static; WM_FFMPEG troca, como no app).
+function duracaoDoArquivo(arquivo) {
+  const ffmpeg = process.env.WM_FFMPEG || createRequire(path.join(pastaDesktop, 'package.json'))('ffmpeg-static');
+  const r = spawnSync(ffmpeg, ['-hide_banner', '-nostdin', '-i', arquivo], { encoding: 'utf8' });
+  const m = /Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(r.stderr ?? '');
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null;
+}
+
+async function abrirAbaDownload(w) {
+  const painel = w.locator('button[title="Painel"]');
+  await painel.waitFor({ timeout: 30000 });
+  await painel.click();
+  await w.getByRole('button', { name: /^Download$/ }).click();
+  await w.getByText(/Ocupando|Nenhum download|Download/i).first().waitFor({ timeout: 15000 });
+}
+
+async function tocarDaAba(w, titulo) {
+  await w.locator('button').filter({ has: w.locator(`img[alt="${titulo}"]`) }).or(w.getByRole('button', { name: titulo })).first().click();
+  await w.waitForFunction(() => (document.querySelector('[data-player-desktop]')?.getAttribute('data-link') ?? '').startsWith('wm-video://arquivo/'), null, { timeout: 20000 });
+  await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && v.currentTime > 2 && !v.paused; }, null, { timeout: 30000 });
+  await w.mouse.move(500, 300); await w.mouse.move(520, 320);
+  await w.waitForTimeout(600);
+}
+
+async function fecharPlayer(w) {
+  await w.keyboard.press('Escape');
+  await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 });
+}
+
+async function cenarioDownloads(app, w, print) {
+  if (process.env.WM_DL_REAL) return cenarioDownloadReal(w, print);
+  const DL_MP4 = { key: 'm:45745', url: 'https://media.w3.org/2010/05/sintel/trailer.mp4', title: 'Sintel (trailer de teste)', nome: 'Sintel (trailer de teste).mp4', dur: 52 };
+  const DL_HLS = {
+    key: 'm:10378', url: 'https://test-streams.mux.dev/x36xhzz/url_2/193039199_mp4_h264_aac_ld_7.m3u8', mime: 'application/vnd.apple.mpegurl',
+    title: 'Big Buck Bunny (teste)', nome: 'Big Buck Bunny (teste).mp4', dur: 634,
+  };
+  const pasta = process.env.WM_DL_PASTA;
+  const ponte = (pg) => (fn, ...a) => pg.evaluate(([f, args]) => window.wmDesktop.downloads[f](...args), [fn, a]);
+  let dl = ponte(w);
+  const esperar = async (pg, k, cond, ms, rotulo) => {
+    const t0 = Date.now();
+    let it;
+    while (Date.now() - t0 < ms) {
+      it = (await pg.evaluate(() => window.wmDesktop.downloads.lista())).find((x) => x.key === k);
+      if (it && cond(it)) return it;
+      if (it?.state === 'failed') throw new Error(`${rotulo}: falhou — ${it.reason}`);
+      await pg.waitForTimeout(400);
+    }
+    throw new Error(`${rotulo}: não chegou a tempo (${JSON.stringify(it ?? null)})`);
+  };
+
+  await passo('o app tem a ponte de downloads', async () => {
+    if (!(await w.evaluate(() => typeof window.wmDesktop?.downloads?.enfileirar === 'function'))) throw new Error('sem a ponte de downloads (app velho?)');
+    for (const k of [DL_MP4.key, DL_HLS.key]) await dl('remover', k);   // sobra de uma rodada anterior
+    resultados.push(`ℹ️ pasta dos downloads: ${pasta} · limite do teste ${process.env.WM_DL_KBPS} KB/s`);
+  });
+
+  await passo('mp4: baixa inteiro e vira um .mp4 com a duração certa', async () => {
+    if (!(await dl('enfileirar', { key: DL_MP4.key, url: DL_MP4.url, title: DL_MP4.title }))) throw new Error('o app recusou o pedido');
+    const it = await esperar(w, DL_MP4.key, (x) => x.state === 'completed', 120000, 'mp4');
+    const d = duracaoDoArquivo(path.join(pasta, DL_MP4.nome));
+    if (d === null || Math.abs(d - DL_MP4.dur) > 3) throw new Error(`duração do arquivo: ${d}`);
+    resultados.push(`ℹ️ mp4: ${(it.bytes / 1048576).toFixed(1)} MB, ${d.toFixed(1)} s`);
+  });
+
+  let parouEm = 0;
+  await passo('HLS: baixa pedaço por pedaço (aba Download com o progresso)', async () => {
+    if (!(await dl('enfileirar', { key: DL_HLS.key, url: DL_HLS.url, title: DL_HLS.title, mime: DL_HLS.mime }))) throw new Error('o app recusou o pedido');
+    await abrirAbaDownload(w);
+    const it = await esperar(w, DL_HLS.key, (x) => x.state === 'downloading' && x.percent >= 30, 180000, 'HLS 30%');
+    parouEm = it.percent;
+    await w.waitForTimeout(800);
+    await print('01-baixando.png');
+  });
+
+  await app.close();   // = o PC fechou o app no meio do download
+  const de = registros.length;
+  appDeNovo = await electron.launch({ executablePath: binario, args: argsApp, timeout: 90000 });
+  ouvirRegistros(appDeNovo);
+  const w2 = await appDeNovo.firstWindow({ timeout: 60000 });
+  const print2 = (nome) => w2.screenshot({ path: path.join(saida, `downloads-${nome}`) });
+  dl = ponte(w2);
+
+  await passo('HLS: aberto de novo, continua de onde parou (não recomeça do 0)', async () => {
+    await w2.waitForLoadState('domcontentloaded');
+    const it = await esperar(w2, DL_HLS.key, (x) => x.state === 'downloading' || x.state === 'completed', 60000, 'HLS de volta');
+    if (it.percent < parouEm - 5) throw new Error(`voltou em ${it.percent}% (tinha parado em ${parouEm}%)`);
+    const continuou = registros.slice(de).find((l) => /pedaços já baixados/.test(l));
+    if (!continuou) throw new Error('o app não disse que continuou dos pedaços já baixados');
+    resultados.push(`ℹ️ parou em ${parouEm}% · ${continuou.replace(/^.*download m:\d+: /, '')}`);
+    const fim = await esperar(w2, DL_HLS.key, (x) => x.state === 'completed', 300000, 'HLS completo');
+    const d = duracaoDoArquivo(path.join(pasta, DL_HLS.nome));
+    if (d === null || Math.abs(d - DL_HLS.dur) > 3) throw new Error(`duração do arquivo: ${d}`);
+    resultados.push(`ℹ️ HLS: ${(fim.bytes / 1048576).toFixed(1)} MB, ${d.toFixed(1)} s (${Math.floor(d / 60)} min ${Math.round(d % 60)} s)`);
+  });
+
+  await passo('aba Download: os dois prontos; o baixado toca no player do app, do disco', async () => {
+    await w2.locator('button[title="Painel"]').waitFor({ timeout: 60000 });
+    await abrirAbaDownload(w2);
+    await w2.waitForTimeout(1500);   // capas da TMDB
+    await print2('02-aba.png');
+    await tocarDaAba(w2, DL_HLS.title);
+    await print2('03-tocando-do-disco.png');
+    await fecharPlayer(w2);
+  });
+
+  await passo('sem internet: o app abre a cópia guardada e toca o baixado', async () => {
+    // A cópia é do service worker do app (public/sw-desktop.js): espera ele terminar de guardar a interface.
+    await w2.waitForFunction(async () => {
+      const k = (await caches.keys()).find((x) => x.startsWith('wm-desktop-'));
+      return !!k && !!(await (await caches.open(k)).match('/'));
+    }, null, { timeout: 60000, polling: 1000 });
+    await w2.context().setOffline(true);   // = cabo/Wi-Fi fora: a página não alcança o site
+    await w2.reload().catch(() => undefined);
+    try { await w2.waitForURL(/[?&]offline=1/, { timeout: 30000, waitUntil: 'domcontentloaded' }); } catch (e) {
+      await print2('04-sem-internet-falhou.png').catch(() => undefined);
+      throw new Error(`o app não abriu a cópia sem internet (endereço: ${w2.url()}): ${String(e?.message ?? e).split('\n')[0]}`);
+    }
+    await abrirAbaDownload(w2);
+    await w2.waitForTimeout(1000);
+    await print2('04-sem-internet.png');
+    await tocarDaAba(w2, DL_MP4.title);
+    await print2('05-tocando-sem-internet.png');
+    await fecharPlayer(w2);
+    await w2.context().setOffline(false);
+  });
+
+  await passo('excluir tira o download da aba e apaga o arquivo do PC', async () => {
+    for (const k of [DL_MP4.key, DL_HLS.key]) await dl('remover', k);
+    const sobrou = fs.existsSync(pasta) ? fs.readdirSync(pasta) : [];
+    if (sobrou.length) throw new Error(`ficou na pasta: ${sobrou.join(', ')}`);
+    if ((await dl('lista')).some((x) => x.key === DL_MP4.key || x.key === DL_HLS.key)) throw new Error('ainda na lista');
+  });
+}
+
+
+// Fora do CI (WM_DL_REAL=<busca>, ex. "Game of Thrones"; WM_DL_KBPS=0): um episódio de verdade, de uma fonte, pelo
+// "Download" do ⚙ do player do app — prova que os cabeçalhos do link e a CDN da fonte funcionam no download.
+async function cenarioDownloadReal(w, print) {
+  const busca = process.env.WM_DL_REAL;
+  const minutos = Number(process.env.WM_DL_REAL_MIN) || 40;
+  const pasta = process.env.WM_DL_PASTA;
+  const botao = (acao) => w.locator(`[data-wm-player-desktop] [data-acao="${acao}"]`).first();
+  const mexer = async () => { await w.mouse.move(400, 300); await w.mouse.move(420, 320); await w.waitForTimeout(250); };
+  let chave = '', dlKey = '';
+  await passo(`fonte de verdade: o episódio abre sozinho no player do app [${busca}]`, async () => {
+    await abrirSozinho(w, true);
+    await w.evaluate(() => localStorage.removeItem('watchmov_streamcache'));
+    await w.locator('button[title="Buscar"]').first().click();
+    const campo = w.getByPlaceholder('Buscar filmes, séries e animes...');
+    await campo.waitFor({ timeout: 15000 });
+    await campo.fill(busca);
+    await campo.press('Enter');
+    const cartaz = w.locator('[data-tv-hold][data-tv-key^="tv-"]:visible').first();
+    await cartaz.waitFor({ timeout: 30000 });
+    await w.waitForTimeout(2500);
+    await cartaz.click();
+    await w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first().click();
+    await w.waitForFunction(() => { const v = document.querySelector('[data-wm-player-desktop] video'); return !!v && v.currentTime > 1 && !v.paused; }, null, { timeout: 150000 });
+    const r = await w.evaluate(() => { const e = document.querySelector('[data-player-desktop]'); return { chave: e?.getAttribute('data-chave') ?? '', link: e?.getAttribute('data-link') ?? '' }; });
+    chave = r.chave;
+    const p = chave.split(':');
+    dlKey = `e:${p[0]}:${p[2]}:${p[3]}`;
+    for (const k of [dlKey]) await w.evaluate((x) => window.wmDesktop.downloads.remover(x), k);
+    resultados.push(`ℹ️ tocando ${chave} · ${r.link.slice(0, 80)}`);
+  });
+  await passo('⚙ › Download pede o download do link que está tocando', async () => {
+    await mexer();
+    await botao('ajustes').click();
+    await botao('baixar').click();
+    await w.waitForTimeout(1500);
+    await mexer();
+    await print('real-01-pedido.png');
+    await w.keyboard.press('Escape');   // fecha os Ajustes
+    await w.keyboard.press('Escape');   // fecha o player (o download segue no processo principal)
+  });
+  await passo(`o episódio baixa inteiro (até ${minutos} min) e vira .mp4`, async () => {
+    const t0 = Date.now();
+    let it, ultimo = -1;
+    while (Date.now() - t0 < minutos * 60000) {
+      it = (await w.evaluate(() => window.wmDesktop.downloads.lista())).find((x) => x.key === dlKey);
+      if (it?.state === 'completed') break;
+      if (it?.state === 'failed') throw new Error(`falhou: ${it.reason}`);
+      const minuto = Math.floor((Date.now() - t0) / 60000);
+      if (minuto !== ultimo) { ultimo = minuto; console.log(`[teste] ${minuto} min: ${it?.state} ${it?.percent}% ${((it?.bytes ?? 0) / 1048576).toFixed(0)} MB`); }
+      await w.waitForTimeout(2000);
+    }
+    if (it?.state !== 'completed') throw new Error(`não terminou em ${minutos} min (${JSON.stringify(it)})`);
+    const arquivo = fs.readdirSync(pasta).find((f) => f.endsWith('.mp4'));
+    const d = arquivo ? duracaoDoArquivo(path.join(pasta, arquivo)) : null;
+    if (!d || d < 15 * 60) throw new Error(`duração estranha: ${d} (${arquivo})`);
+    resultados.push(`ℹ️ ${arquivo}: ${(it.bytes / 1048576).toFixed(0)} MB, ${Math.floor(d / 60)} min ${Math.round(d % 60)} s, em ${((Date.now() - t0) / 60000).toFixed(1)} min`);
+  });
+  await passo('a aba Download toca o episódio baixado, do disco', async () => {
+    await abrirAbaDownload(w);
+    await w.waitForTimeout(1500);
+    await print('real-02-aba.png');
+  });
+}

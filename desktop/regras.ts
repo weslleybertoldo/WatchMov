@@ -137,6 +137,11 @@ export function enderecoLocal(host: string): boolean {
 
 /** `wm-video://v/?t=<chave>&u=<endereço>` → o endereço de verdade (http/https, fora da rede local) ou null. A chave
  *  é sorteada a cada abertura do app e só a página do app recebe (preload); o pedido ao esquema não traz Origin. */
+/** wm-video://arquivo/…: arquivo baixado (W4), servido do disco pelo downloads.ts — não é endereço da internet. */
+export function ehArquivoBaixado(pedido: string): boolean {
+  try { const u = new URL(pedido); return u.protocol === `${ESQUEMA_VIDEO}:` && u.hostname === 'arquivo'; } catch { return false; }
+}
+
 export function alvoDoVideo(pedido: string, chave: string): string | null {
   try {
     const u = new URL(pedido);
