@@ -129,13 +129,15 @@ try {
     await print('04-inicio.png');
   });
 
-  if (cenario === 'base') await passo('um título abre o player com o servidor', async () => {
+  if (cenario === 'base') await passo('um título abre o player (do servidor; com a W2, o do app também vale)', async () => {
+    await abrirSozinho(w, false);   // a base testa o player do servidor; o abrir sozinho é o cenário captura
     await w.locator('[data-tv-hold]').first().click();   // a 1ª capa de uma fileira (MediaCard)
     const assistir = w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first();
     await assistir.waitFor({ timeout: 30000 });
     await print('05-detalhe.png');
     await assistir.click();
-    await w.locator('iframe').first().waitFor({ state: 'attached', timeout: 45000 });
+    // Sem o abrir sozinho o servidor abre no iframe; se a captura pegar o link do iframe, o player do app abre por cima.
+    await w.locator('iframe, [data-wm-player-desktop] video').first().waitFor({ state: 'attached', timeout: 45000 });
     await w.waitForTimeout(5000);
     await print('06-player.png');
   });
@@ -153,6 +155,36 @@ console.log(`prints em ${saida}`);
 process.exit(falhou ? 1 : 0);
 
 // ---------------------------------------------------------------- cenário "rede" (W1)
+// Liga/desliga o abrir sozinho (a mesma chave do botão da aba Servidores, resolver.ts: 'watchmov_resolver').
+async function abrirSozinho(w, ligar) {
+  await w.evaluate((v) => localStorage.setItem('watchmov_resolver', v), ligar ? '1' : '0');
+}
+
+// "Assistiu pelo servidor" no 1º título (streamCache.ts: setServerMode, lastMode 'server'): o site abre o servidor e
+// não joga pro player do app quando a captura pega o link do iframe (auto-abrir desarmado), como quando ele escolhe
+// o servidor. Sem isso o laço das fontes perdia o iframe (08/11/2026: a Fonte 1 abriu sozinha no player do app).
+async function servidorNoPrimeiroCartaz(w) {
+  const chave = await w.locator('[data-tv-hold]').first().getAttribute('data-tv-key');   // "movie-1233413"
+  const m = /^(movie|tv)-(\d+)$/.exec(chave ?? '');
+  if (!m) return;
+  await w.evaluate(([tipo, id]) => {
+    const d = JSON.parse(localStorage.getItem('watchmov_streamcache') || '{}');
+    for (const [t, e] of [[0, 0], [1, 1]]) {
+      const k = `${id}:${tipo}:${t}:${e}`;
+      d[k] = { ...(d[k] || { streams: [] }), lastMode: 'server', ts: Date.now() };
+    }
+    localStorage.setItem('watchmov_streamcache', JSON.stringify(d));
+  }, [m[1], m[2]]);
+}
+
+// Com a W2 a captura também olha o iframe do servidor e, se pegar o link, o player do app abre por cima: fecha.
+async function fecharPlayerDoApp(w) {
+  if (await w.locator('[data-wm-player-desktop]').count()) {
+    await w.keyboard.press('Escape');
+    await w.locator('[data-wm-player-desktop]').waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined);
+  }
+}
+
 async function cenarioRede(app, w, print) {
   const estadoRede = () => w.evaluate(() => window.wmDesktop.rede.estado());
   // O navegador do PC não abre no teste: o processo principal guarda o que abriria.
@@ -191,8 +223,10 @@ async function cenarioRede(app, w, print) {
   let fonteOk = null;   // a última fonte que carregou: o teste da propaganda usa o servidor dela
   let fonteAtual = null;
   await passo('cada fonte abre no iframe do player', async () => {
+    await abrirSozinho(w, false);   // o laço testa o iframe de cada fonte (W1); o abrir sozinho é o cenário captura
     await w.locator('nav button', { hasText: /^Início$/ }).first().click();
     await w.locator('[data-tv-hold]').first().waitFor({ timeout: 30000 });
+    await servidorNoPrimeiroCartaz(w);
     await w.locator('[data-tv-hold]').first().click();
     const assistir = w.getByRole('button', { name: /^(Assistir|Continuar)$/ }).first();
     await assistir.waitFor({ timeout: 30000 });
@@ -206,6 +240,7 @@ async function cenarioRede(app, w, print) {
     const falhas = [];
     for (const nome of nomes) {
       const n = nome.match(/^Fonte (\d+)/)[1];
+      await fecharPlayerDoApp(w);
       await trocar.click();
       await w.getByRole('button', { name: nome.trim() }).click();
       await w.waitForTimeout(1000);
@@ -240,6 +275,7 @@ async function cenarioRede(app, w, print) {
   });
 
   await passo('propaganda do servidor não abre janela nem troca a página; link de fora da página vai pro PC', async () => {
+    await fecharPlayerDoApp(w);
     // Volta pra última fonte que carregou (o player remonta o iframe a cada troca de fonte).
     if (fonteAtual !== fonteOk) {
       await w.locator('button[title="Trocar fonte"]').first().click();
@@ -295,6 +331,9 @@ async function cenarioCaptura(app, w, print) {
   const rotulo = [fonte, aba, busca].filter(Boolean).join(' · ');
   const sufixo = rotulo ? `-${rotulo.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}` : '';
   await passo(`o título abre sozinho no player do app (captura + resolvedor)${rotulo ? ` [${rotulo}]` : ''}`, async () => {
+    await abrirSozinho(w, true);   // o perfil do app guarda o localStorage: a base e a rede deixam desligado
+    // Sem o "assistiu pelo servidor" da rede e sem link guardado: o título passa pelo resolvedor de verdade.
+    await w.evaluate(() => localStorage.removeItem('watchmov_streamcache'));
     if (fonte) await w.evaluate((f) => localStorage.setItem('watchmov_fav_server', f), fonte);
     if (aba) {
       await w.locator('nav button', { hasText: new RegExp(`^${aba}$`) }).first().click();
