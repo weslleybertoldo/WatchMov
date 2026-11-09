@@ -8,7 +8,24 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["main.ts", "preload.ts", "rede.ts", "regras.ts", "captura.ts", "captura-preload.ts", "regrasCaptura.ts", "downloads.ts", "regrasDownload.ts", "cast.ts", "regrasCast.ts", "regrasChromecast.ts"]
+  "include": [
+    "main.ts",
+    "preload.ts",
+    "rede.ts",
+    "regras.ts",
+    "captura.ts",
+    "captura-preload.ts",
+    "regrasCaptura.ts",
+    "downloads.ts",
+    "regrasDownload.ts",
+    "cast.ts",
+    "regrasCast.ts",
+    "regrasChromecast.ts",
+    "falhas.ts",
+    "regrasFalhas.ts"
+  ]
 }

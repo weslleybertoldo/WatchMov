@@ -3,6 +3,7 @@ import { useEffect, useReducer } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { upsertNotice } from '@/lib/appNotices';
+import { plataforma } from '@/lib/desktop';
 
 // Opção "baixar já em MP4" (plugin Mp4Download). Grava um arquivo real em
 // Movies/WatchMov enquanto baixa — qualquer app abre (Web Video Cast, VLC,
@@ -60,7 +61,7 @@ function logFalhaMp4(o: { key: string; nome: string; erro: string; eraDownload: 
     error_name: 'EXPORT_MP4',
     error_cause: o.erro || null,
     app_version: __APP_VERSION__,
-    platform: 'android',
+    platform: plataforma(),
   }).then(({ error }) => { if (error) console.warn('[bugs] log export falhou', error.message); });
 }
 

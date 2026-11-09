@@ -439,6 +439,21 @@ async function tmdbFetch<T>(path: string, params: Record<string, string> = {}): 
   return res.json() as Promise<T>;
 }
 
+/** O que o sino precisa saber de um título (= a edge notify-releases): nome, último e próximo episódio (série) ou a
+ *  data de estreia (filme). Usado pelo aviso do app do Windows (avisoDesktop.ts). */
+export interface LancamentoTmdb {
+  titulo: string;
+  episodios?: { air_date: string; season_number: number; episode_number: number; name?: string }[];
+  estreia?: string;
+}
+export async function getLancamento(tmdbId: number, type: TmdbMediaType): Promise<LancamentoTmdb> {
+  type Ep = { air_date: string; season_number: number; episode_number: number; name?: string };
+  const d = await tmdbFetch<{ name?: string; title?: string; release_date?: string; last_episode_to_air?: Ep | null; next_episode_to_air?: Ep | null }>(`/${type}/${tmdbId}`);
+  return type === 'tv'
+    ? { titulo: d.name || d.title || 'Série', episodios: [d.last_episode_to_air, d.next_episode_to_air].filter((e): e is Ep => !!e) }
+    : { titulo: d.title || d.name || 'Filme', estreia: d.release_date || undefined };
+}
+
 interface RawSearchItem {
   id: number;
   title?: string;        // movie

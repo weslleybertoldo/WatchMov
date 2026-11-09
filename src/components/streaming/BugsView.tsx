@@ -21,6 +21,7 @@ interface PlaybackError {
   error_name: string | null;
   error_cause: string | null;
   app_version: string | null;
+  platform?: string | null;
 }
 
 // "Últimos 10" em cada nível (pastas e registros) + botão "Ver mais".
@@ -247,6 +248,7 @@ function ReportCard({ r }: { r: PlaybackError }) {
         )}
         {r.mime && <span className="px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{r.mime}</span>}
         {r.app_version && <span className="px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">v{r.app_version}</span>}
+        {r.platform === 'windows' && <span data-plataforma="windows" className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">Windows</span>}
       </div>
       {r.error_cause && <p className="text-amber-400 break-words">{r.error_cause}</p>}
       {r.url && <p className="text-muted-foreground break-all leading-tight">{r.url}</p>}

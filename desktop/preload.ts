@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('wmDesktop', {
     ipcRenderer.on('wm:deep-link', ouvir);
     return () => { ipcRenderer.off('wm:deep-link', ouvir); };
   },
+  // Aviso do Windows clicado (sino, W6, v5.29+): traz a janela pra frente.
+  focar: (): Promise<boolean> => ipcRenderer.invoke('wm:focar'),
+  // Quedas do app (falhas.ts, v5.29+): o que a aba Bugs ainda não recebeu, no formato do AppExitLog do APK.
+  falhas: {
+    pendentes: (): Promise<unknown[]> => ipcRenderer.invoke('wm:falhas-pendentes'),
+    confirmar: (ts: number): Promise<boolean> => ipcRenderer.invoke('wm:falhas-confirmar', ts),
+  },
   // Rede de app (rede.ts): cabeçalhos que o servidor usou, repetidos nos pedidos da página ao mesmo host.
   rede: {
     cabecalhos: (url: string, cabecalhos: Record<string, string>): Promise<boolean> =>
@@ -54,6 +61,11 @@ contextBridge.exposeInMainWorld('wmDesktop', {
       ipcRenderer.on('wm:downloads', ouvir);
       return () => { ipcRenderer.off('wm:downloads', ouvir); };
     },
+  },
+  // Pasta dos downloads (downloads.ts, v5.29+): a atual e a troca pela janela de pastas do Windows.
+  pastaDownloads: {
+    atual: (): Promise<string> => ipcRenderer.invoke('wm:dl-pasta'),
+    trocar: (): Promise<string | null> => ipcRenderer.invoke('wm:dl-trocar-pasta'),
   },
   // Mandar pra TV (cast.ts, v5.28+): DLNA e Chromecast da rede da casa (o PC serve o vídeo pra TV) e o Transmitir do
   // Windows. Eventos: estado (1 por segundo), fim, erro, parou.

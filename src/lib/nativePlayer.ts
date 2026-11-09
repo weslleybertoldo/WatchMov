@@ -1,6 +1,6 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { applyTvPosition } from '@/lib/streamCache';
-import { temCaptura } from '@/lib/desktop';
+import { desktop, temCaptura } from '@/lib/desktop';
 
 interface PlayOpts { url: string; referer?: string; ua?: string; mime?: string; title?: string; startMs?: number; urls?: string[]; mimes?: string[]; qualities?: string[]; hasNext?: boolean; key?: string; watched?: boolean; offline?: boolean; downloaded?: boolean; headers?: Record<string, string>; fonte?: string; servidores?: string[]; servidorAtual?: string; imdbId?: string; episodios?: string }
 // `watchedKey` = de QUAL episódio o `watched` fala (tmdbId:type:season:ep). O player
@@ -44,7 +44,9 @@ const NativePlayer = registerPlugin<NativePlayerPlugin>('NativePlayer', {
 
 // Fechamentos do app (erro, travamento, sistema) que a aba Bugs ainda não recebeu: o
 // processo que morre não consegue gravar a própria linha. APK antigo → lista vazia.
+// No app do Windows (v5.29+) vêm do desktop/falhas.ts (janela que caiu, processo filho, travou, erro solto).
 export async function pendingAppExits(): Promise<AppExit[]> {
+  if (desktop?.falhas) return desktop.falhas.pendentes().catch(() => []);
   if (!Capacitor.isNativePlatform()) return [];
   try {
     return (await NativePlayer.pendingExits()).exits ?? [];
@@ -55,6 +57,7 @@ export async function pendingAppExits(): Promise<AppExit[]> {
 
 // Confirma até este fechamento — o nativo não manda de novo.
 export function ackAppExits(ts: number): void {
+  if (desktop?.falhas) { desktop.falhas.confirmar(ts).catch(() => {}); return; }
   if (!Capacitor.isNativePlatform()) return;
   NativePlayer.ackExits({ ts }).catch(() => {});
 }
