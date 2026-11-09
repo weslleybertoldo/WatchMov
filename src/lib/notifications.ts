@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { addNotice } from '@/lib/appNotices';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { supabase } from '@/lib/supabase';
+import { isDesktop } from '@/lib/desktop';
 
 // Notificações de lançamento (novo episódio / estreia de filme).
 // O "sino" é uma linha em wm_notify_subs. REGRA (definida pelo Weslley):
@@ -34,6 +35,11 @@ export async function loadSubs() {
   writeCache(); notify();
 }
 
+/** Títulos com o sino ligado (o aviso do app do Windows confere estes na TMDB). */
+export function subsLigados(): { tmdbId: number; type: 'movie' | 'tv' }[] {
+  return [...subs.values()].filter((s) => s.enabled).map(({ tmdbId, type }) => ({ tmdbId, type }));
+}
+
 export function isNotifyOn(tmdbId?: number): boolean {
   if (tmdbId == null) return false;
   return !!subs.get(tmdbId)?.enabled;
@@ -62,6 +68,8 @@ export async function clearNotify(tmdbId: number, type: 'movie' | 'tv') {
 // ── Push (FCM) ──
 // Registra o device e guarda o token. Sem permissão → não notifica (fail closed).
 export async function initPush() {
+  // App do Windows (W6): sem FCM, o próprio app confere os lançamentos e avisa pelo Windows (avisoDesktop.ts).
+  if (isDesktop()) { void import('@/lib/avisoDesktop').then((m) => m.ligarAvisosDesktop(subsLigados, loadSubs)); return; }
   if (!Capacitor.isNativePlatform()) return;
   try {
     let perm = await PushNotifications.checkPermissions();
@@ -101,6 +109,7 @@ export async function initPush() {
 
 // Abre o título ao tocar na notificação (data: {tmdbId, type}).
 export function onPushOpen(cb: (d: { tmdbId: number; type: 'movie' | 'tv' }) => void) {
+  if (isDesktop()) { void import('@/lib/avisoDesktop').then((m) => m.aoAbrirAvisoDesktop(cb)); return; }
   if (!Capacitor.isNativePlatform()) return;
   PushNotifications.addListener('pushNotificationActionPerformed', (a) => {
     const d = a.notification?.data || {};

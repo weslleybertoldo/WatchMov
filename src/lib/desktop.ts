@@ -29,6 +29,19 @@ export interface WmDesktop {
   /** Mandar pra TV (desktop/cast.ts, v5.28+; o .exe mais velho não tem): DLNA e Chromecast da rede da casa, com o PC
    *  servindo o vídeo pra TV, e o Transmitir do Windows. */
   cast?: CastDesktop;
+  /** v5.29+: aviso do Windows clicado (sino) → traz a janela pra frente, mesmo minimizada. */
+  focar?(): Promise<boolean>;
+  /** Quedas do app (desktop/falhas.ts, v5.29+): o que a aba Bugs ainda não recebeu, no formato do AppExitLog do APK
+   *  (`ts` = quando caiu, `reason` = código do ApplicationExitInfo, `cause` = texto pronto). */
+  falhas?: {
+    pendentes(): Promise<{ ts: number; reason: number; cause: string }[]>;
+    confirmar(ts: number): Promise<boolean>;
+  };
+  /** Pasta dos downloads (desktop/downloads.ts, v5.29+): a atual e a troca pela janela de pastas do Windows. */
+  pastaDownloads?: {
+    atual(): Promise<string>;
+    trocar(): Promise<string | null>;
+  };
 }
 
 /** TV achada na rede (id = "dlna:<controle>" ou "cc:<instância>"). */
@@ -92,6 +105,10 @@ export const temCaptura = (): boolean => Capacitor.isNativePlatform() || !!deskt
 
 /** Mandar pra TV pelo app do Windows (v5.28+). No APK é o botão espelhar do player nativo. */
 export const temCast = (): boolean => !!desktop?.cast;
+
+/** De onde veio o registro (aba Bugs): o APK, o app do Windows ou o site no navegador. */
+export const plataforma = (): 'android' | 'windows' | 'web' =>
+  Capacitor.isNativePlatform() ? 'android' : isDesktop() ? 'windows' : 'web';
 
 /** Baixar e assistir sem internet: o APK, ou o app do Windows que já tem os downloads (v5.27+). */
 export const temDownloads = (): boolean => Capacitor.isNativePlatform() || !!desktop?.downloads;

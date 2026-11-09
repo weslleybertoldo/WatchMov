@@ -7,7 +7,7 @@
 //     recodificar (D8 do plano). Os cabeçalhos são os do link (Referer/Origin/token que o player usou).
 // As decisões ficam em regrasDownload.ts (testadas sem Electron). Testes: WM_DL_PASTA troca a pasta, WM_DL_KBPS limita
 // a velocidade (pra dar tempo de fechar o app no meio) e WM_FFMPEG troca o ffmpeg.
-import { app, ipcMain, net, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { app, dialog, ipcMain, net, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -56,7 +56,11 @@ const novasTentativas = new Map<string, NodeJS.Timeout>();
 const ESPERAS = [30_000, 120_000, 600_000];   // novas tentativas sozinhas em falha temporária (= scheduleAutoRetry)
 const LIMITE_KBPS = Number(process.env.WM_DL_KBPS) || 0;
 
-const pastaFinal = (): string => process.env.WM_DL_PASTA || path.join(app.getPath('videos'), 'WatchMov');
+// Pasta dos .mp4: a que ele escolheu na aba Download (W6, guardada em userData/config-downloads.json), senão Vídeos\WatchMov.
+// Trocar vale pros próximos: os já baixados ficam onde estão (o registro guarda o caminho inteiro).
+let pastaEscolhida: string | null = null;
+let arquivoConfig = '';
+const pastaFinal = (): string => pastaEscolhida || process.env.WM_DL_PASTA || path.join(app.getPath('videos'), 'WatchMov');
 // Uma pasta por pedido (chave + quando foi pedido): trocar o link de um título não mistura os pedaços dos dois.
 const pastaDosPedacos = (r: Registro): string =>
   path.join(app.getPath('userData'), 'baixando', createHash('sha1').update(`${r.key}|${r.criado}`).digest('hex').slice(0, 12));
@@ -576,10 +580,32 @@ export function arquivoDoBaixado(chave: string): string | null {
   return r && r.state === 'completed' && fs.existsSync(r.arquivo) ? r.arquivo : null;
 }
 
+/** Janela de pastas do Windows → a pasta nova (precisa dar pra escrever nela). Cancelou ou não dá → null. */
+async function trocarPasta(): Promise<string | null> {
+  const j = janelaDoApp();
+  const o = { title: 'Pasta dos downloads', defaultPath: pastaFinal(), buttonLabel: 'Usar esta pasta', properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] };
+  const r = j ? await dialog.showOpenDialog(j, o) : await dialog.showOpenDialog(o);
+  const nova = r.canceled ? null : r.filePaths[0];
+  if (!nova) return null;
+  try {
+    await fsp.mkdir(nova, { recursive: true });
+    await fsp.access(nova, fs.constants.W_OK);
+  } catch { return null; }
+  pastaEscolhida = nova;
+  await fsp.writeFile(arquivoConfig, JSON.stringify({ pasta: nova })).catch((e: unknown) => console.warn('[wm] downloads: pasta não gravou', e));
+  console.log(`[wm] downloads: pasta nova ${nova}`);
+  return nova;
+}
+
 /** Liga os downloads. Chamar depois do `ready` e do ligarRede (o esquema do vídeo é dele). */
 export function ligarDownloads(origemApp: string, janela: () => BrowserWindow | null): void {
   janelaDoApp = janela;
   arquivoRegistro = path.join(app.getPath('userData'), 'downloads.json');
+  arquivoConfig = path.join(app.getPath('userData'), 'config-downloads.json');
+  try {
+    const p = (JSON.parse(fs.readFileSync(arquivoConfig, 'utf8')) as { pasta?: unknown }).pasta;
+    if (typeof p === 'string' && p) pastaEscolhida = p;
+  } catch { /* nunca trocou: Vídeos\WatchMov */ }
   carregar();
   aoPedirArquivo(servirArquivo);
   const daPagina = (e: IpcMainInvokeEvent) => origemDoFrame(e.senderFrame) === origemApp;
@@ -588,6 +614,8 @@ export function ligarDownloads(origemApp: string, janela: () => BrowserWindow | 
   ipcMain.handle('wm:dl-lista', (e) => (daPagina(e) ? [...registros.values()].map(item) : []));
   ipcMain.handle('wm:dl-retomar', (e) => daPagina(e) && retomar());
   ipcMain.handle('wm:dl-espaco', (e) => (daPagina(e) ? espaco() : { freeBytes: 0, totalBytes: 0 }));
+  ipcMain.handle('wm:dl-pasta', (e) => (daPagina(e) ? pastaFinal() : ''));
+  ipcMain.handle('wm:dl-trocar-pasta', (e) => (daPagina(e) ? trocarPasta() : null));
   const naFila = [...registros.values()].filter((r) => r.state === 'queued').length;
   if (naFila) console.log(`[wm] downloads: ${naFila} pela metade, continuam em 3 s`);
   setTimeout(proximo, 3000);

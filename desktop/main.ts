@@ -6,10 +6,11 @@
 // propaganda). Funções novas da ponte são opcionais no site (o .exe que ainda não atualizou não as tem).
 import { app, BrowserWindow, ipcMain, net, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import { aoBloquear, ligarRede, protegerJanela, registrarEsquemaVideo } from './rede';
+import { aoBloquear, ligarRede, origemDoFrame, protegerJanela, registrarEsquemaVideo } from './rede';
 import { derrubarNaBusca, ligarCaptura } from './captura';
 import { arquivoDoBaixado, ligarDownloads, pararDownloads } from './downloads';
 import { ligarCast, pararCast } from './cast';
+import { ligarFalhas, vigiarJanela } from './falhas';
 
 const SITE = 'https://watchmovbr.vercel.app/';
 // Retorno do login do Google (src/lib/capacitorAuth.ts, REDIRECT_SCHEME): o mesmo do APK, que o Supabase já aceita.
@@ -84,6 +85,8 @@ function abrirJanela() {
   janela.once('ready-to-show', () => janela?.show());
   // Janela nova só da própria página (no navegador do PC); propaganda dos servidores não abre nada nem troca a página.
   protegerJanela(janela.webContents, ORIGEM);
+  // Quedas na aba Bugs (W6): a janela que cai volta sozinha e a queda fica anotada pra aba Bugs.
+  vigiarJanela(janela);
   janela.on('closed', () => { janela = null; });
   janela.webContents.on('did-fail-load', (_e, codigo, descricao, url, principal) => {
     if (!principal || !SEM_REDE.has(codigo)) return;
@@ -109,13 +112,22 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   linkPendente = linkDoLogin(process.argv); // app aberto PELO link, com ele fechado
   registrarEsquemaVideo();   // o vídeo do player do app (wm-video://); o Electron exige antes do `ready`
-  app.setAppUserModelId(ESQUEMA);
+  app.setAppUserModelId(ESQUEMA);   // o mesmo do atalho do instalador: sem ele o Windows não mostra os avisos do app
+  ligarFalhas(ORIGEM);   // quedas pra aba Bugs (W6); antes do `ready` pra pegar erro solto do começo
   if (app.isPackaged) app.setAsDefaultProtocolClient(ESQUEMA);
   app.on('second-instance', (_e, argv) => receberLink(linkDoLogin(argv)));
 
   ipcMain.handle('wm:abrir-fora', async (_e, url: unknown) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) return false;
     await shell.openExternal(url);
+    return true;
+  });
+  // Aviso do Windows clicado (sino, W6): traz a janela pra frente, mesmo minimizada.
+  ipcMain.handle('wm:focar', (e) => {
+    if (!janela || origemDoFrame(e.senderFrame) !== ORIGEM) return false;
+    if (janela.isMinimized()) janela.restore();
+    janela.show();
+    janela.focus();
     return true;
   });
   ipcMain.handle('wm:link-pendente', () => {

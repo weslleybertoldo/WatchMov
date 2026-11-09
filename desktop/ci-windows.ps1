@@ -57,6 +57,14 @@ if ($LASTEXITCODE -ne 0) {
   if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke do cast falhou ($LASTEXITCODE): vídeo de teste de terceiro fora do ar; a release segue" }
   else { throw "smoke do cast falhou ($LASTEXITCODE)" }
 }
+# Acabamento (W6): máquina limpa (o runner instala do zero) com print de cada tela do menu, a janela que cai volta sozinha e
+# a queda chega na aba Bugs (Windows), o aviso do sino (teste) vira aviso do Windows + central, e a pasta dos downloads
+# troca pela janela de pastas. Na PR barra; na release só avisa (a queda forçada é o passo mais sensível do runner).
+node smoke.mjs --exe $app --saida smoke-prints --cenario fim
+if ($LASTEXITCODE -ne 0) {
+  if ($env:WM_REDE_SO_AVISA -eq '1') { Write-Output "::warning::smoke do fim falhou ($LASTEXITCODE); a release segue" }
+  else { throw "smoke do fim falhou ($LASTEXITCODE)" }
+}
 # O app registra o endereço de volta do login no Windows quando abre (main.ts: setAsDefaultProtocolClient).
 reg query "HKCU\Software\Classes\com.weslley.watchmov\shell\open\command"
 if ($LASTEXITCODE -ne 0) { throw 'o endereço de volta do login (com.weslley.watchmov) não ficou registrado no Windows' }

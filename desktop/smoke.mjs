@@ -18,7 +18,7 @@
 // Cenário "downloads" (W4, desktop/downloads.ts), com vídeos públicos de teste: um mp4 baixa inteiro; um HLS baixa
 // pedaço por pedaço, o app fecha no meio e, aberto de novo, continua de onde parou; os dois viram .mp4 com a duração
 // certa; a aba Download toca o baixado do disco; sem internet o app abre a cópia guardada e toca; excluir apaga.
-// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links|downloads|cast]
+// Uso (dentro de desktop/): node smoke.mjs [--exe <WatchMov.exe instalado>] [--saida smoke-prints] [--cenario base|rede|captura|player|player-links|downloads|cast|fim]
 // WM_SITE troca o site que o app abre (staging, ou o Vite local em desenvolvimento).
 // Env: WM_SUPABASE_URL (ou VITE_SUPABASE_URL), WM_SUPABASE_ANON (ou VITE_SUPABASE_ANON_KEY), WM_SMOKE_EMAIL,
 //      WM_SMOKE_SENHA — SÓ a conta de teste. Nada é gravado no banco (só login e leitura).
@@ -35,7 +35,7 @@ const opcao = (nome, padrao) => { const i = args.indexOf(nome); return i >= 0 ? 
 const exe = opcao('--exe');
 const saida = path.resolve(opcao('--saida', 'smoke-prints'));
 const cenario = opcao('--cenario', 'base');
-if (!['base', 'rede', 'captura', 'player', 'player-links', 'downloads', 'cast'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
+if (!['base', 'rede', 'captura', 'player', 'player-links', 'downloads', 'cast', 'fim'].includes(cenario)) { console.error(`cenário desconhecido: ${cenario}`); process.exit(2); }
 fs.mkdirSync(saida, { recursive: true });
 // Downloads: pasta própria do teste e velocidade limitada (dá tempo de fechar o app no meio do HLS).
 if (cenario === 'downloads') {
@@ -176,6 +176,7 @@ try {
   if (cenario === 'player-links') await cenarioPlayerLinks(w, print);
   if (cenario === 'downloads') await cenarioDownloads(app, w, print);
   if (cenario === 'cast') await cenarioCast(w, print);
+  if (cenario === 'fim') await cenarioFim(app, w, print);
 } catch (e) {
   falhou = true;
   console.error(String(e?.stack ?? e));
@@ -1165,3 +1166,111 @@ async function cenarioCast(w, print) {
   });
   tv.fechar();
 }
+
+// ---------------------------------------------------------------- cenário "fim" (W6: acabamento)
+// Máquina limpa (o runner instala do zero): cada tela do menu com print; a janela que cai volta sozinha e a queda chega
+// na aba Bugs com a etiqueta Windows; o aviso do sino (teste) vira aviso do Windows e fica na central; a pasta dos
+// downloads troca pela janela de pastas (o teste responde a janela no lugar dele e depois volta a pasta de antes).
+async function cenarioFim(app, w, print) {
+  const TELAS = ['Início', 'Filmes', 'Séries', 'Animes', 'Ao Vivo', 'Favoritos', 'Procurar'];
+  const nomeDoArquivo = (t) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, '-');
+  const semErroNaTela = async (onde) => {
+    const texto = await w.evaluate(() => document.body.innerText);
+    if (/Algo deu errado|Something went wrong|Application error/i.test(texto)) throw new Error(`${onde}: tela de erro`);
+  };
+
+  await passo('cada tela do menu abre (print de cada uma)', async () => {
+    for (const [i, nome] of TELAS.entries()) {
+      await w.getByRole('button', { name: nome, exact: true }).first().click();
+      await w.waitForTimeout(nome === 'Ao Vivo' ? 4000 : 2500);
+      await semErroNaTela(nome);
+      await print(`tela-${String(i + 1).padStart(2, '0')}-${nomeDoArquivo(nome)}.png`);
+    }
+    await w.locator('button[title="Painel"]').click();
+    await w.getByRole('heading', { name: 'Painel' }).waitFor({ timeout: 15000 });
+    if (await w.locator('[data-acao="baixar-app-windows"]').count()) throw new Error('o "Baixar o app para Windows" apareceu dentro do app');
+    await print('tela-08-painel.png');
+    await w.getByRole('button', { name: /^Download$/ }).click();
+    await w.locator('[data-pasta-downloads]').waitFor({ timeout: 15000 });
+    await print('tela-09-download.png');
+    await w.locator('button[title="Painel"]').click();
+    await w.getByRole('button', { name: /^Bugs$/ }).click();
+    await w.waitForTimeout(2000);
+    await semErroNaTela('Bugs');
+    await print('tela-10-bugs.png');
+  });
+
+  await passo('aba Download: mostra a pasta e Trocar usa a pasta escolhida (e volta)', async () => {
+    const nova = path.join(saida, 'pasta-trocada');
+    fs.mkdirSync(nova, { recursive: true });
+    await abrirAbaDownload(w);
+    const antes = await w.locator('[data-pasta-downloads]').getAttribute('data-pasta-downloads');
+    const responder = (p) => app.evaluate(({ dialog }, x) => {
+      globalThis.__wmDialogoOriginal ??= dialog.showOpenDialog;
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [x] });
+    }, p);
+    await responder(nova);
+    await w.locator('[data-acao="trocar-pasta"]').click();
+    await w.waitForFunction((p) => document.querySelector('[data-pasta-downloads]')?.getAttribute('data-pasta-downloads') === p, nova, { timeout: 10000 });
+    if (await w.evaluate(() => window.wmDesktop.pastaDownloads.atual()) !== nova) throw new Error('o app não guardou a pasta nova');
+    resultados.push(`ℹ️ pasta dos downloads: ${antes} → ${nova}`);
+    await print('pasta-trocada.png');
+    await responder(antes);
+    await w.locator('[data-acao="trocar-pasta"]').click();
+    await w.waitForFunction((p) => document.querySelector('[data-pasta-downloads]')?.getAttribute('data-pasta-downloads') === p, antes, { timeout: 10000 });
+    await app.evaluate(({ dialog }) => { if (globalThis.__wmDialogoOriginal) dialog.showOpenDialog = globalThis.__wmDialogoOriginal; });
+  });
+
+  await passo('sino: o aviso de teste vira aviso do Windows e fica na central (Lançamentos)', async () => {
+    await w.waitForFunction(() => typeof window.wmAvisoTeste === 'function', null, { timeout: 30000 });
+    await w.evaluate(() => {
+      window.__wmAvisos = [];
+      const N = window.Notification;
+      window.Notification = new Proxy(N, { construct(t, a) { window.__wmAvisos.push(a[0]); return new t(...a); } });
+    });
+    await w.evaluate(() => window.wmAvisoTeste());
+    const avisos = await w.evaluate(() => ({ lista: window.__wmAvisos, permissao: window.Notification.permission }));
+    if (!avisos.lista.includes('WatchMov')) throw new Error(`o aviso do Windows não foi criado (${JSON.stringify(avisos)})`);
+    await w.locator('button[title="Notificações"]').click();
+    await w.getByText('Teste de notificação — está funcionando.').first().waitFor({ timeout: 10000 });
+    await print('aviso-central.png');
+    await w.keyboard.press('Escape');
+  });
+
+  await passo('a janela que cai volta sozinha e a queda aparece na aba Bugs (Windows)', async () => {
+    // A janela recarrega sozinha (falhas.ts), mas o Playwright não acompanha a página depois da queda (o alvo fica
+    // marcado como "caiu" e não volta): daqui pra frente o teste fala com a janela pelo processo principal.
+    const naJanela = (codigo) => app.evaluate(({ BrowserWindow }, js) => {
+      const b = BrowserWindow.getAllWindows().find((x) => x.isVisible());
+      if (!b || b.webContents.isCrashed() || b.webContents.isLoading()) return null;
+      return Promise.race([b.webContents.executeJavaScript(js, true), new Promise((ok) => setTimeout(() => ok(null), 5000))]);
+    }, codigo).catch(() => null);
+    const esperarNaJanela = async (codigo, ms, falha) => {
+      for (const fim = Date.now() + ms; Date.now() < fim; await new Promise((r) => setTimeout(r, 1000))) {
+        const v = await naJanela(codigo);
+        if (v) return v;
+      }
+      throw new Error(falha);
+    };
+    const antes = Date.now();
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows().find((b) => b.isVisible())?.webContents.forcefullyCrashRenderer(); });
+    // Voltou = página nova (nasceu depois da queda), com a ponte do Windows e o menu do app.
+    await esperarNaJanela(`performance.timeOrigin > ${antes} && !!window.wmDesktop && !!document.querySelector('button[title="Painel"]')`, 60000, 'a janela não voltou depois de cair');
+    // O boot manda a queda pra aba Bugs (logAppExits, uns segundos depois de assentar) e confirma: a fila do PC esvazia
+    // (não manda de novo no próximo boot). Só depois abre a aba: ela lê a lista uma vez, ao abrir.
+    await esperarNaJanela(`window.wmDesktop.falhas.pendentes().then((l) => l.length === 0)`, 30000, 'a queda não saiu da fila do PC (não foi pra aba Bugs)');
+    const clicarNaPasta = (padrao) => `(() => { const p = [...document.querySelectorAll('[data-testid="bug-folder"]')].find((x) => ${padrao}.test(x.textContent)); p?.click(); return !!p; })()`;
+    await naJanela(`document.querySelector('button[title="Painel"]').click(), true`);
+    await esperarNaJanela(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Bugs'); b?.click(); return !!b; })()`, 15000, 'a aba Bugs não apareceu no Painel');
+    // Bugs → pasta "App fechou" → o dia (o 1º é o mais recente) → os registros.
+    await esperarNaJanela(clicarNaPasta('/^App fechou/'), 20000, 'a pasta "App fechou" não apareceu na aba Bugs');
+    await esperarNaJanela(clicarNaPasta('/^\\d{2}\\/\\d{2}\\/\\d{4}/'), 10000, 'a pasta do dia não apareceu em "App fechou"');
+    const linha = await esperarNaJanela(`[...document.querySelectorAll('p')].find((x) => /^A janela do app caiu/.test(x.textContent))?.textContent ?? null`, 15000, 'a queda não apareceu nos registros do dia');
+    if (!(await naJanela(`!!document.querySelector('[data-plataforma="windows"]')`))) throw new Error('a queda chegou sem a etiqueta Windows');
+    resultados.push(`ℹ️ queda na aba Bugs: ${linha}`);
+    await new Promise((r) => setTimeout(r, 1000));
+    const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows().find((x) => x.isVisible()).webContents.capturePage()).toPNG().toString('base64'));
+    fs.writeFileSync(path.join(saida, 'fim-bugs-queda.png'), Buffer.from(png, 'base64'));
+  });
+}
+

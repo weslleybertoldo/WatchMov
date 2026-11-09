@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Pencil, Check, Trash2, Play, DownloadCloud, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Pencil, Check, Trash2, Play, DownloadCloud, AlertCircle, FolderOpen } from 'lucide-react';
 import {
   useDownloadList, playDownloaded, removeDownload, clearDownloadsFor,
   movieKey, watchProgressOf, type DownloadMeta,
 } from '@/lib/downloads';
 import { Downloader, downloadsNative, fmtBytes, type DownloadItem } from '@/lib/downloader';
-import { isDesktop } from '@/lib/desktop';
+import { desktop, isDesktop } from '@/lib/desktop';
 import { tileReason } from '@/lib/downloadReason';
 import { useMp4, useMp4All, mp4Native, convertToMp4, openMp4, cancelMp4 } from '@/lib/mp4Download';
 import {
@@ -222,7 +222,7 @@ function SeriesEpisodes({ g, items, onBack }: { g: TitleGroup; items: Map<string
   const [editing, setEditing] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [cancelKey, setCancelKey] = useState<string | null>(null);   // download a cancelar
-  const toggle = (k: string) => setSel(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const toggle = (k: string) => setSel(prev => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const removeSel = () => { sel.forEach(k => removeDownload(k)); setSel(new Set()); setEditing(false); };
   return (
     <div className="space-y-4 animate-tela-entra">
@@ -406,6 +406,16 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
     Downloader.storage().then(s => setFreeBytes(s?.freeBytes ?? 0)).catch(() => {});
   }, []);
 
+  // App do Windows (W6): em que pasta os .mp4 ficam, e trocar (os já baixados ficam onde estão).
+  const [pasta, setPasta] = useState<string | null>(null);
+  useEffect(() => { desktop?.pastaDownloads?.atual().then(p => setPasta(p || null)).catch(() => {}); }, []);
+  const trocarPasta = async () => {
+    const nova = await desktop?.pastaDownloads?.trocar().catch(() => null);
+    if (!nova) return;
+    setPasta(nova);
+    Downloader.storage().then(s => setFreeBytes(s?.freeBytes ?? 0)).catch(() => {});
+  };
+
   // Quanto os downloads ocupam ao todo (soma o que o Media3 já gravou em disco).
   const totalBytes = [...items.values()].reduce((acc, i) => acc + (i.bytes ?? 0), 0);
 
@@ -446,11 +456,22 @@ export default function DownloadView({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {!empty && (totalBytes > 0 || freeBytes > 0) && (
-        <p className="text-xs text-muted-foreground -mt-4">
-          Ocupando <span className="text-foreground font-medium">{fmtBytes(totalBytes)}</span>
-          {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres {isDesktop() ? 'no PC' : 'no aparelho'}</>}
-        </p>
+      {((!empty && (totalBytes > 0 || freeBytes > 0)) || pasta) && (
+        <div className="text-xs text-muted-foreground -mt-4 space-y-1">
+          {!empty && (totalBytes > 0 || freeBytes > 0) && (
+            <p>
+              Ocupando <span className="text-foreground font-medium">{fmtBytes(totalBytes)}</span>
+              {freeBytes > 0 && <> · {fmtBytes(freeBytes)} livres {isDesktop() ? 'no PC' : 'no aparelho'}</>}
+            </p>
+          )}
+          {pasta && (
+            <p data-pasta-downloads={pasta} className="flex items-center gap-1.5 min-w-0">
+              <FolderOpen className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate" title={pasta}>{pasta}</span>
+              <button type="button" data-acao="trocar-pasta" className="shrink-0 font-medium text-primary hover:underline" onClick={() => void trocarPasta()}>Trocar</button>
+            </p>
+          )}
+        </div>
       )}
 
       <AlertDialog open={!!cancelKey} onOpenChange={o => { if (!o) setCancelKey(null); }}>

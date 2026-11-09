@@ -1,7 +1,9 @@
-import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Server } from 'lucide-react';
+import { useState } from 'react';
+import { Film, Tv, Sparkles, History, Download, Bug, LogOut, ArrowLeft, Server, Monitor, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { isTv } from '@/lib/device';
 import IconeControle from '@/components/streaming/IconeControle';
+import { linkDoInstalador, mostrarBaixarWindows } from '@/lib/appWindows';
 
 export interface WatchedStats {
   moviesCount: number;
@@ -44,6 +46,13 @@ interface SettingsViewProps {
 }
 
 export default function SettingsView({ stats, onHistory, onDownload, onServers, onBugs, onTv, onRemote, onSignOut, onBack }: SettingsViewProps) {
+  // App do Windows (W6): só no navegador do Windows; baixa o .exe da release Latest.
+  const [baixandoApp, setBaixandoApp] = useState(false);
+  const baixarAppWindows = async () => {
+    setBaixandoApp(true);
+    window.location.href = await linkDoInstalador();
+    window.setTimeout(() => setBaixandoApp(false), 3000);
+  };
   return (
     <div className="space-y-6 max-w-xl mx-auto">
       <div className="flex items-center gap-2">
@@ -87,6 +96,12 @@ export default function SettingsView({ stats, onHistory, onDownload, onServers, 
       <Button variant="secondary" className="w-full justify-start gap-2 h-11" onClick={onBugs}>
         <Bug className="w-4 h-4" /> Bugs
       </Button>
+
+      {mostrarBaixarWindows() && (
+        <Button variant="secondary" data-acao="baixar-app-windows" className="w-full justify-start gap-2 h-11" disabled={baixandoApp} onClick={() => void baixarAppWindows()}>
+          {baixandoApp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Monitor className="w-4 h-4" />} Baixar o app para Windows
+        </Button>
+      )}
 
       <Button variant="ghost" className="w-full justify-start gap-2 h-11 text-muted-foreground" onClick={onSignOut}>
         <LogOut className="w-4 h-4" /> Sair

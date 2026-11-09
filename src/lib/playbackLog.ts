@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { plataforma } from '@/lib/desktop';
 import { onPlayerError, pendingAppExits, ackAppExits, type PlayerErrorEvent } from '@/lib/nativePlayer';
 
 // Registro dos erros/diagnósticos do player nativo na aba Bugs (wm_playback_errors).
@@ -31,7 +32,7 @@ export function logPlaybackError(e: PlayerErrorEvent) {
     error_name: e.name ?? null,
     error_cause: e.cause ?? null,
     app_version: __APP_VERSION__,
-    platform: 'android',
+    platform: plataforma(),
   }).then(({ error }) => { if (error) console.warn('[bugs] log falhou', error.message); });
 }
 
@@ -55,7 +56,7 @@ export async function logAppExits(): Promise<number> {
       error_name: 'APP_FECHOU',
       error_cause: e.cause,
       app_version: null,
-      platform: 'android',
+      platform: plataforma(),
     });
     if (error) { console.warn('[bugs] log de fechamento falhou', error.message); break; }
     ultimo = e.ts;
