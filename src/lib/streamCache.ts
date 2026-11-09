@@ -12,6 +12,9 @@ export interface StreamEntry {
   lastMode?: 'native' | 'server';  // como assistiu por último (reabre igual)
   positionMs?: number;
   durationMs?: number;             // duração REAL do arquivo (do player), p/ a barra
+  // Quando a POSIÇÃO mudou (o `ts` muda também com link capturado): é com ela que o ponto deste aparelho é comparado com
+  // o do banco, gravado por outro aparelho (src/lib/progressoRemoto.ts, 09/11/2026). Entrada antiga sem ela usa o `ts`.
+  posTs?: number;
   ts: number;
 }
 
@@ -108,8 +111,11 @@ export function addStreams(list: SniffResult[], tmdbId?: number, type?: string, 
   }
   // PRESERVA durationMs: é a duração REAL medida pelo player. Sem isso, capturar um
   // link novo apagava a duração e a barra/tempo ("22:55 / 1:40:15") sumia.
+  // PRESERVA também a hora da posição (posTs): link novo não é posição nova — sem ela, o ponto mais novo que outro
+  // aparelho gravou no banco perdia pra uma posição velha daqui (09/11/2026). Entrada antiga: a posição é de até o `ts`.
   d[k] = { streams: arr, chosenUrl: prev?.chosenUrl, lastMode: prev?.lastMode,
-           positionMs: prev?.positionMs, durationMs: prev?.durationMs, ts: Date.now() };
+           positionMs: prev?.positionMs, durationMs: prev?.durationMs,
+           posTs: prev?.posTs ?? (prev?.positionMs ? prev.ts : undefined), ts: Date.now() };
   write(d);
 }
 
@@ -156,16 +162,36 @@ export function setServerMode(tmdbId?: number, type?: string, season?: number, e
 // Última posição salva de um título (o episódio mais recente, no caso de série):
 // usado no card "Continuar assistindo" pra mostrar o progresso do EP atual.
 // `ts` = quando a entrada mexeu por último neste aparelho (o Continuar compara com a última atividade gravada no banco).
-export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number; durationMs?: number; ts: number } | null {
+// `posTs` = quando a posição mudou (comparada com a do banco).
+export function latestPosition(tmdbId?: number): { season: number; episode: number; positionMs: number; durationMs?: number; ts: number; posTs: number } | null {
   if (tmdbId == null) return null;
   const d = read();
-  let best: { season: number; episode: number; positionMs: number; durationMs?: number; ts: number } | null = null;
+  let best: { season: number; episode: number; positionMs: number; durationMs?: number; ts: number; posTs: number } | null = null;
   for (const [k, e] of Object.entries(d)) {
     const [tid, , s, ep] = k.split(':');
     if (tid !== String(tmdbId) || !e.positionMs) continue;   // posição não expira (só os links)
-    if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, durationMs: e.durationMs, ts: e.ts };
+    if (!best || e.ts > best.ts) best = { season: Number(s), episode: Number(ep), positionMs: e.positionMs, durationMs: e.durationMs, ts: e.ts, posTs: e.posTs ?? e.ts };
   }
   return best;
+}
+
+// Posição deste aparelho num episódio/filme (sem TTL) + quando ela mudou — pra comparar com a do banco.
+export function posicaoLocal(tmdbId?: number, type?: string, season?: number, episode?: number): { positionMs: number; durationMs?: number; posTs: number } | null {
+  const e = read()[keyFor(tmdbId, type, season, episode)];
+  if (!e?.positionMs) return null;
+  return { positionMs: e.positionMs, durationMs: e.durationMs, posTs: e.posTs ?? e.ts };
+}
+
+// Adota o ponto que veio do banco (outro aparelho tocou depois): vira a posição deste aparelho, com a hora em que tocou
+// lá. O `ts` da entrada renova (é atividade agora; sem isso o `getEntry` dava a entrada como vencida e o player abria do 0).
+export function adotarPosicao(positionMs: number, tmdbId: number, type: string, season: number, episode: number, durationMs: number | undefined, posTs: number) {
+  const d = read(); const k = keyFor(tmdbId, type, season, episode);
+  const e = d[k] ?? { streams: [], ts: 0 };
+  e.positionMs = positionMs;
+  if (durationMs && durationMs > 0) e.durationMs = durationMs;
+  e.posTs = posTs;
+  e.ts = Date.now();
+  d[k] = e; write(d);
 }
 
 // Posição SEM TTL: o link expira em 12h, mas "onde parei" não pode sumir (o
@@ -196,6 +222,7 @@ export function setStreamPosition(positionMs: number, tmdbId?: number, type?: st
   if (!d[k]) d[k] = { streams: [], ts: Date.now() };
   const e = d[k];
   e.ts = Date.now();          // renova: enquanto assiste, a entrada não expira
+  e.posTs = e.ts;
   if (e) { e.positionMs = positionMs; if (durationMs && durationMs > 0) e.durationMs = durationMs; write(d); }
 }
 
@@ -207,7 +234,7 @@ export function applyTvPosition(key: string, positionMs: number, durationMs: num
   const d = read();
   const e = d[key] ?? { streams: [], ts: 0 };
   if (e.ts >= ts) return false;
-  e.ts = ts; e.positionMs = positionMs;
+  e.ts = ts; e.posTs = ts; e.positionMs = positionMs;
   if (durationMs && durationMs > 0) e.durationMs = durationMs;
   d[key] = e; write(d);
   return true;

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
 // Mock sonner so reportDbError doesn't try to render toasts in jsdom.
@@ -8,6 +8,9 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 type Op = "select" | "insert" | "update" | "delete";
 interface Resp { data?: unknown; error?: { message: string } | null }
 const responses: Record<string, Resp> = {};
+// O que foi gravado (update) e quantas leituras (select) por tabela — minuto onde parou em todos os aparelhos.
+const updates: Array<{ table: string; payload: unknown }> = [];
+const selects: Record<string, number> = {};
 function key(table: string, op: Op) { return `${table}:${op}`; }
 function setResp(table: string, op: Op, r: Resp) { responses[key(table, op)] = r; }
 
@@ -26,9 +29,9 @@ vi.mock("@/lib/supabase", () => {
     supabase: {
       from(table: string) {
         return {
-          select: () => makeChain(table, "select"),
+          select: () => { selects[table] = (selects[table] ?? 0) + 1; return makeChain(table, "select"); },
           insert: () => ({ ...makeChain(table, "insert"), select: () => makeChain(table, "insert") }),
-          update: () => makeChain(table, "update"),
+          update: (payload: unknown) => { updates.push({ table, payload }); return makeChain(table, "update"); },
           delete: () => makeChain(table, "delete"),
         };
       },
@@ -36,12 +39,16 @@ vi.mock("@/lib/supabase", () => {
   };
 });
 
-import { useWatchStore } from "./useWatchStore";
+import { useWatchStore, RELER_DEPOIS_DE_MS, RELER_ESPERA_MS } from "./useWatchStore";
+import { comecouEscrita, terminouEscrita, zerarEscritas } from "@/lib/escritasBanco";
 
 const USER = "user-1";
 
 beforeEach(() => {
   for (const k in responses) delete responses[k];
+  updates.length = 0;
+  for (const k in selects) delete selects[k];
+  zerarEscritas();
   // Desde a W1 do raio-x o store nasce da biblioteca guardada no aparelho: sem limpar, o teste seguinte começava com
   // `loading=false` e a biblioteca do anterior, e a resposta do banco chegava DEPOIS (falhava às vezes: deleteSection e
   // o das listas memorizadas).
@@ -166,5 +173,112 @@ describe("useWatchStore", () => {
     expect(result.current.data.sections.find(s => s.id === "sec")).toBeUndefined();
     expect(result.current.data.items.find(i => i.id === "i1")).toBeUndefined();
     expect(result.current.data.items.find(i => i.id === "i2")).toBeDefined();
+  });
+
+  // ── Minuto onde parou em todos os aparelhos (09/11/2026) ──
+  const fichaReZero = (progress: unknown) => ({
+    id: "rz", user_id: USER, section_id: null, title: "Re:ZERO", type: "series", total_duration: null, watched_duration: 0,
+    completed: false, comment: null, last_watched_at: "2026-11-08T05:53:19Z", created_at: "2026-06-15", tmdb_id: 65942,
+    seasons: [{ id: "t1", number: 1, totalEpisodes: 85, watchedEpisodes: 27, episodeDuration: 25, watchedList: Array.from({ length: 27 }, (_, i) => i + 1) }],
+    progress,
+  });
+  const comBiblioteca = (progress: unknown) => {
+    setResp("wm_sections", "select", { data: [{ id: "sec", user_id: USER, name: "S", icon: "📁", created_at: "2025-01-01" }], error: null });
+    setResp("wm_items", "select", { data: [fichaReZero(progress)], error: null });
+  };
+  const visibilidade = (v: "hidden" | "visible") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => v });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  it("lê o ponto do banco (progress) e descarta o torto", async () => {
+    comBiblioteca({ s: 1, e: 28, pos: 851000, dur: 1420000, ts: 1762582320000 });
+    const { result } = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data.items[0].progress).toEqual({ s: 1, e: 28, pos: 851000, dur: 1420000, ts: 1762582320000 });
+
+    localStorage.clear();
+    comBiblioteca({ s: "1" });
+    const outro = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(outro.result.current.loading).toBe(false));
+    expect(outro.result.current.data.items[0].progress).toBeNull();
+  });
+
+  it("salvarProgresso grava SÓ a coluna progress, no máximo a cada 30 s, e sempre ao fechar o player", async () => {
+    comBiblioteca(null);
+    const { result } = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const ponto = (pos: number) => ({ s: 1, e: 28, pos, ts: 1 });
+
+    act(() => { result.current.salvarProgresso("rz", ponto(10_000)); });
+    act(() => { result.current.salvarProgresso("rz", ponto(15_000)); });          // 5 s depois: espera
+    expect(updates).toEqual([{ table: "wm_items", payload: { progress: ponto(10_000) } }]);
+    act(() => { result.current.salvarProgresso("rz", ponto(20_000), true); });    // fechou o player: grava
+    expect(updates.length).toBe(2);
+    expect(updates[1].payload).toEqual({ progress: ponto(20_000) });
+  });
+
+  it("o fechar do player (sem duração) leva a duração da gravação anterior do mesmo episódio", async () => {
+    comBiblioteca(null);
+    const { result } = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => { result.current.salvarProgresso("rz", { s: 1, e: 3, pos: 10_000, dur: 1_507_008, ts: 1 }); });
+    act(() => { result.current.salvarProgresso("rz", { s: 1, e: 3, pos: 86_423, ts: 2 }, true); });
+    expect(updates[1].payload).toEqual({ progress: { s: 1, e: 3, pos: 86_423, dur: 1_507_008, ts: 2 } });
+    act(() => { result.current.salvarProgresso("rz", { s: 1, e: 4, pos: 9_000, ts: 3 }, true); });   // outro ep: não herda
+    expect(updates[2].payload).toEqual({ progress: { s: 1, e: 4, pos: 9_000, ts: 3 } });
+  });
+
+  describe("relê a biblioteca ao voltar pra tela", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      visibilidade("visible");
+    });
+
+    it("depois de 1 min fora → relê do banco (outro aparelho pode ter andado)", async () => {
+      comBiblioteca(null);
+      const { result } = renderHook(() => useWatchStore(USER));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(selects.wm_items).toBe(1);
+
+      vi.useFakeTimers({ now: Date.now() });
+      visibilidade("hidden");
+      vi.advanceTimersByTime(RELER_DEPOIS_DE_MS + 1000);
+      comBiblioteca({ s: 1, e: 28, pos: 851000, ts: 99 });                        // a Fire TV gravou enquanto isso
+      visibilidade("visible");
+      await act(async () => { await vi.advanceTimersByTimeAsync(RELER_ESPERA_MS + 10); });
+      expect(selects.wm_items).toBe(2);
+      expect(result.current.data.items[0].progress).toEqual({ s: 1, e: 28, pos: 851000, ts: 99 });
+    });
+
+    it("menos de 1 min fora → não relê", async () => {
+      comBiblioteca(null);
+      const { result } = renderHook(() => useWatchStore(USER));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      vi.useFakeTimers({ now: Date.now() });
+      visibilidade("hidden");
+      vi.advanceTimersByTime(10_000);
+      visibilidade("visible");
+      await act(async () => { await vi.advanceTimersByTimeAsync(RELER_ESPERA_MS * 3); });
+      expect(selects.wm_items).toBe(1);
+    });
+
+    it("com gravação em andamento espera ela terminar (não traz a lista sem o ✓ que acabou de entrar)", async () => {
+      comBiblioteca(null);
+      const { result } = renderHook(() => useWatchStore(USER));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      vi.useFakeTimers({ now: Date.now() });
+      visibilidade("hidden");
+      vi.advanceTimersByTime(RELER_DEPOIS_DE_MS + 1000);
+      comecouEscrita();                                                          // o ✓ do player fechando, ainda no ar
+      visibilidade("visible");
+      await act(async () => { await vi.advanceTimersByTimeAsync(RELER_ESPERA_MS + 10); });
+      expect(selects.wm_items).toBe(1);
+      terminouEscrita();
+      await act(async () => { await vi.advanceTimersByTimeAsync(RELER_ESPERA_MS + 10); });
+      expect(selects.wm_items).toBe(2);
+    });
   });
 });

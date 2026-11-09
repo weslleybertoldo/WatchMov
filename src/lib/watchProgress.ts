@@ -1,5 +1,5 @@
 import { WatchItem, Season } from '@/types/watch';
-import { latestPosition } from '@/lib/streamCache';
+import { posicaoAtual } from '@/lib/progressoRemoto';
 
 // Episódios assistidos de uma temporada. Compat: itens antigos só têm a contagem
 // sequencial (watchedEpisodes), então deriva 1..N quando não há watchedList.
@@ -103,10 +103,10 @@ export function fmtClock(ms: number): string {
 }
 
 // Progresso do "Continuar assistindo": barra + tempo (posição / duração) do episódio
-// ou filme atual. Usa posição/duração REAIS do player (streamCache); filme sem
-// streamCache cai pro store. Retorna null (sem barra) quando não há posição confiável.
+// ou filme atual. Usa posição/duração REAIS do player (streamCache, ou o ponto do banco quando outro aparelho tocou
+// depois — 09/11/2026); filme sem nenhum dos dois cai pro store. Retorna null (sem barra) quando não há posição confiável.
 export function continueProgress(item: WatchItem): { pct: number; label: string } | null {
-  const latest = latestPosition(item.tmdbId);
+  const latest = posicaoAtual(item);
   let posMs = 0, durMs = 0;
   if (latest && latest.positionMs > 0) {
     posMs = latest.positionMs;
@@ -126,11 +126,11 @@ export function continueProgress(item: WatchItem): { pct: number; label: string 
 }
 
 // Legenda do card "Continuar assistindo" (séries): "EP 5/12 | Temporada 4".
-// Usa o episódio EM ANDAMENTO (streamCache), não só o marcado como assistido —
+// Usa o episódio EM ANDAMENTO (este aparelho ou o ponto do banco, o mais novo), não só o marcado como assistido —
 // assim aparece já ao começar a assistir. Fallback = último ep marcado.
 export function continueLabel(item: WatchItem): string | undefined {
   if (item.type !== 'series') return undefined;
-  const latest = latestPosition(item.tmdbId);
+  const latest = posicaoAtual(item);
   const ls = lastStopped(item);
   const season = latest ? latest.season : ls?.season;
   const episode = latest ? latest.episode : ls?.episode;

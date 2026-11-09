@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { MediaSummary, getDetails, getSeasonEpisodes, getRecommendations, chaveTmdb, type TmdbDetails, type TmdbEpisodeInfo, type TmdbCollectionRef } from '@/lib/tmdb';
-import { WatchItem, Season } from '@/types/watch';
+import { WatchItem, Season, ProgressoRemoto } from '@/types/watch';
 import { generateId } from '@/store/useWatchStore';
 import { formatRating, upcomingLabel } from '@/lib/formatters';
 import { pageCount, pageEpisodes, pageLabel, pageOfEpisode, defaultPage, loadEpisodePage, saveEpisodePage, seasonDone, loadSeason, saveSeason } from '@/lib/episodePages';
@@ -9,7 +9,8 @@ import VideoPlayer from '@/components/VideoPlayer';
 import { useAndroidBackButton } from '@/hooks/use-android-back';
 import { ArrowLeft, Play, Check, CheckCheck, Eye, Star, Loader2, DownloadCloud, AlertCircle, Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, CalendarClock, Cast, Folder } from 'lucide-react';
 import { episodesWatched, isEpisodeWatched, lastStopped, continueLabel, continueProgress, continuarDe, proximoEpisodio } from '@/lib/watchProgress';
-import { latestPosition, posicoesDaSerie } from '@/lib/streamCache';
+import { latestPosition } from '@/lib/streamCache';
+import { adotarProgressoRemoto, posicaoAtual, posicoesComRemoto } from '@/lib/progressoRemoto';
 import { montarSerie } from '@/lib/episodiosPlayer';
 import { useDownloads, useDownloadList, movieKey, epKey, watchProgressOf, playDownloaded } from '@/lib/downloads';
 import { useMp4All } from '@/lib/mp4Download';
@@ -19,7 +20,7 @@ import { useNotify, setNotify } from '@/lib/notifications';
 import { fichaDaBiblioteca } from '@/lib/favorites';
 import { gravarFavorito } from '@/lib/gravarFavorito';
 import MediaCard, { isUpcoming, isNew } from '@/components/streaming/MediaCard';
-import type { CastNow } from '@/lib/nativePlayer';
+import { clearResumeNative, type CastNow } from '@/lib/nativePlayer';
 import { isTv } from '@/lib/device';
 import SendToTvDialog from '@/components/streaming/SendToTvDialog';
 import CastRow from '@/components/streaming/CastRow';
@@ -34,6 +35,7 @@ interface StoreLike {
   updateItem: (id: string, updates: Partial<WatchItem>) => void;
   incrementEpisode: (itemId: string, seasonId: string) => void;
   setEpisodeWatched: (itemId: string, seasonNumber: number, episode: number, watched: boolean) => void;
+  salvarProgresso: (itemId: string, p: ProgressoRemoto, final?: boolean) => void;
 }
 
 // Anel de progresso do download (amarelo), no card do episódio. Sem % conhecido — fila — gira devagar.
@@ -261,6 +263,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   // tela do provedor — que é justamente o que baixar deveria evitar.
   const playMovie = async () => {
     const it = await ensureLib(); markWatched(it);
+    // Outro aparelho parou o filme num ponto mais novo → o player abre ali (09/11/2026).
+    const doBanco = liveItemRef.current ?? it;
+    adotarProgressoRemoto(doBanco, media.tmdbId, 'movie', 0, 0, !!doBanco?.completed, clearResumeNative);
     const k = movieKey(media.tmdbId);
     // Só cai no servidor se o arquivo não abrir de fato (ex. MP4 apagado por fora).
     if (dls.has(k) && await playDownloaded(k)) return;
@@ -269,6 +274,9 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   const playEpisode = async (seasonNum: number, ep: number) => {
     const it = await ensureLib();
     markWatched(it); // entra em "Continuar assistindo"; NÃO marca assistido (só faltando 1 min ou manual)
+    // Outro aparelho parou este episódio num ponto mais novo → o player abre ali (09/11/2026).
+    const doBanco = liveItemRef.current ?? it;
+    adotarProgressoRemoto(doBanco, media.tmdbId, 'tv', seasonNum, ep, isEpisodeWatched(doBanco, seasonNum, ep), clearResumeNative);
     const k = epKey(media.tmdbId, seasonNum, ep);
     if (dls.has(k) && await playDownloaded(k)) return;
     setPlayer({ season: seasonNum, episode: ep });
@@ -290,7 +298,8 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
   // Botão principal = servidores embed (filme retoma via resumeAt; série abre onde parou — `continuarDe`: o ep em
   // andamento ou o seguinte ao último assistido, mesmo com um sem ✓ lá atrás).
   const playMain = async () => {
-    if (isSeries) { const c = continuarDe(liveItem, latestPosition(media.tmdbId)); await playEpisode(c.season, c.episode); }
+    // Em andamento = o ponto mais novo entre este aparelho e o banco (outro aparelho pode ter tocado depois; 09/11/2026).
+    if (isSeries) { const c = continuarDe(liveItem, posicaoAtual(liveItem) ?? latestPosition(media.tmdbId)); await playEpisode(c.season, c.episode); }
     else { await playMovie(); }
   };
 
@@ -346,6 +355,18 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
     const mins = Math.min(Math.round(secs / 60), libItem.totalDuration || Infinity);
     store.updateItem(libItem.id, { watchedDuration: mins, lastWatchedAt: new Date().toISOString() });
   };
+  // O minuto onde parou vai pro banco e vale nos outros aparelhos (pedido dele 09/11/2026, filme e série). O store
+  // grava no máximo a cada 30 s (e quando o player fecha).
+  const onPosicao = (p: { season?: number; episode?: number; positionMs: number; durationMs?: number; final: boolean }) => {
+    const it = liveItemRef.current;
+    if (!it) return;
+    const s = isSeries ? (p.season ?? 0) : 0;
+    const e = isSeries ? (p.episode ?? 0) : 0;
+    if (isSeries && !(s > 0 && e > 0)) return;
+    const ponto: ProgressoRemoto = { s, e, pos: Math.round(p.positionMs), ts: Date.now() };
+    if (p.durationMs && p.durationMs > 0) ponto.dur = Math.round(p.durationMs);
+    store.salvarProgresso(it.id, ponto, p.final);
+  };
   const onMovieCompleted = () => {
     if (libItem) store.updateItem(libItem.id, { completed: true, watchedDuration: libItem.totalDuration, lastWatchedAt: new Date().toISOString() });
     setPlayer(null);
@@ -396,7 +417,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
         chave: chaveTmdb(),
         temporadas,
         vistos: n => { const live = liveItemRef.current?.seasons?.find(x => x.number === n); return live ? episodesWatched(live) : []; },
-        posicoes: posicoesDaSerie(media.tmdbId),
+        posicoes: posicoesComRemoto(liveItemRef.current, media.tmdbId),
       }));
     },
     tocar: (s: number, e: number) => { playEpisode(s, e); },
@@ -746,6 +767,7 @@ export default function MediaDetail({ media, store, onBack, onOpen, onOpenCollec
           onNext={isSeries && hasNextEp ? onSeriesNext : undefined}
           episodios={episodiosDoPlayer}
           onProgress={!isSeries ? onMovieProgress : undefined}
+          onPosicao={onPosicao}
           onCompleted={isSeries ? onSeriesCompleted : onMovieCompleted}
         />
       )}

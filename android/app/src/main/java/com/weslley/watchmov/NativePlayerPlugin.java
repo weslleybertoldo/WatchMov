@@ -93,7 +93,7 @@ public class NativePlayerPlugin extends Plugin {
             call.getString("title"), toArray(call.getArray("urls", null)),
             toArray(call.getArray("mimes", null)), toArray(call.getArray("qualities", null)),
             Boolean.TRUE.equals(call.getBoolean("hasNext", false)), call.getString("key"),
-            call.getLong("startMs", 0L),
+            MsDoJs.de(call.getData().opt("startMs")),   // getLong virava 0 com número que cabe em int (MsDoJs)
             Boolean.TRUE.equals(call.getBoolean("offline", false)),
             Boolean.TRUE.equals(call.getBoolean("watched", false)),
             Boolean.TRUE.equals(call.getBoolean("downloaded", false)), call.getString("fonte"));
@@ -229,7 +229,8 @@ public class NativePlayerPlugin extends Plugin {
         intent.putExtra(PlayerActivity.EXTRA_UA, call.getString("ua"));
         intent.putExtra(PlayerActivity.EXTRA_MIME, call.getString("mime"));
         intent.putExtra(PlayerActivity.EXTRA_TITLE, call.getString("title"));
-        intent.putExtra(PlayerActivity.EXTRA_START_MS, call.getLong("startMs", 0L));
+        // getLong do Capacitor virava 0 com número que cabe em int: o player nunca recebia o ponto do app (MsDoJs, 09/11/2026).
+        intent.putExtra(PlayerActivity.EXTRA_START_MS, MsDoJs.de(call.getData().opt("startMs")));
         intent.putExtra(PlayerActivity.EXTRA_KEY, call.getString("key"));
         intent.putExtra(PlayerActivity.EXTRA_IMDB, call.getString("imdbId"));
         intent.putExtra(PlayerActivity.EXTRA_HAS_NEXT, Boolean.TRUE.equals(call.getBoolean("hasNext", false)));

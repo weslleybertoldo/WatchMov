@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { comecouEscrita, ehEscritaNoBanco, terminouEscrita } from "@/lib/escritasBanco";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -54,9 +55,26 @@ function createResilientFetch(retries = 2, timeout = 15000) {
   };
 }
 
+type Busca = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+// Conta as gravações em andamento (src/lib/escritasBanco.ts): o store só relê a biblioteca sem nenhuma no meio.
+function contandoEscritas(f: Busca): Busca {
+  return async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const metodo = init?.method ?? (typeof Request !== "undefined" && input instanceof Request ? input.method : undefined);
+    if (!ehEscritaNoBanco(url, metodo)) return f(input, init);
+    comecouEscrita();
+    try {
+      return await f(input, init);
+    } finally {
+      terminouEscrita();
+    }
+  };
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
-    fetch: createResilientFetch(2, 15000),
+    fetch: contandoEscritas(createResilientFetch(2, 15000)),
     headers: { "x-schema": DB_SCHEMA },
   },
   db: { schema: DB_SCHEMA as "public" },
