@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { PROVIDERS, rotuloDaFonte, type PlayerTarget } from '@/lib/players';
 import { formatPosicao } from '@/lib/formatters';
 import { watchStream, isNative, type SniffResult } from '@/lib/streamSniffer';
-import { getEntry, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl, isExpiredUrl, canRecaptureAgain } from '@/lib/streamCache';
+import { getEntry, getPosition, addStreams, setChosen, setServerMode, setStreamPosition, streamKey, qualityFromUrl, removeStream, markNativeMode, isEphemeralUrl, isExpiredUrl, canRecaptureAgain } from '@/lib/streamCache';
 import { mergeCaptured, withCompletos, pickAutoOpen, isTrackOnly } from '@/lib/capturedList';
 import { startResolver, stopResolver, resolverEnabled, resolverOnCooldown, resolverCooldownUntil, noteResolverResult, clearResolverCooldown, resolverSkipReason, budgetFor, onResolverEvent, pickResolverOption, proximaFonte, type ResolverSkip, type ResolverEvent } from '@/lib/resolver';
 import { resolverSerieFshd, FSHD_PRAZO_MS } from '@/lib/fshdApi';
@@ -683,7 +683,8 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       if (res.positionMs > 0) {
         setStreamPosition(res.positionMs, ep.tmdbId, ep.type, ep.season, ep.episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
-        onPosicaoRef.current?.({ season: ep.season, episode: ep.episode, positionMs: res.positionMs, final: true });
+        onPosicaoRef.current?.({ season: ep.season, episode: ep.episode, positionMs: res.positionMs, final: true,
+          durationMs: getPosition(ep.tmdbId, ep.type, ep.season, ep.episode)?.durationMs });
       }
       // Link venceu/caiu no meio do filme (403/410/prazo da URL, ou nenhum link da lista tocou): pega link
       // NOVO pelo resolvedor e reabre na posição salva acima (espelhando, o player reabre já mandando pra TV).

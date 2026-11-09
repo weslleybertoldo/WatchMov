@@ -218,6 +218,17 @@ describe("useWatchStore", () => {
     expect(updates[1].payload).toEqual({ progress: ponto(20_000) });
   });
 
+  it("o fechar do player (sem duração) leva a duração da gravação anterior do mesmo episódio", async () => {
+    comBiblioteca(null);
+    const { result } = renderHook(() => useWatchStore(USER));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => { result.current.salvarProgresso("rz", { s: 1, e: 3, pos: 10_000, dur: 1_507_008, ts: 1 }); });
+    act(() => { result.current.salvarProgresso("rz", { s: 1, e: 3, pos: 86_423, ts: 2 }, true); });
+    expect(updates[1].payload).toEqual({ progress: { s: 1, e: 3, pos: 86_423, dur: 1_507_008, ts: 2 } });
+    act(() => { result.current.salvarProgresso("rz", { s: 1, e: 4, pos: 9_000, ts: 3 }, true); });   // outro ep: não herda
+    expect(updates[2].payload).toEqual({ progress: { s: 1, e: 4, pos: 9_000, ts: 3 } });
+  });
+
   describe("relê a biblioteca ao voltar pra tela", () => {
     afterEach(() => {
       vi.useRealTimers();

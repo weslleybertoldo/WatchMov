@@ -366,8 +366,12 @@ export function useWatchStore(userId?: string) {
   const ultimaGravacaoRef = useRef<Map<string, UltimaGravacao>>(new Map());
   const salvarProgresso = useCallback((itemId: string, p: ProgressoRemoto, final = false) => {
     const agora = Date.now();
-    if (!deveGravar(ultimaGravacaoRef.current.get(itemId), p, agora, final)) return;
-    ultimaGravacaoRef.current.set(itemId, { s: p.s, e: p.e, pos: p.pos, em: agora });
+    const ultima = ultimaGravacaoRef.current.get(itemId);
+    if (!deveGravar(ultima, p, agora, final)) return;
+    // O fechar do player não traz a duração: fica a da última gravação do mesmo episódio (sem ela, a barra do outro
+    // aparelho ficava vazia e só o tempo aparecia).
+    if (!p.dur && ultima?.dur && ultima.s === p.s && ultima.e === p.e) p = { ...p, dur: ultima.dur };
+    ultimaGravacaoRef.current.set(itemId, { s: p.s, e: p.e, pos: p.pos, em: agora, dur: p.dur });
     void supabase.from('wm_items').update({ progress: p }).eq('id', itemId).then(({ error }) => {
       if (error) console.warn('[WatchStore] salvar progresso:', error.message);
     });

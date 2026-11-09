@@ -22,7 +22,7 @@ export function normalizarProgresso(raw: unknown): ProgressoRemoto | null {
   return p;
 }
 
-export interface UltimaGravacao { s: number; e: number; pos: number; em: number }
+export interface UltimaGravacao { s: number; e: number; pos: number; em: number; dur?: number }
 
 /**
  * Grava agora? Trocou de episódio = sim; parado no mesmo ponto (pausa) = não; senão no máximo a cada 30 s — e sempre que
