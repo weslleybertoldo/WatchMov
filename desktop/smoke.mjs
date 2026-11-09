@@ -1189,9 +1189,11 @@ async function cenarioFim(app, w, print) {
     await w.locator('button[title="Painel"]').click();
     await w.getByRole('heading', { name: 'Painel' }).waitFor({ timeout: 15000 });
     if (await w.locator('[data-acao="baixar-app-windows"]').count()) throw new Error('o "Baixar o app para Windows" apareceu dentro do app');
+    await w.waitForTimeout(800);   // a tela entra com animação: o print espera ela assentar
     await print('tela-08-painel.png');
     await w.getByRole('button', { name: /^Download$/ }).click();
     await w.locator('[data-pasta-downloads]').waitFor({ timeout: 15000 });
+    await w.waitForTimeout(800);
     await print('tela-09-download.png');
     await w.locator('button[title="Painel"]').click();
     await w.getByRole('button', { name: /^Bugs$/ }).click();
