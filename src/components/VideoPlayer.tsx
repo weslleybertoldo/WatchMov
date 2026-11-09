@@ -64,6 +64,9 @@ interface VideoPlayerProps {
   posterUrl?: string;
   resumeAt?: number;          // segundos (só VidAPI usa)
   onProgress?: (seconds: number) => void;
+  // Ponto tocado (a cada ~5 s no player do APK/Windows e `final` ao fechar) → o minuto onde parou vai pro banco e vale
+  // nos outros aparelhos (09/11/2026). `season`/`episode` = do episódio que estava tocando.
+  onPosicao?: (p: { season?: number; episode?: number; positionMs: number; durationMs?: number; final: boolean }) => void;
   onCompleted?: () => void;
   watched?: boolean;               // assistido (episódio atual ou filme)
   onSetWatched?: (v: boolean) => void;  // define a marcação de assistido (true/false)
@@ -79,7 +82,10 @@ interface VideoPlayerProps {
 }
 
 export default function VideoPlayer(props: VideoPlayerProps) {
-  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, onProgress, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext, episodios } = props;
+  const { open, onClose, tmdbId, imdbId, type, season, episode, title, posterUrl, resumeAt, onProgress, onPosicao, onCompleted, watched, onSetWatched, onSetWatchedFor, onNext, episodios } = props;
+  // Por ref: o listener do progresso é registrado UMA vez por episódio (re-registrar a cada render perdia eventos).
+  const onPosicaoRef = useRef(onPosicao);
+  onPosicaoRef.current = onPosicao;
   const lastSavedRef = useRef(0);
   const completedRef = useRef(false);
   const [castOpen, setCastOpen] = useState(false);
@@ -677,6 +683,7 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       if (res.positionMs > 0) {
         setStreamPosition(res.positionMs, ep.tmdbId, ep.type, ep.season, ep.episode);
         onProgress?.(Math.floor(res.positionMs / 1000));
+        onPosicaoRef.current?.({ season: ep.season, episode: ep.episode, positionMs: res.positionMs, final: true });
       }
       // Link venceu/caiu no meio do filme (403/410/prazo da URL, ou nenhum link da lista tocou): pega link
       // NOVO pelo resolvedor e reabre na posição salva acima (espelhando, o player reabre já mandando pra TV).
@@ -728,7 +735,10 @@ export default function VideoPlayer(props: VideoPlayerProps) {
       // trocou season/episode — sem esse guard, o ep novo abria em 30/47min.
       const cur = ownStreamRef.current?.url;
       if (cur && url && streamKey(url) !== streamKey(cur)) return;
-      if (positionMs > 0) setStreamPosition(positionMs, tmdbId, type, season, episode, durationMs);
+      if (positionMs > 0) {
+        setStreamPosition(positionMs, tmdbId, type, season, episode, durationMs);
+        onPosicaoRef.current?.({ season, episode, positionMs, durationMs, final: false });
+      }
     })?.then(h => { handle = h; });
     return () => { handle?.remove(); };
   }, [open, tmdbId, type, season, episode]);

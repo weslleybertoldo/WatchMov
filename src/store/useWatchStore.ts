@@ -1,7 +1,11 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { AppData, Section, WatchItem, Season, DashboardStats } from '@/types/watch';
+import { AppData, Section, WatchItem, Season, DashboardStats, ProgressoRemoto } from '@/types/watch';
 import { supabase } from '@/lib/supabase';
 import { escondidoDoContinuar, isSeriesFinished } from '@/lib/watchProgress';
+import { deveGravar, normalizarProgresso, type UltimaGravacao } from '@/lib/progressoRemoto';
+import { escritasDoBanco } from '@/lib/escritasBanco';
+import { paginaVisivel } from '@/hooks/use-pagina-visivel';
+import { PLAYER_NATIVO_EVENTO } from '@/lib/nativePlayer';
 import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
 
@@ -32,6 +36,7 @@ interface DbItemRow {
   comment: string | null;
   last_watched_at: string | null;
   continue_hidden_at?: string | null;
+  progress?: unknown;
   created_at: string;
   tmdb_id: number | null;
   imdb_id: string | null;
@@ -65,6 +70,7 @@ function dbItemToLocal(row: DbItemRow): WatchItem {
     comment: row.comment ?? undefined,
     lastWatchedAt: row.last_watched_at ?? undefined,
     continueHiddenAt: row.continue_hidden_at ?? undefined,
+    progress: normalizarProgresso(row.progress),
     createdAt: row.created_at,
     tmdbId: row.tmdb_id ?? undefined,
     imdbId: row.imdb_id ?? undefined,
@@ -109,6 +115,10 @@ function writeCache(userId: string, d: AppData) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify({ userId, ...d })); } catch { /* quota */ }
 }
 
+// Releitura da biblioteca ao voltar pra tela (minuto onde parou em todos os aparelhos, 09/11/2026).
+export const RELER_DEPOIS_DE_MS = 60_000;   // só depois de 1 min fora
+export const RELER_ESPERA_MS = 3_000;       // espera assentar (o player fechando grava ✓/posição) e entre tentativas
+
 const DEFAULT_SECTIONS = [
   { name: 'Filmes', icon: '🎬' },
   { name: 'Series', icon: '📺' },
@@ -133,8 +143,9 @@ export function useWatchStore(userId?: string) {
   }, [data.items]);
 
   // ── Load from Supabase ──
-  const loadFromDB = useCallback(async () => {
-    if (!userId) return;
+  // `descartar` (releitura ao voltar pra tela): perguntado quando a resposta chega — true = joga fora (gravou algo no meio).
+  const loadFromDB = useCallback(async (opts?: { descartar?: () => boolean }): Promise<boolean> => {
+    if (!userId) return false;
 
     // Hidrata do cache ANTES da rede: offline a home/continuar assistindo aparecem.
     // (Na 1ª carga do mesmo usuário ele já entrou no 1º desenho — não troca o objeto à toa.)
@@ -152,7 +163,9 @@ export function useWatchStore(userId?: string) {
     if (itemRes.error) reportDbError('carregar itens', itemRes.error);
 
     // Falhou a rede: mantém o que veio do cache (não zera a tela).
-    if ((secRes.error || itemRes.error) && cached) { setLoading(false); return; }
+    if ((secRes.error || itemRes.error) && cached) { setLoading(false); return false; }
+    // Releitura: algo gravou enquanto lia → a resposta pode estar sem essa gravação; fica o que está na tela.
+    if (opts?.descartar?.()) return false;
 
     let sections = (secRes.data || []).map(dbSectionToLocal);
     const items = (itemRes.data || []).map(dbItemToLocal);
@@ -170,8 +183,15 @@ export function useWatchStore(userId?: string) {
     }
 
     loadedRef.current = true;
-    setData({ sections, items });
+    if (opts?.descartar) {
+      // Releitura: igual ao que está na tela = mesmo estado (não redesenha as fileiras; a TV tem 1 GB).
+      setData(prev => (JSON.stringify(prev.items) === JSON.stringify(items) && JSON.stringify(prev.sections) === JSON.stringify(sections))
+        ? prev : { sections, items });
+    } else {
+      setData({ sections, items });
+    }
     setLoading(false);
+    return true;
   }, [userId]);
 
   // Espelha a biblioteca no cache local a cada mudança (inclui progresso/assistido)
@@ -337,6 +357,55 @@ export function useWatchStore(userId?: string) {
     writeQueueRef.current.set(itemId, next);
     return next;
   }, []);
+
+  // ── Minuto onde parou em todos os aparelhos (pedido dele 09/11/2026) ──
+  // Grava só a coluna `progress` (nunca o `seasons`: não disputa com as marcações) e sem mexer na tela — o ponto deste
+  // aparelho já está no streamCache e é mais novo que o da memória. No máximo uma vez a cada 30 s por título
+  // (`deveGravar`); `final` = o player fechou. Falha (sem internet) só vai pro console: é melhor esforço, e a próxima
+  // gravação leva o ponto novo.
+  const ultimaGravacaoRef = useRef<Map<string, UltimaGravacao>>(new Map());
+  const salvarProgresso = useCallback((itemId: string, p: ProgressoRemoto, final = false) => {
+    const agora = Date.now();
+    if (!deveGravar(ultimaGravacaoRef.current.get(itemId), p, agora, final)) return;
+    ultimaGravacaoRef.current.set(itemId, { s: p.s, e: p.e, pos: p.pos, em: agora });
+    void supabase.from('wm_items').update({ progress: p }).eq('id', itemId).then(({ error }) => {
+      if (error) console.warn('[WatchStore] salvar progresso:', error.message);
+    });
+  }, []);
+
+  // Voltou pra tela depois de 1 min fora (app no fundo ou player nativo na frente) → relê a biblioteca: outro aparelho
+  // pode ter andado (o minuto onde parou, os ✓). Antes ela só era lida ao abrir o app do zero — o app aberto no fundo
+  // ficava com a lista velha. Nunca no meio de uma gravação (a resposta podia vir sem ela e a próxima marcação regravaria
+  // o `seasons` sem o ✓): espera 3 s, confere de novo e tenta até 5 vezes.
+  useEffect(() => {
+    if (!userId) return;
+    let foraDesde = paginaVisivel() ? 0 : Date.now();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const livre = () => escritasDoBanco().emVoo === 0 && writeQueueRef.current.size === 0;
+    const tentar = (n: number) => {
+      timer = null;
+      if (!paginaVisivel()) return;
+      const antes = escritasDoBanco().total;
+      const repetir = () => { if (n < 5) timer = setTimeout(() => tentar(n + 1), RELER_ESPERA_MS); };
+      if (!livre()) { repetir(); return; }
+      void loadFromDB({ descartar: () => !livre() || escritasDoBanco().total !== antes }).then(ok => { if (!ok) repetir(); });
+    };
+    const mudou = () => {
+      if (!paginaVisivel()) { if (!foraDesde) foraDesde = Date.now(); return; }
+      if (!foraDesde) return;
+      const fora = Date.now() - foraDesde;
+      foraDesde = 0;
+      if (fora < RELER_DEPOIS_DE_MS || timer) return;
+      timer = setTimeout(() => tentar(1), RELER_ESPERA_MS);
+    };
+    document.addEventListener('visibilitychange', mudou);
+    window.addEventListener(PLAYER_NATIVO_EVENTO, mudou);
+    return () => {
+      document.removeEventListener('visibilitychange', mudou);
+      window.removeEventListener(PLAYER_NATIVO_EVENTO, mudou);
+      if (timer) clearTimeout(timer);
+    };
+  }, [userId, loadFromDB]);
 
   const incrementEpisode = useCallback(async (itemId: string, seasonId: string) => {
     let updatedSeasons: Season[] | undefined;
@@ -663,6 +732,7 @@ export function useWatchStore(userId?: string) {
     resetSeason, resetItem,
     getStats,
     upsertLibraryItem,
+    salvarProgresso,
     continueWatching,
     myList,
   };

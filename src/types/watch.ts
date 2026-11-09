@@ -8,6 +8,16 @@ export interface Season {
   watchedList?: number[]; // números dos episódios marcados como assistidos
 }
 
+// Último ponto tocado de um título, guardado no banco (coluna `wm_items.progress`). Filme: s = e = 0.
+// pos/dur em ms; ts = epoch ms de quando aquele ponto tocou (relógio do aparelho que gravou).
+export interface ProgressoRemoto {
+  s: number;
+  e: number;
+  pos: number;
+  dur?: number;
+  ts: number;
+}
+
 export interface WatchItem {
   id: string;
   sectionId?: string; // opcional: itens de streaming (biblioteca) não têm seção
@@ -25,6 +35,9 @@ export interface WatchItem {
   // "Remover da lista" do Continuar assistindo (pedido dele 07/11/2026): quando saiu da fileira. Volta sozinho quando
   // ele assiste de novo (lastWatchedAt mais novo); o progresso e os episódios marcados não mudam.
   continueHiddenAt?: string | null;
+  // Minuto onde parou, valendo em todos os aparelhos (pedido dele 09/11/2026): o último ponto tocado do título, de
+  // qualquer aparelho (coluna `progress`). Ver src/lib/progressoRemoto.ts.
+  progress?: ProgressoRemoto | null;
   createdAt: string;
   // TMDB metadata
   tmdbId?: number;
