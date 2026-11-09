@@ -2,6 +2,7 @@
 // PlayerActivity.java), pra o PC se comportar igual: pular abertura/resumo, contagem do próximo episódio, assistido,
 // teclado, qualidade, áudio, legenda e quando pedir um link novo. Sem DOM: o componente (PlayerDesktop.tsx) só chama.
 import type { SerieDoPlayer } from '@/lib/episodiosPlayer';
+import { qualidadeDaImagem } from '@/lib/qualidade';
 import { isExpiredUrl } from '@/lib/streamCache';
 
 // ── marcas (abertura, resumo, créditos) ──────────────────────────────────────────────────────────────────────────────
@@ -140,14 +141,16 @@ export function acaoDaTecla(e: { key: string; ctrlKey?: boolean; altKey?: boolea
 
 // ── qualidade, áudio e legenda (faixas do hls.js) ────────────────────────────────────────────────────────────────────
 
-/** "Auto" + as alturas (maior primeiro, sem repetir). `indice` = o nível do hls.js (-1 = automático). */
-export function niveisDeQualidade(niveis: { height?: number }[]): { indice: number; rotulo: string }[] {
-  const vistos = new Set<number>();
+/** "Auto" + as qualidades (maior primeiro, sem repetir). `indice` = o nível do hls.js (-1 = automático). O rótulo é a
+ *  classe da imagem (1920×804 = "1080p", src/lib/qualidade.ts); dois níveis com o mesmo rótulo ficam só com o maior. */
+export function niveisDeQualidade(niveis: { height?: number; width?: number }[]): { indice: number; rotulo: string }[] {
+  const vistos = new Set<string>();
   const out = niveis
-    .map((n, indice) => ({ indice, h: n.height ?? 0 }))
-    .filter(({ h }) => h > 0 && !vistos.has(h) && (vistos.add(h), true))
+    .map((n, indice) => ({ indice, h: n.height ?? 0, rotulo: qualidadeDaImagem(n.width, n.height) }))
+    .filter(({ h }) => h > 0)
     .sort((a, b) => b.h - a.h)
-    .map(({ indice, h }) => ({ indice, rotulo: `${h}p` }));
+    .filter(({ rotulo }) => !vistos.has(rotulo) && (vistos.add(rotulo), true))
+    .map(({ indice, rotulo }) => ({ indice, rotulo }));
   return [{ indice: -1, rotulo: 'Auto' }, ...out];
 }
 

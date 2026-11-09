@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { chaveDoDownload, desktop, type EstadoTvDesktop, type TvDesktop } from '@/lib/desktop';
 import { enqueueDownload, useDownloadItem } from '@/lib/downloads';
+import { qualidadeDaImagem } from '@/lib/qualidade';
 import type { SerieDoPlayer } from '@/lib/episodiosPlayer';
 import {
   cabecalhosDaReproducao, ehHls, loaderPeloApp, type OpcoesPlayer, type PropsPlayerDesktop, type ResultadoPlayer,
@@ -95,7 +96,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   const [contagemSeg, setContagemSeg] = useState<number | null>(null);
   const [niveis, setNiveis] = useState<Faixa[]>([]);
   const [nivel, setNivel] = useState(-1);
-  const [altura, setAltura] = useState(0);
+  const [qualidadeAtual, setQualidadeAtual] = useState('');   // "1080p" pela classe da imagem (1920×804 também)
   const [audios, setAudios] = useState<Faixa[]>([]);
   const [audio, setAudio] = useState(-1);
   const [legendas, setLegendas] = useState<Faixa[]>([]);
@@ -265,8 +266,8 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   function emitirQualidade() {
     const v = videoRef.current;
     if (!v?.videoHeight) return;
-    setAltura(v.videoHeight);
-    const q = `${v.videoHeight}p`;
+    const q = qualidadeDaImagem(v.videoWidth, v.videoHeight);
+    setQualidadeAtual(q);
     if (q === qualidadeRef.current) return;
     qualidadeRef.current = q;
     emitir('playerQuality', { url: linkRef.current.url, quality: q });
@@ -293,7 +294,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
     linkRef.current = { url, mime };
     setLinkAtual(url);
     setCarregando(true);
-    setNiveis([]); setNivel(-1); setAltura(0);
+    setNiveis([]); setNivel(-1); setQualidadeAtual('');
     setAudios([]); setAudio(-1);
     setLegendas([]); setLegenda(-1);
     void desktop?.rede?.reproducao?.(cabecalhosDaReproducao(epRef.current));
@@ -323,7 +324,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
           setNiveis(niveisDeQualidade(h.levels).map(({ indice, rotulo }) => ({ indice, rotulo })));
           void v.play().catch(() => undefined);
         });
-        h.on(Hls.Events.LEVEL_SWITCHED, (_e, d) => setAltura(h.levels[d.level]?.height ?? 0));
+        h.on(Hls.Events.LEVEL_SWITCHED, (_e, d) => setQualidadeAtual(qualidadeDaImagem(h.levels[d.level]?.width, h.levels[d.level]?.height)));
         h.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => aplicarAudios(h));
         h.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => aplicarLegendas(h));
         h.on(Hls.Events.ERROR, (_e, d) => {
@@ -873,7 +874,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
   const urls = ep.urls ?? [];
   const pct = durMs > 0 ? Math.min(100, (posMs / durMs) * 100) : 0;
   const pctBuffer = durMs > 0 ? Math.min(100, (bufferMs / durMs) * 100) : 0;
-  const rotuloQualidade = nivel === -1 ? (altura ? `Auto (${altura}p)` : 'Auto') : niveis.find((n) => n.indice === nivel)?.rotulo ?? 'Auto';
+  const rotuloQualidade = nivel === -1 ? (qualidadeAtual ? `Auto (${qualidadeAtual})` : 'Auto') : niveis.find((n) => n.indice === nivel)?.rotulo ?? 'Auto';
   const visivel = controles || !tocando;
   const esmaecer = `transition-opacity duration-300 ${visivel ? 'opacity-100' : 'pointer-events-none opacity-0'}`;
   const trilha = '[&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white';
@@ -1048,7 +1049,7 @@ export function PlayerDesktop({ opts, emitir, temOuvinte, controle, aoFechar }: 
       )}
       {painel === 'qualidade' && (
         <Caixa titulo="Qualidade" voltar={() => mudarPainel('ajustes')} aoFechar={() => mudarPainel(null)}>
-          {niveis.map((n) => <Linha key={n.indice} rotulo={n.indice === -1 && altura ? `Auto (${altura}p)` : n.rotulo} marcado={n.indice === nivel} onClick={() => escolherNivel(n.indice)} />)}
+          {niveis.map((n) => <Linha key={n.indice} rotulo={n.indice === -1 && qualidadeAtual ? `Auto (${qualidadeAtual})` : n.rotulo} marcado={n.indice === nivel} onClick={() => escolherNivel(n.indice)} />)}
         </Caixa>
       )}
       {painel === 'audio' && (

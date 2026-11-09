@@ -107,10 +107,22 @@ export function cabecalho(h: Record<string, string> | undefined, nome: string): 
   return undefined;
 }
 
-/** Maior altura de imagem anunciada num master HLS (RESOLUTION=1920x1080 → "1080p"); "" sem nenhuma. */
+// Classe da imagem (09/11/2026): a altura que ela teria numa tela 16:9, no degrau padrão mais perto (até 7%) —
+// filme de cinema 1920×804 = 1080. Mesma regra de src/lib/qualidade.ts e do QualidadeDaImagem.java (APK); fica
+// copiada aqui porque o processo principal compila só a pasta desktop/.
+const DEGRAUS = [144, 240, 360, 480, 540, 576, 720, 1080, 1440, 2160, 4320];
+export function classeDaImagem(largura: number, altura: number): number {
+  if (!(altura > 0)) return 0;
+  const equivalente = largura > 0 ? Math.max(Math.min(largura, altura), (Math.max(largura, altura) * 9) / 16) : altura;
+  let perto = DEGRAUS[0];
+  for (const d of DEGRAUS) if (Math.abs(d - equivalente) < Math.abs(perto - equivalente)) perto = d;
+  return Math.abs(perto - equivalente) <= perto * 0.07 ? perto : Math.round(equivalente);
+}
+
+/** Maior classe de imagem anunciada num master HLS (RESOLUTION=1920x804 → "1080p"); "" sem nenhuma. */
 export function qualidadeDoMaster(texto: string): string {
   let max = 0;
-  for (const m of texto.matchAll(/RESOLUTION=\d{2,4}x(\d{2,4})/g)) max = Math.max(max, Number(m[1]));
+  for (const m of texto.matchAll(/RESOLUTION=(\d{2,4})x(\d{2,4})/g)) max = Math.max(max, classeDaImagem(Number(m[1]), Number(m[2])));
   return max > 0 ? `${max}p` : '';
 }
 

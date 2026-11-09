@@ -1,4 +1,5 @@
 import { CapacitorHttp, Capacitor } from '@capacitor/core';
+import { qualidadeDaImagem } from './qualidade';
 import type { SniffResult } from './streamSniffer';
 
 // Fonte 7 (MegaEmbed) por HTTP (20/10/2026, estudo do Nuvio; pedido dele "1 e 3" → "1": entram TODAS as opções que
@@ -119,8 +120,8 @@ export function base64ParaBytes(b64: string): Uint8Array {
   return out;
 }
 
-// Rótulo igual ao do resto do app (altura + "p", como o nativo mede).
-export const rotuloDe = (d: Dimensoes | null) => (d ? `${d.h}p` : '');
+// Rótulo igual ao do resto do app: a classe da imagem (1920×804 = "1080p", src/lib/qualidade.ts).
+export const rotuloDe = (d: Dimensoes | null) => (d ? qualidadeDaImagem(d.w, d.h) : '');
 
 // Mais pixels primeiro; sem resolução conhecida vai pro fim; empate = ordem da página.
 export function ordenarPorQualidade<T extends { dim: Dimensoes | null; i: number }>(xs: T[]): T[] {

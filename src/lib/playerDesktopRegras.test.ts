@@ -97,6 +97,14 @@ describe('faixas', () => {
       { indice: -1, rotulo: 'Auto' }, { indice: 1, rotulo: '1080p' }, { indice: 2, rotulo: '720p' }, { indice: 0, rotulo: '480p' },
     ]);
   });
+  it('qualidade: filme de cinema mostra a classe da imagem (1920×804 = 1080p) e não repete rótulo', () => {
+    expect(niveisDeQualidade([{ width: 1280, height: 536 }, { width: 1920, height: 804 }, { width: 640, height: 268 }])).toEqual([
+      { indice: -1, rotulo: 'Auto' }, { indice: 1, rotulo: '1080p' }, { indice: 0, rotulo: '720p' }, { indice: 2, rotulo: '360p' },
+    ]);
+    expect(niveisDeQualidade([{ width: 1920, height: 800 }, { width: 1920, height: 804 }])).toEqual([
+      { indice: -1, rotulo: 'Auto' }, { indice: 1, rotulo: '1080p' },
+    ]);
+  });
   it('áudio: português primeiro; sem ele, a padrão', () => {
     expect(audioQueComeca([{ lang: 'en', default: true }, { lang: 'pt-BR' }])).toBe(1);
     expect(audioQueComeca([{ lang: 'en' }, { name: 'Dublado' }])).toBe(1);

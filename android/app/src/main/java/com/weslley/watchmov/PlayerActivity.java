@@ -668,9 +668,12 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         player.addListener(new androidx.media3.common.Player.Listener() {
             @Override public void onVideoSizeChanged(VideoSize size) {
                 if (size.height > 0) {
-                    qualityBtn.setText(size.height + "p");
+                    int largura = QualidadeDaImagem.larguraExibida(size.width, size.pixelWidthHeightRatio);
+                    String q = QualidadeDaImagem.rotulo(largura, size.height);   // 1920×804 = "1080p" (classe, não a altura)
+                    qualityBtn.setText(q);
                     localVideoH = size.height;   // MP4 no cast: é a altura do arquivo (não tem variantes)
-                    NativePlayerPlugin.reportQuality(currentUrl, size.height);
+                    localVideoW = largura;
+                    NativePlayerPlugin.reportQuality(currentUrl, q);
                 }
             }
             @Override public void onIsPlayingChanged(boolean isPlaying) { refreshMediaNotification(); }
@@ -1119,7 +1122,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         errorHandled = false; // novo link → volta a permitir tratar erro
         semImagem = false;    // …e a conferir se ele mostra imagem
         // Link novo = qualidade entregue desconhecida até o proxy/player dizerem.
-        localVideoH = 0; castDeliveredH = 0; fileHeightPending = false;
+        localVideoH = 0; localVideoW = 0; castDeliveredH = 0; castDeliveredW = 0; fileHeightPending = false;
         updateCastQualityLabel();
         // /abyss/ (proxy local alimentado pela página oculta, 15/09/2026): é MP4 e o sniff de 512 B
         // travaria esperando o 1º pedaço chegar do Service Worker → prepara direto.
@@ -1202,26 +1205,39 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private void showQuality() {
         if (player == null) return;
         List<Integer> heights = new ArrayList<>();
+        java.util.Map<Integer, Integer> larguras = new java.util.HashMap<>();
         for (Tracks.Group g : player.getCurrentTracks().getGroups()) {
             if (g.getType() != androidx.media3.common.C.TRACK_TYPE_VIDEO) continue;
             for (int i = 0; i < g.length; i++) {
-                int h = g.getTrackFormat(i).height;
-                if (h > 0 && !heights.contains(h)) heights.add(h);
+                androidx.media3.common.Format f = g.getTrackFormat(i);
+                int h = f.height;
+                if (h > 0 && !heights.contains(h)) {
+                    heights.add(h);
+                    larguras.put(h, QualidadeDaImagem.larguraExibida(f.width, f.pixelWidthHeightRatio));
+                }
             }
         }
         Collections.sort(heights, Collections.reverseOrder());
+        // Escolher continua pela ALTURA de verdade; o que aparece é a classe da imagem (1920×804 = "1080p").
+        // Duas alturas com o mesmo rótulo ficam só com a maior.
+        final List<Integer> alturas = new ArrayList<>();
+        final List<String> rotulos = new ArrayList<>();
+        for (int h : heights) {
+            String r = QualidadeDaImagem.rotulo(larguras.get(h), h);
+            if (!rotulos.contains(r)) { alturas.add(h); rotulos.add(r); }
+        }
         // MP4 em várias qualidades (ABYS: /abyss/<sid>/480p|720p|1080p.mp4): o ExoPlayer não tem faixas
         // adaptativas aqui — "qualidade" = trocar de LINK na mesma posição (rótulos em qualities[]).
-        if (heights.size() <= 1 && urls != null && urls.length > 1 && allLabeled(qualities, urls.length)) { showLinks(); return; }
-        if (heights.size() <= 1) {
-            String so = heights.isEmpty() ? String.valueOf(qualityBtn.getText()) : heights.get(0) + "p";
+        if (alturas.size() <= 1 && urls != null && urls.length > 1 && allLabeled(qualities, urls.length)) { showLinks(); return; }
+        if (alturas.size() <= 1) {
+            String so = alturas.isEmpty() ? String.valueOf(qualityBtn.getText()) : rotulos.get(0);
             android.widget.Toast.makeText(this, "Este vídeo só tem " + so, android.widget.Toast.LENGTH_SHORT).show();
             return;
         }
         // Só as que o vídeo tem (faixas reais do HLS), com ✓ na escolhida; "Auto" = o player escolhe sozinho.
-        final String[] labels = new String[heights.size() + 1];
+        final String[] labels = new String[alturas.size() + 1];
         labels[0] = (alturaEscolhida == 0 ? "✓ " : "") + "Auto";
-        for (int i = 0; i < heights.size(); i++) labels[i + 1] = (alturaEscolhida == heights.get(i) ? "✓ " : "") + heights.get(i) + "p";
+        for (int i = 0; i < alturas.size(); i++) labels[i + 1] = (alturaEscolhida == alturas.get(i) ? "✓ " : "") + rotulos.get(i);
         new AlertDialog.Builder(this)
             .setTitle("Qualidade")
             .setItems(labels, (d, i) -> {
@@ -1230,10 +1246,10 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                     trackSelector.setParameters(trackSelector.buildUponParameters().clearVideoSizeConstraints());
                     qualityBtn.setText("Auto");
                 } else {
-                    int h = heights.get(i - 1);
+                    int h = alturas.get(i - 1);
                     alturaEscolhida = h;
                     trackSelector.setParameters(trackSelector.buildUponParameters().setMaxVideoSize(Integer.MAX_VALUE, h).setMinVideoSize(0, h));
-                    qualityBtn.setText(h + "p");
+                    qualityBtn.setText(rotulos.get(i - 1));
                 }
             })
             .show();
@@ -1245,8 +1261,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         String p = url.split("\\?")[0].toLowerCase();
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{3,4})p(?:[^0-9]|$)").matcher(p);
         if (m.find()) return m.group(1) + "p";
-        m = java.util.regex.Pattern.compile("\\d{3,4}x(\\d{3,4})").matcher(p);
-        if (m.find()) return m.group(1) + "p";
+        m = java.util.regex.Pattern.compile("(\\d{3,4})x(\\d{3,4})").matcher(p);
+        if (m.find()) return QualidadeDaImagem.rotulo(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
         m = java.util.regex.Pattern.compile("[/_-](240|360|480|540|576|720|1080|1440|2160)[/_.-]").matcher(p);
         if (m.find()) return m.group(1) + "p";
         return "";
@@ -1599,8 +1615,11 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     private Button castPlayBtn;
     private Button castQualityBtn;             // "Qualidade: Máx/720p" no overlay do cast
     private int castQualityH = 0;              // altura escolhida pro cast (0 = maior bandwidth)
+    private int castQualityW = 0;              // largura dessa variante (só pro rótulo: 1920×804 = "1080p")
     private int castDeliveredH = 0;            // altura que a TV está RECEBENDO (proxy no HLS; arquivo no MP4)
+    private int castDeliveredW = 0;            // largura do que a TV recebe (0 = não sei: o rótulo fica pela altura)
     private int localVideoH = 0;               // altura reportada pelo player local (onVideoSizeChanged)
+    private int localVideoW = 0;               // largura de exibição reportada junto
     private boolean fileHeightPending = false; // já tem thread lendo a altura do arquivo (MediaMetadataRetriever)
     private Button volBtn;                     // "Volume" — mostra/esconde a barra
     private Button volDownBtn, volUpBtn;       // "−"/"+" do overlay: ±10 % do volume da TV
@@ -1870,7 +1889,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (player != null) player.setVolume(1f); // restaura o áudio local
         if (localPendente && player != null) { localPendente = false; if (tvPos > 0) player.seekTo(tvPos); player.prepare(); }
         if (resumeLocal && player != null) { if (tvPos > 0) player.seekTo(tvPos); player.setPlayWhenReady(true); }
-        castDeliveredH = 0; updateCastQualityLabel();   // próximo cast recomeça sem valor velho
+        castDeliveredH = 0; castDeliveredW = 0; updateCastQualityLabel();   // próximo cast recomeça sem valor velho
         refreshMediaNotification();               // notificação volta a falar do local
     }
 
@@ -2210,7 +2229,8 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // mostrava "Máx" fixo — não dizia se a TV estava em 720p ou 360p.
     private void updateCastQualityLabel() {
         if (castQualityBtn == null) return;
-        String q = castDeliveredH > 0 ? castDeliveredH + "p" : castQualityH > 0 ? castQualityH + "p" : "Máx";
+        String q = castDeliveredH > 0 ? QualidadeDaImagem.rotulo(castDeliveredW, castDeliveredH)
+            : castQualityH > 0 ? QualidadeDaImagem.rotulo(castQualityW, castQualityH) : "Máx";
         castQualityBtn.setText("Qualidade: " + q);
     }
 
@@ -2220,17 +2240,17 @@ public class PlayerActivity extends Activity implements MediaNotificationService
     // variantes — usa a altura que o player local reportou ou lê o arquivo (thread).
     private void refreshCastDeliveredHeight() {
         if (castMode == CAST_NONE || currentUrl == null) return;
-        int h = ProxyServer.deliveredHeight(currentUrl);
+        int h = ProxyServer.deliveredHeight(currentUrl), w = ProxyServer.deliveredWidth(currentUrl);
         if (h <= 0 && !isHlsCurrent()) {
-            if (localVideoH > 0) h = localVideoH;
+            if (localVideoH > 0) { h = localVideoH; w = localVideoW; }
             else if (!fileHeightPending) { fileHeightPending = true; readFileHeightAsync(currentUrl); }
         }
-        if (h != castDeliveredH) { castDeliveredH = h; updateCastQualityLabel(); }
+        if (h != castDeliveredH || w != castDeliveredW) { castDeliveredH = h; castDeliveredW = w; updateCastQualityLabel(); }
     }
 
     private void readFileHeightAsync(final String url) {
         new Thread(() -> {
-            int h = 0;
+            int h = 0, w = 0;
             android.media.MediaMetadataRetriever mr = new android.media.MediaMetadataRetriever();
             try {
                 if (url.startsWith("content://")) mr.setDataSource(this, android.net.Uri.parse(url));
@@ -2238,13 +2258,15 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 else return;   // MP4 de rede: ler custaria baixar — fica com o player local (onVideoSizeChanged)
                 String s = mr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
                 if (s != null) h = Integer.parseInt(s.trim());
+                s = mr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+                if (s != null) w = Integer.parseInt(s.trim());
             } catch (Exception ignored) {
             } finally {
                 try { mr.release(); } catch (Exception ignored) {}
-                final int fh = h;
+                final int fh = h, fw = w;
                 runOnUiThread(() -> {
                     fileHeightPending = false;
-                    if (fh > 0 && url.equals(currentUrl) && castMode != CAST_NONE && localVideoH <= 0) localVideoH = fh;
+                    if (fh > 0 && url.equals(currentUrl) && castMode != CAST_NONE && localVideoH <= 0) { localVideoH = fh; localVideoW = fw; }
                     refreshCastDeliveredHeight();
                 });
             }
@@ -2275,7 +2297,7 @@ public class PlayerActivity extends Activity implements MediaNotificationService
         if (castMode == CAST_NONE) { castMsg("Só vale com a TV conectada", 2500); return; }
         final String url = currentUrl;
         if (!isHlsCurrent()) {
-            castMsg("Este vídeo é arquivo único (MP4" + (castDeliveredH > 0 ? " em " + castDeliveredH + "p" : "") + ") — não tem variantes de qualidade", 4000);
+            castMsg("Este vídeo é arquivo único (MP4" + (castDeliveredH > 0 ? " em " + QualidadeDaImagem.rotulo(castDeliveredW, castDeliveredH) : "") + ") — não tem variantes de qualidade", 4000);
             return;
         }
         castMsg("Lendo qualidades do vídeo…", 0);
@@ -2289,18 +2311,19 @@ public class PlayerActivity extends Activity implements MediaNotificationService
                 if (castMsgTv != null) castMsgTv.setVisibility(View.GONE);
                 if (fv.isEmpty()) { castMsg("Não achei variantes no master deste link", 4000); return; }
                 final String[] labels = new String[fv.size() + 1];
-                labels[0] = "Máxima (padrão)" + (castQualityH == 0 && castDeliveredH > 0 ? " = " + castDeliveredH + "p" : "") + (castQualityH == 0 ? "   ✓" : "");
+                labels[0] = "Máxima (padrão)" + (castQualityH == 0 && castDeliveredH > 0 ? " = " + QualidadeDaImagem.rotulo(castDeliveredW, castDeliveredH) : "") + (castQualityH == 0 ? "   ✓" : "");
                 for (int i = 0; i < fv.size(); i++) {
-                    int[] v = fv.get(i);
-                    labels[i + 1] = (v[0] > 0 ? v[0] + "p" : "?") + "  ·  " + (v[1] / 1000) + " kbps" + (castQualityH == v[0] ? "   ✓" : "");
+                    int[] v = fv.get(i);   // {altura, bandwidth, largura}: escolhe pela altura, mostra a classe
+                    labels[i + 1] = (v[0] > 0 ? QualidadeDaImagem.rotulo(v[2], v[0]) : "?") + "  ·  " + (v[1] / 1000) + " kbps" + (castQualityH == v[0] ? "   ✓" : "");
                 }
                 new AlertDialog.Builder(this).setTitle("Qualidade na TV").setItems(labels, (d, i) -> {
                     int h = i == 0 ? 0 : fv.get(i - 1)[0];
                     if (h == castQualityH) return;
                     castQualityH = h;
+                    castQualityW = i == 0 ? 0 : fv.get(i - 1)[2];
                     // Até a TV pedir o master de novo, o valor "entregue" é o da qualidade
                     // anterior → esquece e mostra a escolhida; o poll confirma depois.
-                    castDeliveredH = 0; ProxyServer.forgetDelivered(url);
+                    castDeliveredH = 0; castDeliveredW = 0; ProxyServer.forgetDelivered(url);
                     updateCastQualityLabel();
                     castMsg("Trocando qualidade na TV…", 4000);
                     NativePlayerPlugin.reportError(url, 0, 0, "CAST_QUALIDADE",
