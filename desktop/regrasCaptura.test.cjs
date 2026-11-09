@@ -72,6 +72,16 @@ test('qualidade do master: a maior altura anunciada', () => {
   assert.equal(r.qualidadeDoMaster('#EXTM3U\n#EXTINF:2,\na.ts'), '');
 });
 
+test('qualidade do master: filme de cinema mostra a classe da imagem (1920x804 = 1080p), igual ao APK', () => {
+  const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x536\nb\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1920x804\na';
+  assert.equal(r.qualidadeDoMaster(master), '1080p');
+  assert.equal(r.classeDaImagem(1280, 536), 720);
+  assert.equal(r.classeDaImagem(4096, 2160), 2160);
+  assert.equal(r.classeDaImagem(1778, 1000), 1000);
+  assert.equal(r.classeDaImagem(0, 804), 804);
+  assert.equal(r.classeDaImagem(1920, 0), 0);
+});
+
 test('recados WMOPT: campos e k', () => {
   assert.equal(r.campo('k=2|stage=player|host=x.com', 'stage'), 'player');
   assert.equal(r.campo('k=2|stage=player', 'host'), undefined);

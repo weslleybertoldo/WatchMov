@@ -1,6 +1,6 @@
 // src/lib/streamCache.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { linkExpiresAt, isExpiredUrl, canRecaptureAgain, RECAPTURE_MIN_GAP_MS, applyTvPosition, getPosition, setStreamPosition } from './streamCache';
+import { linkExpiresAt, isExpiredUrl, canRecaptureAgain, RECAPTURE_MIN_GAP_MS, applyTvPosition, getPosition, setStreamPosition, qualityFromUrl } from './streamCache';
 
 describe('streamCache — link novo pedido sozinho (venceu/caiu no meio)', () => {
   it('1º pedido sempre vale', () => {
@@ -72,5 +72,14 @@ describe('streamCache — tempo da TV com o player fechado', () => {
     expect(applyTvPosition(K, 2_000, undefined, Date.now())).toBe(false);
     expect(applyTvPosition('', 2_210_000, undefined, Date.now())).toBe(false);
     expect(getPosition(1368337, 'movie', 0, 0)).toBeNull();
+  });
+});
+
+describe('streamCache — qualidade tirada do endereço', () => {
+  it('largura×altura vira a classe da imagem (1920x804 = 1080p); "720p" no nome fica como está', () => {
+    expect(qualityFromUrl('https://cdn.x/filme_1920x804.mp4')).toBe('1080p');
+    expect(qualityFromUrl('https://cdn.x/v/1280x720/index.m3u8')).toBe('720p');
+    expect(qualityFromUrl('https://cdn.x/v/720p/index.m3u8?t=1')).toBe('720p');
+    expect(qualityFromUrl('https://cdn.x/v/index.m3u8')).toBe('');
   });
 });

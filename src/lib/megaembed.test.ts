@@ -122,7 +122,8 @@ describe('Fonte 7 — leitura da página e dos arquivos (puras)', () => {
   it('ordem: mais pixels primeiro, sem resolução no fim, empate na ordem da página', () => {
     const xs = [{ i: 0, dim: null }, { i: 1, dim: { w: 1280, h: 720 } }, { i: 2, dim: { w: 1920, h: 804 } }, { i: 3, dim: { w: 1280, h: 720 } }];
     expect(ordenarPorQualidade(xs).map(x => x.i)).toEqual([2, 1, 3, 0]);
-    expect(rotuloDe({ w: 1920, h: 804 })).toBe('804p');
+    expect(rotuloDe({ w: 1920, h: 804 })).toBe('1080p');   // classe da imagem (09/11/2026), não a altura crua
+    expect(rotuloDe({ w: 1280, h: 536 })).toBe('720p');
     expect(rotuloDe(null)).toBe('');
   });
 });
@@ -134,8 +135,8 @@ describe('Fonte 7 — cadeia por HTTP (CapacitorHttp falso)', () => {
     expect(r.tipo).toBe('achou');
     if (r.tipo !== 'achou') return;
     expect(r.links.map(l => [l.url, l.quality, l.mime, l.option])).toEqual([
-      [HLS808, '808p', MIME_HLS, 'Opção 2'],
-      [IPTV, '804p', MIME_MP4, 'Opção 3'],
+      [HLS808, '1080p', MIME_HLS, 'Opção 2'],   // 1920×808 e 1920×804: classe da imagem (09/11/2026)
+      [IPTV, '1080p', MIME_MP4, 'Opção 3'],
       [HLS360, '360p', MIME_HLS, 'Opção 4'],
     ]);
     for (const l of r.links) {
@@ -168,7 +169,7 @@ describe('Fonte 7 — cadeia por HTTP (CapacitorHttp falso)', () => {
       return { status: 404, data: '' };
     };
     const r = await resolverMegaEmbed({ tmdbId: 123542, type: 'tv', season: 1, episode: 1 });
-    expect(r).toEqual({ tipo: 'achou', links: [expect.objectContaining({ url: LC, quality: '534p', mime: MIME_MP4, option: 'Opção 1' })] });
+    expect(r).toEqual({ tipo: 'achou', links: [expect.objectContaining({ url: LC, quality: '720p', mime: MIME_MP4, option: 'Opção 1' })] });
   });
 
   it('não tem: lista vazia, 404 ou nenhuma opção abriu → pula pra próxima fonte', async () => {

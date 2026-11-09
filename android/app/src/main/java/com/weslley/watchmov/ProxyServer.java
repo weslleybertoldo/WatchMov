@@ -879,6 +879,8 @@ public class ProxyServer extends NanoHTTPD {
     // sobrou no rewrite. É o que o botão "Qualidade" do overlay mostra ("720p", não
     // "Máx") — o proxy é quem decide de fato, então é ele quem sabe.
     private static final java.util.Map<String, Integer> DELIVERED = new java.util.concurrent.ConcurrentHashMap<>();
+    // Largura dessa variante (RESOLUTION=1920x804) — só pro rótulo: 1920×804 = "1080p" (QualidadeDaImagem).
+    private static final java.util.Map<String, Integer> DELIVERED_W = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Altura da variante que o proxy serviu pra TV nesse master (0 = ainda não serviu / sem RESOLUTION). */
     public static int deliveredHeight(String masterUrl) {
@@ -886,20 +888,31 @@ public class ProxyServer extends NanoHTTPD {
         return h != null ? h : 0;
     }
 
-    /** Esquece a entrega (troca de qualidade: até a TV pedir o master de novo não há valor certo). */
-    public static void forgetDelivered(String masterUrl) { if (masterUrl != null) DELIVERED.remove(masterUrl); }
+    /** Largura da variante que o proxy serviu pra TV (0 = não sei: o rótulo fica pela altura). */
+    public static int deliveredWidth(String masterUrl) {
+        Integer w = masterUrl != null ? DELIVERED_W.get(masterUrl) : null;
+        return w != null ? w : 0;
+    }
 
-    /** Variantes conhecidas do master dessa URL ({altura, bandwidth}, maior primeiro) — vazio se ainda não foi buscado. */
+    /** Esquece a entrega (troca de qualidade: até a TV pedir o master de novo não há valor certo). */
+    public static void forgetDelivered(String masterUrl) { if (masterUrl != null) { DELIVERED.remove(masterUrl); DELIVERED_W.remove(masterUrl); } }
+
+    /** Variantes conhecidas do master dessa URL ({altura, bandwidth, largura}, maior primeiro) — vazio se ainda não foi buscado. */
     public static java.util.List<int[]> variantsOf(String masterUrl) {
         java.util.List<int[]> v = masterUrl != null ? MASTERS.get(masterUrl) : null;
         java.util.List<int[]> out = new java.util.ArrayList<>();
-        if (v != null) for (int[] x : v) out.add(new int[]{ x[1], x[2] });
+        if (v != null) for (int[] x : v) out.add(new int[]{ x[1], x[2], x[3] });
         java.util.Collections.sort(out, (a, b) -> b[1] != a[1] ? Integer.compare(b[1], a[1]) : Integer.compare(b[0], a[0]));
         return out;
     }
 
     private static int attrInt(String tag, String name) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(name + "=(\\d+)").matcher(tag);
+        return m.find() ? Integer.parseInt(m.group(1)) : 0;
+    }
+
+    private static int widthOf(String tag) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("RESOLUTION=(\\d+)x(\\d+)").matcher(tag);
         return m.find() ? Integer.parseInt(m.group(1)) : 0;
     }
 
@@ -946,11 +959,11 @@ public class ProxyServer extends NanoHTTPD {
         // disso (mantém seletor de áudio e ABR do ExoPlayer).
         boolean hasPt = PT_AUDIO.matcher(body).find();
         String[] lines = body.split("\n");
-        java.util.List<int[]> vars = new java.util.ArrayList<>();   // {idxLinha, altura, bandwidth}
+        java.util.List<int[]> vars = new java.util.ArrayList<>();   // {idxLinha, altura, bandwidth, largura}
         int audios = 0, subs = 0;
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
-            if (t.startsWith("#EXT-X-STREAM-INF")) vars.add(new int[]{ i, heightOf(t), attrInt(t, "BANDWIDTH") });
+            if (t.startsWith("#EXT-X-STREAM-INF")) vars.add(new int[]{ i, heightOf(t), attrInt(t, "BANDWIDTH"), widthOf(t) });
             else if (t.startsWith("#EXT-X-MEDIA")) { String up = t.toUpperCase(); if (up.contains("TYPE=AUDIO")) audios++; else if (up.contains("TYPE=SUBTITLES")) subs++; }
         }
         int keep = -1;
@@ -958,7 +971,10 @@ public class ProxyServer extends NanoHTTPD {
             MASTERS.put(baseUrl, vars);
             if (cast) {
                 keep = chooseVariant(vars, qH);
-                if (keep >= 0) DELIVERED.put(baseUrl, vars.get(keep)[1]);   // o overlay mostra esta altura
+                if (keep >= 0) {   // o overlay mostra esta variante (rótulo pela classe da imagem)
+                    DELIVERED.put(baseUrl, vars.get(keep)[1]);
+                    DELIVERED_W.put(baseUrl, vars.get(keep)[3]);
+                }
             }
         }
         StringBuilder out = new StringBuilder();

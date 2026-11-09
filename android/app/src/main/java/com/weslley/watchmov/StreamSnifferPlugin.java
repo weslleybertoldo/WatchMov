@@ -710,14 +710,17 @@ public class StreamSnifferPlugin extends Plugin {
             h.put("User-Agent", ProxyServer.userAgent());   // mesmo UA do WebView (googlevideo prende a URL ao UA)
             mmr.setDataSource(url, h);
             String hh = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
-            if (hh != null && !hh.trim().isEmpty()) return hh.trim() + "p";
+            String ww = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+            if (hh != null && !hh.trim().isEmpty()) {   // rótulo pela classe da imagem (1920×804 = "1080p")
+                int w = 0;
+                try { if (ww != null) w = Integer.parseInt(ww.trim()); } catch (NumberFormatException ignored) {}
+                return QualidadeDaImagem.rotulo(w, Integer.parseInt(hh.trim()));
+            }
         } catch (Exception ignored) {} finally {
             try { mmr.release(); } catch (Exception ignored) {}
         }
         return "";
     }
-
-    private static final Pattern RES = Pattern.compile("RESOLUTION=\\d{2,4}x(\\d{2,4})");
 
     private static String hlsQuality(String url, String referer) {
         try {
@@ -726,11 +729,7 @@ public class StreamSnifferPlugin extends Plugin {
             rb.header("User-Agent", ProxyServer.userAgent());   // mesmo UA do WebView
             try (Response resp = http.newCall(rb.build()).execute()) {
                 if (resp.body() == null) return "";
-                String body = resp.body().string();
-                int max = 0;
-                Matcher m = RES.matcher(body);
-                while (m.find()) { int h = Integer.parseInt(m.group(1)); if (h > max) max = h; }
-                return max > 0 ? max + "p" : "";
+                return QualidadeDaImagem.doMaster(resp.body().string());   // maior classe do master (1920x804 = "1080p")
             }
         } catch (Exception e) { return ""; }
     }

@@ -170,12 +170,12 @@ public class NativePlayerPlugin extends Plugin {
         call.resolve();
     }
 
-    // Resolução real que o ExoPlayer decodificou → rotula o link na lista.
-    public static void reportQuality(String url, int height) {
-        if (instance == null || url == null || height <= 0) return;
+    // Resolução real que o ExoPlayer decodificou → rotula o link na lista (já pela classe: 1920×804 = "1080p").
+    public static void reportQuality(String url, String quality) {
+        if (instance == null || url == null || quality == null || quality.isEmpty()) return;
         JSObject d = new JSObject();
         d.put("url", url);
-        d.put("quality", height + "p");
+        d.put("quality", quality);
         instance.notifyListeners("playerQuality", d);
     }
 

@@ -1,3 +1,4 @@
+import { qualidadeDaImagem } from '@/lib/qualidade';
 import type { SniffResult } from '@/lib/streamSniffer';
 
 // Por título/episódio guarda a LISTA cumulativa de links capturados + o último
@@ -55,8 +56,8 @@ export function qualityFromUrl(url: string): string {
   const p = url.split('?')[0].toLowerCase();
   let m = p.match(/(\d{3,4})p(?:[^0-9]|$)/);
   if (m) return m[1] + 'p';
-  m = p.match(/\d{3,4}x(\d{3,4})/);
-  if (m) return m[1] + 'p';
+  m = p.match(/(\d{3,4})x(\d{3,4})/);
+  if (m) return qualidadeDaImagem(Number(m[1]), Number(m[2]));   // 1920x804 = "1080p" (classe da imagem)
   m = p.match(/[/_-](240|360|480|540|576|720|1080|1440|2160)[/_.-]/);
   if (m) return m[1] + 'p';
   return '';
