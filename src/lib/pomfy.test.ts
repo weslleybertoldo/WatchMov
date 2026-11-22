@@ -23,18 +23,19 @@ describe('Fonte 4 (Pomfy)', () => {
 
   it('o modo Servidor da web pode abrir a Pomfy e o domínio final da SuperFlix (frame-src do vercel.json)', () => {
     expect(PROVIDER_HOSTS).toContain('https://api.pomfy.stream');
-    expect(PROVIDER_HOSTS).toContain('https://superflixapi.fun');
+    expect(PROVIDER_HOSTS).toContain('https://superflixapi.boats');
     expect(PROVIDER_HOSTS).toContain('https://warezcdn.sbs');
     const frameSrc = /frame-src ([^;]+);/.exec(readFileSync('vercel.json', 'utf8'))?.[1] ?? '';
     expect(frameSrc.split(' ')).toContain('https://api.pomfy.stream');
-    expect(frameSrc.split(' ')).toContain('https://superflixapi.fun');
+    expect(frameSrc.split(' ')).toContain('https://superflixapi.boats');
     expect(frameSrc.split(' ')).toContain('https://warezcdn.sbs');
   });
 
-  it('só a Pomfy abre dentro de iframe; os passos dela são Assistir → Servidor 1 → gate da Byse', () => {
-    expect(IFRAME_PROVIDERS).toEqual(['pomfy']);
+  it('Pomfy e EmbedMovies abrem dentro de iframe; os passos da Pomfy são Assistir → Servidor 1 → gate da Byse', () => {
+    expect(IFRAME_PROVIDERS).toEqual(['pomfy', 'embedmovies']);
     expect(wrapsIframe('pomfy')).toBe(true);
-    expect(wrapsIframe('embedmovies')).toBe(false);
+    expect(wrapsIframe('embedmovies')).toBe(true);
+    expect(wrapsIframe('fshd')).toBe(false);
     expect(wrapsIframe(undefined)).toBe(false);
     expect(clickStepsFor('pomfy')).toBe(CLICK_STEPS_POMFY);
     expect(clickStepsFor('embedmovies')).toBe(CLICK_STEPS);

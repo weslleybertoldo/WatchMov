@@ -40,14 +40,15 @@ export const usesAbys = (providerId?: string) => !!providerId && ABYS_PROVIDERS.
 // 19/10/2026: a Fonte 4 (Pomfy) passa por 3 páginas (título → servidor → Byse) sem lista de opções, então o cronômetro
 // por opção não estica o prazo — no emulador o vídeo saiu aos ~44 s → mesmo orçamento do ABYS.
 // 04/11/2026: Fontes 5 (superflix) e 6 (warezcdn) passam pela validação da Cloudflare antes do player → 90 s.
-export function budgetFor(providerId: string): number { return usesAbys(providerId) || wrapsIframe(providerId) || providerId === 'superflix' || providerId === 'warezcdn' ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
+export function budgetFor(providerId: string): number { return usesAbys(providerId) || providerId === 'pomfy' || providerId === 'superflix' || providerId === 'warezcdn' ? RESOLVER_BUDGET_ABYS_MS : RESOLVER_BUDGET_MS; }
 // Iframes de player em que é preciso CLICAR (opção/gate) → frame-hop (só no fallback sem injeção).
-export const HOP_HOSTS = ['playerflix.ink', 'embedplay.one', 'f7hyg4q.org'];
+export const HOP_HOSTS = ['playerflix.ink', 'embedplay.one', 'embedplay.vip', 'f7hyg4q.org'];
 // Ordem importa: 1 clique por tick e no máximo 1 por seletor por página. "text:" = por texto.
 const STEPS_TAIL = [
   '#optionList .option', '.option',      // playerflix (1ª = Blogger)
   '.captcha-gate__play',                 // Byse (f7hyg4q.org; 25/09/2026 n1mwq.org — o host troca)
   '#player-button',                      // UPNS (upns.xyz, Vidstack): o play próprio — os 1ºs toques abrem anúncio (STEPS_REPEAT)
+  '.art-state',                          // ArtPlayer / watchplay.shop (Fonte 1, 22/11/2026)
   '.play-button-outer', '.play-button',  // FirePlayer / SuperFlixAPI (04/11/2026)
   '.jw-icon-display', '.jw-display-icon-display', '.vjs-big-play-button', '.plyr__control--overlaid',
   "button[aria-label*='Play' i]", '.play-btn', '.btn-play', '#play', '.play',
@@ -60,9 +61,11 @@ export const CLICK_STEPS_F1 = ['text:Mostrar Opções', ...STEPS_TAIL];
 // 19/10/2026: Fonte 4 (Pomfy) = página do título → "Assistir" → "Escolha o servidor" (o 2 está "Em breve") → player da
 // Byse (n1mwq.org) com o gate `.captcha-gate__play` do STEPS_TAIL.
 export const CLICK_STEPS_POMFY = ['text:Assistir', 'text:Servidor 1', ...STEPS_TAIL];
-// Fontes que só abrem DENTRO de iframe (aberta direto = 403; o servidor confere o Sec-Fetch-Dest): o nativo carrega
-// uma página mínima com o iframe, no endereço do app — o mesmo Referer do modo Servidor.
-export const IFRAME_PROVIDERS = ['pomfy'];
+// Fontes que só abrem DENTRO de iframe (o servidor confere o Sec-Fetch-Dest):
+// - pomfy (19/10/2026): aberta direto = 403;
+// - embedmovies (22/11/2026): aberta direto = página falsa "Investidor.blog".
+// O nativo carrega uma página mínima com o iframe, no endereço do app — o mesmo Referer do modo Servidor.
+export const IFRAME_PROVIDERS = ['pomfy', 'embedmovies'];
 export const wrapsIframe = (providerId?: string) => !!providerId && IFRAME_PROVIDERS.includes(providerId);
 export function clickStepsFor(providerId?: string): string[] {
   return providerId === 'pomfy' ? CLICK_STEPS_POMFY : CLICK_STEPS;
@@ -161,7 +164,19 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "var names=function(os){var nm=[];for(var i=0;i<os.length;i++)nm.push(norm(os[i].textContent));"
     + "for(var i=0;i<os.length;i++){var c=0;for(var j=0;j<nm.length;j++){if(nm[j]===nm[i])c++;}"
     + "if(c>1){var a=os[i].getAttribute('data-audio');if(a)nm[i]=(nm[i]+' '+a).slice(0,40);}}return nm;};"
-    // (A) playerflix (Fonte 6): #optionList .option, so as DUBLADAS (data-audio pt) — v4.63
+    // (A) playerflix (Fonte 1): formato antigo `#optionList .option` (fallback) + layout novo de 20/11/2026
+    // (sem #optionList: a página lê /inc/Ajax.php e carrega a opção no #playerFrame). Só entram opções DUBLADAS (pt*).
+    + "var pfOpts=null,pfOut=0,pfSet=0,pfPrio=['blogger','mp4','m3u8','embedplayer','watchplay'];"
+    + "var pfApply=function(){if(!pfOpts||!pfOpts.length)return;var ki=K-1;if(ki<0)ki=0;if(ki>=pfOpts.length)ki=pfOpts.length-1;"
+    + "var op=pfOpts[ki],pf=document.getElementById('playerFrame');if(!pf)return;"
+    + "if(op.embed.indexOf('superflixapi.')>=0){if(pf.src&&pf.src!=='about:blank')pf.src='about:blank';return;}"
+    + "if(pfSet<4&&pf.src!==op.embed){pfSet++;if(op.embed.indexOf('vsembed.su')>=0||op.embed.indexOf('embedplayabyss')>=0)pf.removeAttribute('sandbox');else pf.setAttribute('sandbox','allow-scripts allow-same-origin');pf.src=op.embed;}};"
+    + "if(String(location.hostname||'').toLowerCase().indexOf('playerflix')>=0){try{var _pfF=window.fetch;if(_pfF)window.fetch=function(){var r=_pfF.apply(this,arguments);try{var u=String(arguments[0]&&arguments[0].url||arguments[0]||'');"
+    + "if(u.indexOf('Ajax.php')>=0)r.then(function(res){try{res.clone().text().then(function(txt){if(pfOpts!==null)return;try{var d=JSON.parse(txt);var raw=d&&d.data&&d.data.options;if(!Array.isArray(raw))return;"
+    + "var seen={},all=[];for(var i=0;i<raw.length;i++){var o=raw[i]||{};var em=String(o.embed||'');if(!em||seen[em])continue;seen[em]=1;var id=String(o.id||'').toLowerCase();var pr=pfPrio.indexOf(id);"
+    + "all.push({embed:em,lang:String(o.lang||'').toLowerCase(),label:norm(o.label)||'Opção',p:pr<0?999:pr,i:i});}"
+    + "all.sort(function(a,b){return a.p-b.p||a.i-b.i;});var os=[],out=0;for(var j=0;j<all.length;j++){if(!all[j].lang||all[j].lang.indexOf('pt')===0)os.push(all[j]);else out++;}"
+    + "pfOpts=os;pfOut=out;setTimeout(function(){tick();pfApply();},60);}catch(_){}}).catch(function(){})}catch(_){}}).catch(function(){})}catch(_){}return r}}catch(_){}}"
     + "var findPF=function(){var ol=document.querySelectorAll('#optionList .option');if(!ol.length)return null;var os=[],out=0;for(var oi=0;oi<ol.length;oi++){var au=(ol[oi].getAttribute('data-audio')||'').toLowerCase();if(!au||au.indexOf('pt')===0)os.push(ol[oi]);else out++;}return {os:os,out:out,kind:'pf'};};"
     // (B) embedplay.one (Fonte 1, v4.64): grupo .players_select_items[data-target] do audio "Dublado" (.select_language); itens .player_select_item
     + "var findEP=function(){var langs=document.querySelectorAll('.select_language'),all=document.querySelectorAll('.player_select_item');if(!langs.length&&!all.length)return null;"
@@ -186,7 +201,16 @@ export function buildOptionCycleScript(steps: string[] = CLICK_STEPS): string {
     + "if(!done['__pp__']&&document.querySelector(" + JSON.stringify(PLAYER_MARKERS) + ")){done['__pp__']=1;prog('player');}"
     // só em frame que já mostrou o player (o texto da UPNS entra no lugar dele); 1× por frame
     + "if(done['__pp__']&&!done['__dead__']&&document.body){var bt=document.body.innerText||document.body.textContent||'';for(var di=0;di<DEAD.length;di++){if(bt.indexOf(DEAD[di])>=0){done['__dead__']=1;try{say('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}break;}}}"
-    + "var f=findPF()||findEP()||findFS();var os=f?f.os:[],out=f?f.out:0;"
+    // 22/11/2026: embedplayer2.xyz (VIP Player da Fonte 1) responde "Error / Video not found." sem player — pula na hora
+    + "if(!done['__dead__']&&document.readyState==='complete'&&/embedplayer/i.test(location.hostname||'')&&document.body&&/video not found/i.test(document.body.innerText||document.body.textContent||'')){done['__dead__']=1;try{say('WMOPT|dead|k='+K+'|reason=not-found')}catch(_){}}"
+    + "var f=findPF()||findEP()||findFS();"
+    + "if(!f&&pfOpts!==null){if(!pfOpts.length){if(pfOut&&!reported){reported=true;try{say('WMOPT|filtered|nao-dublado='+pfOut+'|restou=0')}catch(_){}}return;}"
+    + "var pnm=[];for(var pi=0;pi<pfOpts.length;pi++)pnm.push(pfOpts[pi].label);"
+    + "if(!reported){reported=true;try{say('WMOPT|n='+pfOpts.length+'|names='+pnm.join('»'));if(pfOut)say('WMOPT|filtered|nao-dublado='+pfOut+'|restou='+pfOpts.length)}catch(_){}}"
+    + "var pki=K-1;if(pki<0)pki=0;if(pki>=pfOpts.length)pki=pfOpts.length-1;"
+    + "if(!done['__opt__']){done['__opt__']=1;if(pfOpts[pki].embed.indexOf('superflixapi.')>=0){try{say('WMOPT|skip|k='+K+'|name='+pnm[pki]+'|reason=turnstile')}catch(_){}pfApply();return;}try{say('WMOPT|click|k='+K+'|name='+pnm[pki])}catch(_){}}"
+    + "pfApply();return;}"
+    + "var os=f?f.os:[],out=f?f.out:0;"
     // 17/10/2026 (pedido dele: "Deixa sempre pré selecionado a opção BYSE, se não tiver nas opções aí pode manter como
     // hoje"): na embedplay.one a BYSE vai pro topo da lista — K=1 passa a ser ela; as outras seguem na ordem de antes.
     + "if(f&&f.kind==='ep'&&os.length>1){for(var bi=1;bi<os.length;bi++){if(/byse/i.test(epName(os[bi]))){os=[os[bi]].concat(os.slice(0,bi),os.slice(bi+1));break;}}}"
@@ -405,6 +429,7 @@ export function buildSemTituloScript(): string {
     + "if(H.indexOf('embedplayapi')>=0){if(document.querySelector('.movie-not-found')||/^assistir movie not found online$/i.test(t))none('f2-nao-encontrado');return}"
     + "if(H.indexOf('fshd')>=0){if(/^fshd\\s*\\S\\s*404$/i.test(t))none('f3-404');else if(document.querySelector('.episodeOption')&&!document.querySelector('.episodeOption.active'))none('f3-sem-episodio');return}"
     + "if(H.indexOf('pomfy')>=0){var ss=document.scripts||[];for(var i=0;i<ss.length;i++){if(/\\bconst\\s+available\\s*=\\s*false\\b/.test(ss[i].text||'')){none('f4-indisponivel');return}}}"
+    + "if(H.indexOf('megaembed')>=0){var mp=/\\/embed\\/\\d+\\/(\\d+)\\/(\\d+)/.exec(location.pathname||'');var mt=/\\bT(\\d+)E(\\d+)\\b/i.exec(t);if(mp&&mt&&(Number(mp[1])!==Number(mt[1])||Number(mp[2])!==Number(mt[2]))){none('f7-ep-errado');return}}"
     + "if(H.indexOf('warezcdn')>=0||H.indexOf('superflix')>=0||H.indexOf('overflix')>=0){"
     + "var sBox=typeof sfDomEl==='function'?sfDomEl('serverList'):document.getElementById('serverList');"
     // 04/11/2026: a lista chega pelo POST /player/bootstrap DEPOIS da página completa → vazia e sem texto = carregando

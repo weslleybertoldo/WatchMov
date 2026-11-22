@@ -56,10 +56,10 @@ export function pareceVideo(url: string): boolean {
   return u.includes('master.m3u8') || u.includes('.m3u8') || u.includes('.mpd');
 }
 
-/** Pedido que não vale sondar (= skipProbe): recurso óbvio e o master.txt de uso único do player final. */
+/** Pedido que não vale sondar (= skipProbe): recurso óbvio e o master.txt de uso único do player final (host `xn--`). */
 export function pularSonda(url: string): boolean {
   const p = semQuery(url.toLowerCase());
-  if (p.includes('xn--tckasiu6cvova0eb5fua2449g98vg.') && p.endsWith('master.txt')) return true;
+  if ((p.includes('://xn--') || p.includes('.xn--')) && p.endsWith('master.txt')) return true;
   if (p.includes('seg-') || p.includes('/seg') || p.includes('init-') || p.includes('/init.') || p.includes('chunk') || p.endsWith('.m4s')) return true;
   return /\.(js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|ts|html|json|php)$/.test(p) || p.startsWith('data:') || p.startsWith('blob:');
 }

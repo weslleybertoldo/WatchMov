@@ -13,8 +13,8 @@ describe('endereço das Fontes 5 e 6', () => {
   });
 
   it('Fonte 5 (SuperFlix): IMDb primeiro, série com temporada e episódio', () => {
-    expect(build('superflix')({ type: 'tv', tmdbId: 2691, imdbId: 'tt0369179', season: 5, episode: 15 })).toBe('https://superflixapi.fun/serie/tt0369179/5/15');
-    expect(build('superflix')({ type: 'movie', tmdbId: 1368337, imdbId: 'tt33764258' })).toBe('https://superflixapi.fun/filme/tt33764258');
+    expect(build('superflix')({ type: 'tv', tmdbId: 2691, imdbId: 'tt0369179', season: 5, episode: 15 })).toBe('https://superflixapi.boats/serie/tt0369179/5/15');
+    expect(build('superflix')({ type: 'movie', tmdbId: 1368337, imdbId: 'tt33764258' })).toBe('https://superflixapi.boats/filme/tt33764258');
   });
 });
 

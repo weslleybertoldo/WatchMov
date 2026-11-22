@@ -15,7 +15,7 @@ vi.mock('@capacitor/core', () => ({
 }));
 
 import {
-  urlMegaEmbed, opcoesDaPagina, paginaRestrita, resolucaoDoMaster, dimensoesDoMp4, base64ParaBytes, ordenarPorQualidade, rotuloDe,
+  urlMegaEmbed, opcoesDaPagina, paginaRestrita, episodioDaPagina, resolucaoDoMaster, dimensoesDoMp4, base64ParaBytes, ordenarPorQualidade, rotuloDe,
   resolverMegaEmbed, MEGA_REFERER, MIME_HLS, MIME_MP4, MEGA_BYTES_MP4, servidoresDaPagina, noServidor,
 } from './megaembed';
 import { PROVIDERS, PROVIDER_HOSTS, rotuloDaFonte } from './players';
@@ -285,5 +285,56 @@ describe('resolverMegaEmbed com servidor que recusa a assinatura (08/11/2026)', 
     const r = await resolverMegaEmbed({ tmdbId: 65942, type: 'tv', season: 1, episode: 28 });
     expect(r.tipo).toBe('achou');
     expect(pedidos.filter(p => p.url.includes('/includes/hls.php'))).toHaveLength(1);
+  });
+});
+
+describe('episodioDaPagina / proteção contra fallback pro T1E1 (22/11/2026)', () => {
+  const pagEp = (s: number, e: number, sources: unknown[] = [{ file: HLS808, type: 'hls', label: 'Opção 1' }]) =>
+    `<html><head><title>Re:Zero - T${s}E${e} - Ep</title></head><body><script>const season = ${s}; const episode = ${e}; const sources = ${JSON.stringify(sources)};</script></body></html>`;
+
+  it('lê season/episode do script ou fallback no título; filme sem marcação devolve null', () => {
+    expect(episodioDaPagina(pagEp(1, 26))).toEqual({ s: 1, e: 26 });
+    expect(episodioDaPagina('<html><head><title>Breaking Bad - T2E5 - Breakage</title></head></html>')).toEqual({ s: 2, e: 5 });
+    expect(episodioDaPagina(pagina(ULTIMATO))).toBeNull();
+  });
+
+  it('pediu T1E46 mas servidor devolveu T1E1 → "nao-tem" (f7-ep-errado), sem tocar episódio errado', async () => {
+    rotas = p => (p.url === 'https://megaembed.com/embed/65942/1/46'
+      ? { status: 200, data: pagEp(1, 1) }
+      : { status: 200, data: MASTER(1280, 720) });
+    const r = await resolverMegaEmbed({ tmdbId: 65942, type: 'tv', season: 1, episode: 46 });
+    expect(r).toEqual({ tipo: 'nao-tem', motivo: 'f7-ep-errado pediu=T1E46 veio=T1E1' });
+    // nem testa os links de vídeo quando o episódio já veio errado
+    expect(pedidos.filter(p => p.url === HLS808)).toHaveLength(0);
+  });
+
+  it('pediu T1E26 e servidor devolveu T1E26 → abre normal', async () => {
+    rotas = p => (p.url === 'https://megaembed.com/embed/65942/1/26'
+      ? { status: 200, data: pagEp(1, 26) }
+      : { status: 200, data: MASTER(1280, 720) });
+    const r = await resolverMegaEmbed({ tmdbId: 65942, type: 'tv', season: 1, episode: 26 });
+    expect(r.tipo).toBe('achou');
+  });
+
+  it('opção com noReferrer: true (uqload.vc) é conferida e entregue sem Referer/Origin', async () => {
+    const UQ = 'https://strm9.uqload.vc/hls2/01/06265/abc/master.m3u8?t=1';
+    rotas = p => {
+      if (p.url === 'https://megaembed.com/embed/573435') {
+        return { status: 200, data: pagina([{ file: UQ, type: 'hls', label: 'Opção 1', direct: true, noReferrer: true }]) };
+      }
+      if (p.url === UQ) {
+        if (p.headers.Referer || p.headers.Origin) return { status: 302, data: '' };
+        return { status: 200, data: MASTER(1280, 536) };
+      }
+      return { status: 404, data: '' };
+    };
+    const r = await resolverMegaEmbed({ tmdbId: 573435, type: 'movie' });
+    expect(r.tipo).toBe('achou');
+    if (r.tipo !== 'achou') return;
+    expect(r.links).toHaveLength(1);
+    expect(r.links[0].url).toBe(UQ);
+    expect(r.links[0].quality).toBe('720p');
+    expect(r.links[0].referer).toBeUndefined();
+    expect(r.links[0].headers).toBeUndefined();
   });
 });
