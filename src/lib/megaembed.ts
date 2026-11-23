@@ -16,7 +16,7 @@ export const MEGA_BYTES_MP4 = 65535;    // começo do MP4 lido pra achar a resol
 export const MIME_HLS = 'application/vnd.apple.mpegurl';
 export const MIME_MP4 = 'video/mp4';
 
-export interface OpcaoMega { file: string; type: string; label: string }
+export interface OpcaoMega { file: string; type: string; label: string; noReferrer?: boolean }
 export interface Dimensoes { w: number; h: number }
 export interface AlvoMega { tmdbId: number; type: 'movie' | 'tv'; season?: number; episode?: number }
 
@@ -47,7 +47,10 @@ export function opcoesDaPagina(html: string): OpcaoMega[] | null {
     const file = typeof o?.file === 'string' ? o.file.trim() : '';
     if (!/^https?:\/\//i.test(file) || vistas.has(file)) continue;   // a mesma opção às vezes vem 2× com outro número
     vistas.add(file);
-    out.push({ file, type: String(o.type ?? '').toLowerCase(), label: String(o.label ?? '').trim() || `Opção ${out.length + 1}` });
+    out.push({
+      file, type: String(o.type ?? '').toLowerCase(), label: String(o.label ?? '').trim() || `Opção ${out.length + 1}`,
+      ...(o.noReferrer === true ? { noReferrer: true } : {}),
+    });
   }
   return out;
 }
@@ -56,6 +59,18 @@ export function opcoesDaPagina(html: string): OpcaoMega[] | null {
 // a página não toca fora do site deles, nem no WebView → conta como "não tem".
 export function paginaRestrita(html: string): boolean {
   return /Dom[ií]nio N[ãa]o Autorizado|Acesso Restrito/i.test(html);
+}
+
+// Temporada/episódio que o MegaEmbed realmente serviu (22/11/2026): quando o catálogo deles não tem o episódio pedido
+// (ex.: Re:ZERO T1E46 ou Breaking Bad T9E99), o servidor responde HTTP 200 com a página do T1E1! Conferimos o par
+// `season = N` / `episode = N` da página (ou `T<S>E<E>` no `<title>`) para não reproduzir o episódio errado.
+export function episodioDaPagina(html: string): { s: number; e: number } | null {
+  const ms = /\bseason\s*=\s*(\d+)\b/i.exec(html);
+  const me = /\bepisode\s*=\s*(\d+)\b/i.exec(html);
+  if (ms && me) return { s: Number(ms[1]), e: Number(me[1]) };
+  const mt = /<title[^>]*>[^<]*\bT(\d+)E(\d+)\b/i.exec(html);
+  if (mt) return { s: Number(mt[1]), e: Number(mt[2]) };
+  return null;
 }
 
 // Servidores de vídeo da página (`MEGAEMBED_PROXIES = [{url, weight}]`, visto 08/11/2026): o link de cada opção vem com UM
@@ -152,17 +167,20 @@ const texto = (d: unknown) => (typeof d === 'string' ? d : '');
 // servidor mandaria o arquivo inteiro).
 export async function conferirOpcao(o: OpcaoMega): Promise<{ abre: boolean; dim: Dimensoes | null; hls: boolean }> {
   const hls = o.type === 'hls' || /\.m3u8(\?|$)/i.test(o.file);
+  // 22/11/2026: opções marcadas com `noReferrer: true` (ex.: uqload.vc) redirecionam pra um master falso (`/taunt/promo/`)
+  // quando recebem Referer: megaembed.com → só abrem sem Referer/Origin.
+  const cab = o.noReferrer ? {} : CAB_MEGA;
   try {
     if (hls) {
-      const r = await pedir(o.file, { cab: CAB_MEGA });
+      const r = await pedir(o.file, { cab });
       const t = texto(r.data);
       return { abre: r.status >= 200 && r.status < 300 && t.includes('#EXTM3U'), dim: resolucaoDoMaster(t), hls };
     }
-    const h = await pedir(o.file, { method: 'HEAD', cab: CAB_MEGA });
+    const h = await pedir(o.file, { method: 'HEAD', cab });
     const ct = h.headers['content-type'] ?? '';
     if (h.status < 200 || h.status >= 300 || !/^video\/|octet-stream/i.test(ct)) return { abre: false, dim: null, hls };
     if (!/bytes/i.test(h.headers['accept-ranges'] ?? '')) return { abre: true, dim: null, hls };
-    const r = await pedir(o.file, { cab: { ...CAB_MEGA, Range: `bytes=0-${MEGA_BYTES_MP4}` }, binario: true });
+    const r = await pedir(o.file, { cab: { ...cab, Range: `bytes=0-${MEGA_BYTES_MP4}` }, binario: true });
     const b64 = texto(r.data);
     return { abre: true, dim: r.status === 206 && b64 ? dimensoesDoMp4(base64ParaBytes(b64)) : null, hls };
   } catch {
@@ -195,6 +213,13 @@ export async function resolverMegaEmbed(alvo: AlvoMega, sinal: { cancelado: bool
   if (pagina.status === 404) return { tipo: 'nao-tem', motivo: 'f7-404' };
   if (paginaRestrita(html)) return { tipo: 'nao-tem', motivo: 'f7-restrito' };   // vem com 403 (emulador, 20/10/2026)
   if (pagina.status !== 200) return { tipo: 'webview', motivo: `pagina-${pagina.status}` };
+  if (alvo.type === 'tv') {
+    const ep = episodioDaPagina(html);
+    const sPed = alvo.season ?? 1, ePed = alvo.episode ?? 1;
+    if (ep && (ep.s !== sPed || ep.e !== ePed)) {
+      return { tipo: 'nao-tem', motivo: `f7-ep-errado pediu=T${sPed}E${ePed} veio=T${ep.s}E${ep.e}` };
+    }
+  }
   const opcoes = opcoesDaPagina(html);
   if (!opcoes) return { tipo: 'webview', motivo: 'sem-lista' };
   if (!opcoes.length) return { tipo: 'nao-tem', motivo: 'f7-sem-opcao' };
@@ -212,7 +237,8 @@ export async function resolverMegaEmbed(alvo: AlvoMega, sinal: { cancelado: bool
   return {
     tipo: 'achou',
     links: abertas.map(c => ({
-      url: c.file, mime: c.hls ? MIME_HLS : MIME_MP4, referer: MEGA_REFERER, headers: { ...CAB_MEGA },
+      url: c.file, mime: c.hls ? MIME_HLS : MIME_MP4,
+      ...(c.o.noReferrer ? {} : { referer: MEGA_REFERER, headers: { ...CAB_MEGA } }),
       quality: rotuloDe(c.dim) || undefined, provider: 'megaembed', option: c.o.label,
     })),
   };

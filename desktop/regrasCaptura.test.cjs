@@ -38,6 +38,9 @@ test('sonda: recurso óbvio e pedaço não valem a pena; o master.txt sem extens
   }
   assert.equal(r.pularSonda('https://embedplayer2.xyz/cdn/hls/03989f/master.txt'), false);
   assert.equal(r.pularSonda('https://embedplayer2.xyz/m3/Vk10QmhK'), false);
+  assert.equal(r.pularSonda('https://xn--tckasiu6cvova0eb5fua2449g98vg.best/abc/master.txt'), true);
+  assert.equal(r.pularSonda('https://xn--80adalaab0boiodbce7addhh.delivery/abc/master.txt'), true);
+  assert.equal(r.pularSonda('https://xn--80adalaab0boiodbce7addhh.delivery/m3/abc'), false);
 });
 
 test('tipo do vídeo: pelo endereço, pelo Content-Type e pelo começo do arquivo', () => {

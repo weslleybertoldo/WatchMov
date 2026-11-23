@@ -233,7 +233,8 @@ describe('resolver oculto (regras puras)', () => {
     expect(isHopHost('xn--tckasiu6cvova0eb5fua2449g98vg.best')).toBe(false);   // SuperFlix toca sozinho no iframe
     expect(isHopHost('blogger.com')).toBe(false);
     expect(isHopHost(null)).toBe(false);
-    expect(HOP_HOSTS).toHaveLength(3);
+    expect(isHopHost('embedplay.vip')).toBe(true);
+    expect(HOP_HOSTS).toHaveLength(4);
   });
 
   it('toggle: ligado por padrão; desligar/ligar persiste', () => {
@@ -1040,5 +1041,90 @@ describe('busca leve na TV: leitor do Blogger só na Fonte 1', () => {
     expect(buildInjectScript()).toContain('cloudflare');
     expect(buildOptionCycleScript()).toContain('cloudflare');
     expect(buildBloggerScript()).toContain('cloudflare');
+  });
+});
+
+// 22/11/2026: layout novo do playerflix.ink (sem #optionList .option; lê /inc/Ajax.php e controla #playerFrame)
+// + embedplayer2.xyz morto ("Video not found.") pulando na hora.
+describe('Fonte 1 — novo layout playerflix.ink e embedplayer morto (22/11/2026)', () => {
+  const OPCOES_BAD_BOYS = {
+    status: true,
+    data: {
+      options: [
+        { embed: 'https://v1.watchplay.shop/movie/573435', lang: 'pt-br', label: 'WatchPlay', id: 'watchplay' },
+        { embed: 'https://embedplayer2.xyz/video/morto', lang: 'pt-br', label: 'VIP Player', id: 'embedplayer' },
+        { embed: 'https://embedplayabyss.top/player.html?v=abc', lang: 'pt-br', label: 'Embed Play', id: 'embedplay' },
+        { embed: 'https://superflixapi.boats/filme/573435', lang: 'pt-br', label: 'Premium', id: 'superflixapi' },
+        { embed: 'https://www.blogger.com/video.g?token=EN', lang: 'en-us', label: 'Blogger', id: 'blogger' },
+      ],
+    },
+  };
+
+  async function rodarPF(k: number, corpo: unknown, preSrc = '') {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown> & { fetch: typeof fetch };
+    const prevInj = w.__wmInj;
+    const prevFetch = w.fetch;
+    w.__wmInj = undefined;
+    w.fetch = (() => Promise.resolve({ clone: () => ({ text: () => Promise.resolve(JSON.stringify(corpo)) }) })) as unknown as typeof fetch;
+    document.body.innerHTML = `<iframe id="playerFrame" src="${preSrc}"></iframe>`;
+    vi.useFakeTimers();
+    try {
+      new Function('location', buildOptionCycleScript().replace(/__OPT_K__/g, String(k)))({ hostname: 'playerflix.ink', pathname: '/filme/573435', hash: '', href: 'https://playerflix.ink/filme/573435' });
+      await w.fetch('https://playerflix.ink/inc/Ajax.php?type=movie&id=573435');
+      await vi.advanceTimersByTimeAsync(200);
+      const pf = document.getElementById('playerFrame') as HTMLIFrameElement;
+      return { logs, src: pf.src, sandbox: pf.getAttribute('sandbox') };
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      w.fetch = prevFetch;
+      document.body.innerHTML = '';
+    }
+  }
+
+  it('ordena pela prioridade da página, filtra legendado e troca #playerFrame pra opção K (K=2 → WatchPlay)', async () => {
+    // K=2: simula a página já tendo aberto K=1 (VIP Player); o script troca pro WatchPlay (K=2)
+    const r = await rodarPF(2, OPCOES_BAD_BOYS, 'https://embedplayer2.xyz/video/morto');
+    expect(r.logs).toContain('WMOPT|n=4|names=VIP Player»WatchPlay»Embed Play»Premium');
+    expect(r.logs).toContain('WMOPT|filtered|nao-dublado=1|restou=4');
+    expect(r.logs).toContain('WMOPT|click|k=2|name=WatchPlay');
+    expect(r.src).toBe('https://v1.watchplay.shop/movie/573435');
+    expect(r.sandbox).toBe('allow-scripts allow-same-origin');
+  });
+
+  it('opção embedplayabyss tira o sandbox; opção Premium (superflixapi.) dá WMOPT|skip na hora e limpa playerFrame', async () => {
+    const r3 = await rodarPF(3, OPCOES_BAD_BOYS);
+    expect(r3.logs).toContain('WMOPT|click|k=3|name=Embed Play');
+    expect(r3.src).toBe('https://embedplayabyss.top/player.html?v=abc');
+    expect(r3.sandbox).toBeNull();
+
+    const r4 = await rodarPF(4, OPCOES_BAD_BOYS, 'https://superflixapi.boats/filme/573435');
+    expect(r4.logs).toContain('WMOPT|skip|k=4|name=Premium|reason=turnstile');
+    expect(r4.src).toBe('about:blank');
+  });
+
+  it('embedplayer2.xyz respondendo "Video not found." avisa WMOPT|dead na hora', () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    const w = window as unknown as Record<string, unknown>;
+    const prevInj = w.__wmInj;
+    w.__wmInj = undefined;
+    document.body.innerHTML = '<div id="sun"><h1>Error</h1><p>Video not found.</p></div>';
+    vi.useFakeTimers();
+    try {
+      new Function('location', buildOptionCycleScript().replace(/__OPT_K__/g, '1'))({ hostname: 'embedplayer2.xyz', pathname: '/video/x', hash: '', href: 'https://embedplayer2.xyz/video/x' });
+      vi.advanceTimersByTime(700);
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+      w.__wmInj = prevInj;
+      document.body.innerHTML = '';
+    }
+    expect(logs).toContain('WMOPT|dead|k=1|reason=not-found');
   });
 });

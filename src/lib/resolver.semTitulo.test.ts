@@ -175,6 +175,23 @@ describe('não tem o título (sinais por fonte)', () => {
       expect(await rodar(h, () => { document.title = 'FSHD — 404'; document.body.innerHTML = '<div class="movie-not-found"></div><script>const available=false;</script>'; })).toEqual([]);
     }
   });
+
+  it('Fonte 7 (WebView/Windows): pediu /embed/65942/1/46 mas título veio T1E1 = f7-ep-errado', async () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logs.push(String(a[0])); };
+    vi.useFakeTimers();
+    try {
+      document.title = 'Re:Zero - T1E1 - O Fim do Começo';
+      document.body.innerHTML = '<div id="player"></div>';
+      new Function('location', buildSemTituloScript())({ hostname: 'megaembed.com', pathname: '/embed/65942/1/46', href: 'https://megaembed.com/embed/65942/1/46' });
+      await vi.advanceTimersByTimeAsync(700);
+    } finally {
+      vi.useRealTimers();
+      console.log = origLog;
+    }
+    expect(logs).toContain('WMOPT|none|reason=f7-ep-errado|host=megaembed.com');
+  });
 });
 
 describe('pulo automático pra próxima fonte', () => {

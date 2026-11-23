@@ -16,13 +16,20 @@ public class Fontes56DesbloqueioTest {
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://warezcdn.sbs/filme/39254"));
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://overflixhd.sbs/filme/1368337"));
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://megaflixonline.sbs/filme/1368337"));
-        // 04/11/2026: player final (FirePlayer da SuperFlixAPI) que a WarezCDN abre no iframe — o access.js dele bloqueia
-        // "com.weslley.watchmov" (fireAccessBlockType "app") quando a página /video/ chega com o X-Requested-With do app.
+        // 04/11/2026 + 22/11/2026: player final (FirePlayer da SuperFlixAPI) que SuperFlix/WarezCDN abrem no iframe —
+        // o host punycode (`xn--…`) rotaciona (.best, .delivery…), e o access.js/boot.js bloqueia o app quando /video/ chega com X-Requested-With.
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/video/b568a8236bc5ff33ec47e46657336dcc"));
         assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.xn--tckasiu6cvova0eb5fua2449g98vg.best/fireplayer-control/access.js?url=x"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--80adalaab0boiodbce7addhh.delivery/video/551e67bba32e7c3ddd8b5371d8af5160"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--80adalaab0boiodbce7addhh.delivery/fireplayer-control/boot.js"));
+        assertTrue(StreamSnifferPlugin.precisaEsconderApp("https://xn--80adalaab0boiodbce7addhh.delivery/player/assets/scripts.php?v=7"));
         // ...mas a mídia (master.txt de uso único, faixas /m3/) e o POST /layer/ seguem pelo WebView.
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/OfJnAipASabPR4mZ250tqw/78f60a8b9d7e45018c7773c5fa360679/1793831847/master.txt"));
+        assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://xn--80adalaab0boiodbce7addhh.delivery/OfJnAipASabPR4mZ250tqw/78f60a8b9d7e45018c7773c5fa360679/1793831847/master.txt"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/layer/9e12322db46d4cc3/b568a8236bc5ff33ec47e46657336dcc/"));
+        assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://xn--80adalaab0boiodbce7addhh.delivery/layer/9e12322db46d4cc3/551e67bba32e7c3ddd8b5371d8af5160/"));
+        // CDN do MegaEmbed (`cdn--xn.…`) NÃO é punycode (`xn--`), não deve casar.
+        assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://cdn--xn.s13-st1001604.lat/video/123"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://challenges.cloudflare.com/turnstile/v0/api.js"));
         assertFalse(StreamSnifferPlugin.precisaEsconderApp("https://myembed.biz/filme/39254"));
     }
@@ -89,8 +96,11 @@ public class Fontes56DesbloqueioTest {
         // 04/11/2026: o master.txt do FirePlayer só vale UMA vez, pro pedido do próprio player (o ExoPlayer e o OkHttp
         // levavam 403). O link tocável sai das faixas /m3/ (re-buscáveis) pelo synth:// COMPLETO da v4.50.
         String master = "https://xn--tckasiu6cvova0eb5fua2449g98vg.best/OfJnAipASabPR4mZ250tqw/78f60a8b9d7e45018c7773c5fa360679/1793831847/master.txt";
+        String masterNovo = "https://xn--80adalaab0boiodbce7addhh.delivery/OfJnAipASabPR4mZ250tqw/78f60a8b9d7e45018c7773c5fa360679/1793831847/master.txt";
         assertFalse(StreamSnifferPlugin.looksLikeVideo(master));
         assertTrue(StreamSnifferPlugin.skipProbe(master));
+        assertTrue(StreamSnifferPlugin.skipProbe(masterNovo));
         assertFalse(StreamSnifferPlugin.skipProbe("https://xn--tckasiu6cvova0eb5fua2449g98vg.best/m3/OfJnAipASabPR4mZ250tqw/1793831847/aHR0cHM6Ly9leGFtcGxl"));
+        assertFalse(StreamSnifferPlugin.skipProbe("https://xn--80adalaab0boiodbce7addhh.delivery/m3/OfJnAipASabPR4mZ250tqw/1793831847/aHR0cHM6Ly9leGFtcGxl"));
     }
 }

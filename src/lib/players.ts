@@ -95,14 +95,14 @@ export const PROVIDERS: Provider[] = [
     id: 'superflix',
     name: 'Fonte 5 (SuperFlix PT-BR DUB+LEG)',
     tag: 'SuperFlix', color: '#f87171',
-    // Dublado+legendado. Domínio final atual: superflixapi.fun (evita redirect 301 .cyou→.monster→.fun
-    // que causava erro 110200 de domínio no Turnstile). Aceita IMDB ou TMDB id.
+    // Dublado+legendado. Domínio final atual: superflixapi.boats (22/11/2026: .fun passou a fazer 301 → .boats;
+    // evitar redirect 301 previne erro 110200 de domínio no Turnstile). Aceita IMDB ou TMDB id.
     build: (t) => {
       const id = t.imdbId ?? t.tmdbId;
       if (!id) return null;
       return t.type === 'movie'
-        ? `https://superflixapi.fun/filme/${id}`
-        : `https://superflixapi.fun/serie/${id}/${s(t)}/${e(t)}`;
+        ? `https://superflixapi.boats/filme/${id}`
+        : `https://superflixapi.boats/serie/${id}/${s(t)}/${e(t)}`;
     },
   },
   {
@@ -141,9 +141,10 @@ export const PROVIDER_HOSTS = [
   'https://warezcdn.lat',
   'https://fshd.link',
   'https://myembed.biz',
-  // redirects atuais (14/09/2026): .cyou/.pro → .monster → .fun; fembed.sx → fembed.lol; warezcdn.lat → warezcdn.sbs
+  // redirects atuais: .cyou/.pro → .monster → .fun → .boats (22/11/2026); fembed.sx → fembed.lol; warezcdn.lat → warezcdn.sbs
   'https://superflixapi.monster',
   'https://superflixapi.fun',
+  'https://superflixapi.boats',
   'https://fembed.lol',
   'https://warezcdn.sbs',
   'https://api.pomfy.stream',

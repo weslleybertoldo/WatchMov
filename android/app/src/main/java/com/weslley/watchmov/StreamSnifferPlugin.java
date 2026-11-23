@@ -125,14 +125,21 @@ public class StreamSnifferPlugin extends Plugin {
         } catch (Throwable ignored) {}
     }
 
-    // 04/11/2026: player final que a WarezCDN abre no iframe (FirePlayer da SuperFlixAPI, host disfarçado
-    // "ココ・レストラン予約センター", o mesmo desde 14/09/2026; o TLD troca). O access.js dele lê o X-Requested-With da
-    // página /video/ e troca o player por "Acesso bloqueado para este app" (A Odisseia na Fonte 6 parava ali; no
-    // WebView 155 do emulador o setRequestedWithHeaderOriginAllowList não tirou o cabeçalho). Só a página, o controle
-    // de acesso e os scripts vão sem o nome do app: o POST /layer/ (o jQuery já põe X-Requested-With: XMLHttpRequest)
-    // e a mídia (master.txt de uso único, faixas /m3/) seguem pelo próprio WebView — refeitos pelo OkHttp davam 403.
+    // 04/11/2026 (generalizado 22/11/2026): player final que SuperFlix/WarezCDN abrem no iframe (FirePlayer, host
+    // punycode `xn--…` que rotaciona — já usou xn--tckasiu6cvova0eb5fua2449g98vg.best e xn--80adalaab0boiodbce7addhh.delivery).
+    // O access.js/boot.js dele lê o X-Requested-With da página /video/ e troca o player por "Acesso bloqueado para este app"
+    // (no WebView do emulador o setRequestedWithHeaderOriginAllowList não tirou o cabeçalho). Só a página, o controle de acesso
+    // e os scripts vão sem o nome do app: o POST /layer/ (o jQuery já põe X-Requested-With: XMLHttpRequest) e a mídia
+    // (master.txt de uso único, faixas /m3/) seguem pelo próprio WebView — refeitos pelo OkHttp davam 403.
     static boolean ehPlayerFinal(String url) {
-        return url != null && url.toLowerCase(java.util.Locale.ROOT).contains("xn--tckasiu6cvova0eb5fua2449g98vg.");
+        if (url == null) return false;
+        String host = extrairHost(url);
+        if (host != null) {
+            String h = host.toLowerCase(java.util.Locale.ROOT);
+            return h.startsWith("xn--") || h.contains(".xn--");
+        }
+        String u = url.toLowerCase(java.util.Locale.ROOT);
+        return u.contains("://xn--") || u.contains(".xn--");
     }
 
     public static boolean precisaEsconderApp(String url) {
